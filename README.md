@@ -6,24 +6,24 @@
 
 ---
 
-## ✨ 核心功能细节 (Features)
+## ✨ Features
 
-* **语义搜索**
-    支持对接地表最强学术向量模型 (Voyage-4 / OpenAI) 或本地轻量模型，不漏过强相关但和搜索词没有对应上的优质论文。
-* **IC 专属论文打分系统**
-    综合排名ISSCC, JSSC, VLSI, CICC 等顶刊顶会打上`S+` / `AA` 标签；
-    实时抓取当前论文的真实被引量 (Semantic Scholar API)，并根据引用量评分，帮助筛选出最有价值论文。
-* **LLM接口**
-    选中十几篇目标神作，一键调用 DeepSeek / Kimi / GPT 接口，自动阅读摘要，直接生成中文视角的《技术趋势、架构演进与核心指标对比报告》。
-* **一键导出**
-    找出方向内所有强相关的论文，支持一键导出到Zotero，一键打开pdf，一键导出到NotebookLM，一键导出BiB等。
-* **本地记录保存**
-    可记录下论文评分，评语，被搜索到的关键词，打开次数等，方便加深记忆。
+* **语义搜索**  
+支持对接地表最强学术向量模型 (Voyage-4 / OpenAI) 或本地轻量模型，不漏过强相关但和搜索词没有对应上的优质论文。
+* **IC 专属论文打分系统**  
+综合排名ISSCC, JSSC, VLSI, CICC 等顶刊顶会打上`S+` / `AA` 等标签；  
+实时抓取当前论文的真实被引量 (Semantic Scholar API)，并与论文年份共同参与综合评分。
+* **LLM接口**  
+DeepSeek / Kimi / GPT 接口。
+* **一键导出**  
+支持一键导出到Zotero，一键打开pdf，一键导出到NotebookLM，一键导出BiB等。
+* **本地记录保存**  
+可记录下论文评分，评语，被搜索到的关键词，打开次数等，方便加深记忆。
 
 
 ---
 
-## 🚀 快速开始 (Quick Start)
+## 🚀 Quick Start  
 
 ### 1. 环境安装
 克隆代码并安装必要的依赖（建议 Python 3.9+）：
@@ -44,14 +44,12 @@ streamlit run app.py
 为了方便测试，系统中已预设了约 300 篇 2026 年的 IEEE TMTT 论文数据。
 打开网页后，你可以直接在左侧边栏配置你自己的 DeepSeek 或 OpenAI API Key，尝试搜索一篇论文，体验打分、AI 分析和批量导出功能。
 
-## 📂 如何扩充你的私人Database？
-系统支持两种方式构建你的十万级文献库：
+## 📂 如何构建你的私人Database？
 
-选项一：手动导入
+一：手动导入
 导出为 .csv 格式包含 Abstract的文件丢入文件夹，刷新网页即可。
 
-选项二：获取作者整理好的 Pro 完整版数据库 💎
-如果你不想把时间浪费在去 IEEE 一页页爬取、纠正错乱的会议名字，或者不想消耗大量 Token 和时间去跑高维向量，你可以直接联系作者获取**【开箱即用的 Pro 版全量数据库】**：
+二：联系获取作者整理好的 Pro 完整版数据库 💎  
 
 27,000+ 篇精选 IC 顶刊顶会：涵盖近 20 年的 ISSCC, JSSC, VLSI, CICC 等。
 
@@ -61,6 +59,6 @@ streamlit run app.py
 
 Email: guangeofaisa@gmail.com
 
-Rednote: guangeofaisa
+小红书: guangeofaisa
 
 Developed with ❤️ by Miao Yixuan. For IC Designers, by an IC Designer.
