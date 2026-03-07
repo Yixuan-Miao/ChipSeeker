@@ -6,6 +6,7 @@
 
 ---
 <img width="1703" height="936" alt="45ab0a5d948316db7a7896ffe000673b" src="https://github.com/user-attachments/assets/e886569a-a144-48eb-8a27-cc83e67ffba4" />
+
 ## Features
 
 * **语义搜索**  
