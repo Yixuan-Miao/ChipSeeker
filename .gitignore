@@ -1,0 +1,36 @@
+# --- Python Standard ---
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+.env
+
+# --- Streamlit ---
+.streamlit/
+
+# --- OS System ---
+.DS_Store
+Thumbs.db
+
+# =======================================================
+# 🚫 CHIPSEEKER PROPRIETARY DATA (DO NOT COMMIT) 🚫
+# =======================================================
+# 1. High-dimensional vector matrices (Commercial Asset)
+cache_*.npy
+
+# 2. Local Database JSONs (Commercial Asset)
+isscc_papers.json
+papers_*.json
+demo_papers.json
+
+# 3. User Privacy & Configuration (API Keys inside)
+config.json
+user_data.json
+
+# 4. Exports
+Export.md
+NotebookLM_Sources.md
+*.csv
+*.bib
