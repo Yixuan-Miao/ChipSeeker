@@ -6,22 +6,23 @@
 
 ---
 <img width="1703" height="936" alt="45ab0a5d948316db7a7896ffe000673b" src="https://github.com/user-attachments/assets/e886569a-a144-48eb-8a27-cc83e67ffba4" />
+<img width="1712" height="1089" alt="959728b4c0db5f5d2ea8eb08bc877126" src="https://github.com/user-attachments/assets/ba21993f-a6c8-4904-8cd3-37dfad642b52" />
 
-## Features
+## ChipSeeker 核心特性
 
-* **语义搜索**  
-支持对接地表最强学术向量模型 (Voyage-4 / OpenAI) 或本地轻量模型，不漏过强相关但和搜索词没有对应上的优质论文。
-* **IC 专属论文打分系统**  
-综合排名ISSCC, JSSC, VLSI, CICC 等顶刊顶会打上`S+` / `AA` 等标签；  
-实时抓取当前论文的真实被引量 (Semantic Scholar API)，并与论文年份共同参与综合评分。
+* **语义级高维检索**  
+对接 Voyage-4 / OpenAI 等顶尖学术大模型。摆脱死板的关键词匹配，基于电路架构和指标进行深层语义检索，不漏过字面不包含但强相关的优质论文。
+* **IC 专属打分系统**  
+IC 圈顶会顶刊综排，为 ISSCC、JSSC 等打上 S+ / AA 专属标签；
+结合 Semantic Scholar 实时被引量与发表年份，科学量化论文价值。
 * **LLM接口**  
-DeepSeek / Kimi / GPT 接口。
+无缝接入 DeepSeek / Kimi 等 API。
 * **一键导出**  
-支持一键导出到Zotero，一键打开pdf，一键导出到NotebookLM，一键导出BiB等。
-* **本地记录保存**  
-可记录下论文评分，评语，被搜索到的关键词，打开次数等，方便加深记忆。
-
-
+支持一键打开 PDF，无缝生成 CSV 数据库、标准 IEEE BibTeX 引文代码，以及专供 NotebookLM 的 Markdown 喂料包。
+* **本地记录永久保存**  
+永久记录你的阅读历史。支持为论文打分（神作至垃圾）、添加专属笔记、记录搜索匹配词，伴随你的整个科研生涯。
+* **全自动数据清洗**  
+针对 IEEE 导出的混乱 CSV 进行底层正则拦截。物理级过滤特刊介绍、会议目录等非学术废料，保证文库 100% 纯净。
 ---
 
 ## Quick Start  
