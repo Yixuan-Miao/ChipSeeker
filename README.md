@@ -61,4 +61,4 @@ Email: guangeofaisa@gmail.com
 
 小红书: guangeofaisa
 
-Developed with ❤️ by Miao Yixuan. For IC Designers, by an IC Designer.
+Developed with ❤️ by Miao Yixuan. For IC Designers, by an IC Designer. 如果满意请帮作者点一个Star吧！
