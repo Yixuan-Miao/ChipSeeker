@@ -1,24 +1,66 @@
 # 🔬 ChipSeeker (芯寻) - The Ultimate IC Design AI Search Engine
 
-**ChipSeeker** 是一款专为**集成电路 (IC) 设计工程师与研究人员**打造的本地化、智能学术文献检索与管理智库。
+**ChipSeeker** 是一款专为**集成电路设计工程师与研究人员**打造的本地化智能论文库。
 
-传统的 IEEE Xplore 搜索死板、充斥着大量无用的会议目录和卷首语，且无法沉淀个人的阅读思考。ChipSeeker 结合了业界最强的高维向量语义检索 (Embedding) 与本地大模型总结 (LLM)，帮你建立只属于你自己的芯片设计私人智库。
-
-## ✨ Core Features (核心特性)
-
-- 🧠 **语义级降维搜索**：原生支持地表最强学术向量模型 `Voyage-4-large` 以及 `OpenAI`。搜 "Cryo-CMOS Qubit LNA"，系统凭借深层语义理解直接捞出精准匹配的顶级架构论文，彻底告别关键词堆砌。
-- 🏛️ **IC 专属学术滤网**：底层硬编码 2025/2026 最新 JCR 影响因子与顶级会议（ISSCC, JSSC, VLSI, CICC 等），自动打上 `S+ / AA` 独家分级标签。
-- 🧹 **暴力清洗学术垃圾**：内置针对 IEEE 数据库的强力正则拦截器。一键物理删除所有 Guest Editorial、Author Index 和 Technical Session 介绍，还你 100% 纯净学术空间。
-- 🤖 **大模型 Global Review**：选中 20 篇高价值论文，一键调用 DeepSeek / Kimi / GPT-4，直接生成中文视角的《技术趋势演进与架构对比报告》。
-- 📊 **极致的学术管理**：本地记录阅读次数、个人神作打分；支持一键导出 CSV 数据库、Markdown (无缝对接 NotebookLM) 以及自动生成 LaTeX 友好的 BibTeX 引文。
+解决IEEE Xplore/各大AI找文网站关键词找论文不全不准/低质量论文不方便筛出，ChipSeeker 利用高维向量语义检索，构建快速搜索、本地化、找论文又准又精的私人知识库。
 
 ---
 
-## 🚀 Quick Start (快速开始)
+## ✨ 核心功能细节 (Features)
 
-### 1. 环境配置
-确保你已安装 Python 3.9+。在终端中运行以下命令克隆仓库并安装依赖：
+* **语义搜索**
+    支持对接地表最强学术向量模型 (Voyage-4 / OpenAI) 或本地轻量模型，不漏过强相关但和搜索词没有对应上的优质论文。
+* **IC 专属论文打分系统**
+    综合排名ISSCC, JSSC, VLSI, CICC 等顶刊顶会打上`S+` / `AA` 标签；
+    实时抓取当前论文的真实被引量 (Semantic Scholar API)，并根据引用量评分，帮助筛选出最有价值论文。
+* **LLM接口**
+    选中十几篇目标神作，一键调用 DeepSeek / Kimi / GPT 接口，自动阅读摘要，直接生成中文视角的《技术趋势、架构演进与核心指标对比报告》。
+* **一键导出**
+    找出方向内所有强相关的论文，支持一键导出到Zotero，一键打开pdf，一键导出到NotebookLM，一键导出BiB等。
+* **本地记录保存**
+    可记录下论文评分，评语，被搜索到的关键词，打开次数等，方便加深记忆。
+
+
+---
+
+## 🚀 快速开始 (Quick Start)
+
+### 1. 环境安装
+克隆代码并安装必要的依赖（建议 Python 3.9+）：
 ```bash
 git clone [https://github.com/Yixuan-Miao/ChipSeeker.git](https://github.com/Yixuan-Miao/ChipSeeker.git)
 cd ChipSeeker
 pip install -r requirements.txt
+streamlit run app.py
+```
+## 2. 运行
+在终端输入以下命令启动：
+```bash
+streamlit run app.py
+```
+启动后，终端会输出一行类似于 Local URL: http://localhost:8501 的地址。打开你的浏览器，输入 localhost:8501 即可进入系统网页。
+
+## 3. 体验预设数据 (Demo)
+为了方便测试，系统中已预设了约 300 篇 2026 年的 IEEE TMTT 论文数据。
+打开网页后，你可以直接在左侧边栏配置你自己的 DeepSeek 或 OpenAI API Key，尝试搜索一篇论文，体验打分、AI 分析和批量导出功能。
+
+## 📂 如何扩充你的私人Database？
+系统支持两种方式构建你的十万级文献库：
+
+选项一：手动导入
+导出为 .csv 格式包含 Abstract的文件丢入文件夹，刷新网页即可。
+
+选项二：获取作者整理好的 Pro 完整版数据库 💎
+如果你不想把时间浪费在去 IEEE 一页页爬取、纠正错乱的会议名字，或者不想消耗大量 Token 和时间去跑高维向量，你可以直接联系作者获取**【开箱即用的 Pro 版全量数据库】**：
+
+27,000+ 篇精选 IC 顶刊顶会：涵盖近 20 年的 ISSCC, JSSC, VLSI, CICC 等。
+
+自带 SOTA 向量矩阵：附带使用现役最强学术模型 voyage-4-large 跑满的 1024 维 .npy 矩阵文件。下载后直接覆盖本地，瞬间解锁顶级精准度的检索体验。
+
+📧 获取方式 (Contact):
+
+Email: guangeofaisa@gmail.com
+
+Rednote: guangeofaisa
+
+Developed with ❤️ by Miao Yixuan. For IC Designers, by an IC Designer.
