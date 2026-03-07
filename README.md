@@ -5,8 +5,8 @@
 解决IEEE Xplore/各大AI找文网站关键词找论文不全不准/低质量论文不方便筛出，ChipSeeker 利用高维向量语义检索，构建快速搜索、本地化、找论文又准又精的私人知识库。
 
 ---
-
-## ✨ Features
+<img width="1703" height="936" alt="45ab0a5d948316db7a7896ffe000673b" src="https://github.com/user-attachments/assets/e886569a-a144-48eb-8a27-cc83e67ffba4" />
+## Features
 
 * **语义搜索**  
 支持对接地表最强学术向量模型 (Voyage-4 / OpenAI) 或本地轻量模型，不漏过强相关但和搜索词没有对应上的优质论文。
@@ -22,9 +22,8 @@ DeepSeek / Kimi / GPT 接口。
 
 
 ---
-<img width="1703" height="936" alt="45ab0a5d948316db7a7896ffe000673b" src="https://github.com/user-attachments/assets/e886569a-a144-48eb-8a27-cc83e67ffba4" />
 
-## 🚀 Quick Start  
+## Quick Start  
 
 ### 1. 环境安装
 克隆代码并安装必要的依赖（建议 Python 3.9+）：
@@ -45,18 +44,18 @@ streamlit run app.py
 为了方便测试，系统中已预设了约 300 篇 2026 年的 IEEE TMTT 论文数据。
 打开网页后，你可以直接在左侧边栏配置你自己的 DeepSeek 或 OpenAI API Key，尝试搜索一篇论文，体验打分、AI 分析和批量导出功能。
 
-## 📂 如何构建你的私人Database？
+## 如何构建你的私人Database？
 
 一：手动导入
 导出为 .csv 格式包含 Abstract的文件丢入文件夹，刷新网页即可。
 
-二：联系获取作者整理好的 Pro 完整版数据库 💎  
+二：联系获取作者整理好的 Pro 完整版数据库 
 
 27,000+ 篇精选 IC 顶刊顶会：涵盖近 20 年的 ISSCC, JSSC, VLSI, CICC 等。
 
 自带 SOTA 向量矩阵：附带使用现役最强学术模型 voyage-4-large 跑满的 1024 维 .npy 矩阵文件。下载后直接覆盖本地，瞬间解锁顶级精准度的检索体验。
 
-📧 获取方式 (Contact):
+获取方式 (Contact):
 
 Email: guangeofaisa@gmail.com
 
