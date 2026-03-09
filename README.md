@@ -136,10 +136,4 @@ streamlit run app.py
 * **Email:** guangeofaisa@gmail.com
 * **小红书:** guangeofaisa
 
-Developed with ❤️ by Miao Yixuan. For IC Designers, by an IC Designer. 如果满意请帮作者点一个Star吧！⭐
-
-```
-
-需要我帮你写一段针对这个开源项目的 GitHub 英文版 Release Notes 吗？
-
-```
+Developed by Miao Yixuan. 如果满意请帮作者点一个Star吧！⭐
