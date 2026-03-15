@@ -10,6 +10,13 @@
 
 import streamlit as st
 import json, os, glob, csv, webbrowser, requests, math, re, hashlib, base64
+import sys
+import asyncio
+
+# 解决 Windows 下 Streamlit 子线程无法启动 Playwright 浏览器的底层 Bug
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+
 from search import PaperSearcher
 
 def _vx_auth():
@@ -571,7 +578,8 @@ elif sort_option == "🏆 Comprehensive Score":
 with col_batch:
     st.markdown("### 🛠️ Batch Select")
     rel_threshold = st.slider("Select Relevance >=", 0.0, 1.0, 0.40, 0.05)
-    c_b1, c_b2, c_b3, c_b4 = st.columns(4)
+    # 增加为 5 列
+    c_b1, c_b2, c_b3, c_b4, c_b5 = st.columns(5)
     
     def do_batch_select(mode, val=None):
         count = 0
@@ -580,6 +588,9 @@ with col_batch:
             sim = item['similarity']
             chk_key = f"chk_{idx}_{get_paper_id(p)}" 
             if mode == 'threshold' and (sim >= val or not search_query): 
+                st.session_state[chk_key] = True
+                count += 1
+            elif mode == 'rare' and (sim >= 0.60 or not search_query): # 新增 Rare 逻辑
                 st.session_state[chk_key] = True
                 count += 1
             elif mode == 'perfect' and (sim >= 0.40 or not search_query): 
@@ -594,10 +605,12 @@ with col_batch:
         if mode == 'deselect': st.toast("🧹 Cleared all selections.")
         else: st.toast(f"✅ Successfully selected {count} papers!")
 
+    # 按钮绑定
     with c_b1: st.button(f"≥ {rel_threshold:.2f}", on_click=do_batch_select, args=('threshold', rel_threshold), use_container_width=True)
-    with c_b2: st.button("🎯 Perfect", on_click=do_batch_select, args=('perfect',), use_container_width=True)
-    with c_b3: st.button("⭐ Valuable", on_click=do_batch_select, args=('valuable',), use_container_width=True)
-    with c_b4: st.button("❌ Clear All", on_click=do_batch_select, args=('deselect',), use_container_width=True)
+    with c_b2: st.button("💎 Rare", on_click=do_batch_select, args=('rare',), use_container_width=True)
+    with c_b3: st.button("🎯 Perfect", on_click=do_batch_select, args=('perfect',), use_container_width=True)
+    with c_b4: st.button("⭐ Valuable", on_click=do_batch_select, args=('valuable',), use_container_width=True)
+    with c_b5: st.button("❌ Clear All", on_click=do_batch_select, args=('deselect',), use_container_width=True)
 
 st.markdown("---")
 
@@ -739,7 +752,84 @@ if st.sidebar.button("📄 Open Selected PDFs", type="secondary", use_container_
         url = p.get('pdf_link') or (f"https://doi.org/{p['doi']}" if p.get('doi') else '')
         if url: webbrowser.open_new_tab(url); success_count += 1
     st.sidebar.info(f"Opened {success_count} tabs.")
-    
+
+import time
+import random
+import os
+import re
+from playwright.sync_api import sync_playwright
+import streamlit as st
+
+st.sidebar.markdown("---")
+# 已经帮你加了 r 前缀，并修改为新的目标文件夹
+save_dir = st.sidebar.text_input("📁 Local Save Folder", value=r"G:\我的云端硬盘\TSMC018202604", help="The local directory where PDFs will be saved.")
+
+if st.sidebar.button("⬇️ Batch Download Selected PDFs", type="primary", use_container_width=True):
+    if not selected_papers:
+        st.sidebar.warning("No papers selected!")
+    else:
+        os.makedirs(save_dir, exist_ok=True)
+        progress_bar = st.sidebar.progress(0)
+        status_text = st.sidebar.empty()
+        success_n, fail_n = 0, 0
+        
+        # 启动虚拟浏览器引擎 (Headless 改回 True)
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True, args=["--disable-blink-features=AutomationControlled"])
+            context = browser.new_context(
+                accept_downloads=True,
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            )
+            
+            for i, paper in enumerate(selected_papers):
+                url = paper.get('pdf_link') or (f"https://doi.org/{paper['doi']}" if paper.get('doi') else '')
+                title_safe = re.sub(r'[\\/*?:"<>|]', "", paper.get('title', f'paper_{i}'))[:100] 
+                
+                if not url:
+                    fail_n += 1
+                    continue
+                    
+                status_text.markdown(f"**🤖 Stealth Browser Fetching:** {i+1}/{len(selected_papers)}...")
+                page = context.new_page()
+                
+                try:
+                    page.goto(url, wait_until="domcontentloaded", timeout=20000)
+                    time.sleep(2) # 增加渲染等待时间，更像人类
+                    
+                    actual_pdf_url = url
+                    if "ieeexplore.ieee.org" in page.url or "stamp.jsp" in page.url:
+                        for frame in page.frames:
+                            if ".pdf" in frame.url:
+                                actual_pdf_url = frame.url
+                                break
+                    
+                    with page.expect_download(timeout=30000) as download_info:
+                        page.evaluate(f"window.location.href = '{actual_pdf_url}'")
+                    
+                    download = download_info.value
+                    file_path = os.path.join(save_dir, f"{title_safe}.pdf")
+                    download.save_as(file_path)
+                    
+                    success_n += 1
+                except Exception as e:
+                    print(f"[{title_safe}] Download error: {e}")
+                    fail_n += 1
+                finally:
+                    page.close() 
+                    
+                progress_bar.progress((i + 1) / len(selected_papers))
+                
+                # 💥 核心防封禁机制：动态长延迟 + 批量强制休息
+                sleep_time = random.uniform(8.0, 18.0) 
+                time.sleep(sleep_time)
+                if (i + 1) % 10 == 0:
+                    status_text.markdown(f"**☕ Anti-Scraping Cooldown:** Resting for 45 seconds to reset IP trust...")
+                    time.sleep(45) # 每下10篇，强制休息45秒
+                
+            browser.close() 
+            
+        status_text.success(f"✅ Securely Downloaded! Success: {success_n}, Failed: {fail_n}")
+
 if st.sidebar.button("📚 Export to NotebookLM", type="primary", use_container_width=True):
     export_content = f"# Papers Context for '{search_query or 'Filtered Subset'}'\n\n"
     for p in selected_papers:
