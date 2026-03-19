@@ -9,15 +9,17 @@
 # ==============================================================================
 
 import streamlit as st
-import json, os, glob, csv, webbrowser, requests, math, re, hashlib, base64
+import json, os, glob, csv, webbrowser, requests, math, re, hashlib, base64, time
 import sys
 import asyncio
+import random
 
 # 解决 Windows 下 Streamlit 子线程无法启动 Playwright 浏览器的底层 Bug
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 from search import PaperSearcher
+from playwright.sync_api import sync_playwright
 
 def _vx_auth():
     _x = hashlib.sha256(b"MiaoYixuan_ChipSeeker_PRO").hexdigest()
@@ -100,24 +102,34 @@ def highlight_text(text, keywords):
             highlighted = pattern.sub(r'<span style="background-color: #ffeb3b; color: black; font-weight: bold; padding: 0 4px; border-radius: 4px;">\1</span>', highlighted)
     return highlighted
 
+# ================= 核心修复 1：精准双向同步机制 =================
 def scan_and_import_csvs():
     csv_files = glob.glob('*.csv')
-    if not csv_files: return 0
+    
+    current_csv_titles = set()
+    new_files_info = {}
+    
     all_papers = load_json(DB_FILE, [])
-    seen_titles = {p.get('title', '').strip().lower() for p in all_papers}
-    new_count = 0
+    # 构建当前 JSON 数据库字典，以 title_norm 为主键
+    existing_papers_dict = {p.get('title', '').strip().lower(): p for p in all_papers}
+    
     for file in csv_files:
+        new_in_this_file = 0
         try:
             with open(file, mode='r', encoding='utf-8-sig', errors='ignore') as f:
                 reader = csv.DictReader(f)
                 for row in reader:
                     title = row.get('Document Title', '').strip()
                     abstract = row.get('Abstract', '').strip()
-                    if is_junk_paper(title, abstract): 
-                        continue
-                    if title and abstract and abstract != 'NA':
-                        title_norm = title.lower()
-                        if title_norm in seen_titles: continue
+                    
+                    if is_junk_paper(title, abstract): continue
+                    if not title or not abstract or abstract == 'NA': continue
+                    
+                    title_norm = title.lower()
+                    current_csv_titles.add(title_norm) # 登记当前真实存活的论文
+                    
+                    if title_norm not in existing_papers_dict:
+                        # 发现新论文
                         authors_raw = row.get('Authors', '')
                         authors_list = [a.strip() for a in authors_raw.split(';') if a.strip()] if authors_raw else []
                         kw_raw = row.get('Author Keywords', '')
@@ -129,23 +141,56 @@ def scan_and_import_csvs():
                             "last_author": authors_list[-1] if authors_list else "Unknown",
                             "keywords": [k.strip() for k in kw_raw.split(';') if k.strip()]
                         }
-                        seen_titles.add(title_norm)
-                        all_papers.append(paper_obj)
-                        new_count += 1
-        except: pass
-    if new_count > 0:
-        save_json(DB_FILE, all_papers)
-        for cache_file in glob.glob('cache_*.npy'): os.remove(cache_file)
-    return new_count
+                        existing_papers_dict[title_norm] = paper_obj
+                        new_in_this_file += 1
+                        
+            if new_in_this_file > 0:
+                new_files_info[file] = new_in_this_file
+        except Exception as e:
+            print(f"Error reading CSV {file}: {e}")
+            
+    # 从 JSON 字典中剔除掉不再存在于当前 CSV 文件中的幽灵数据（实现删减功能）
+    final_papers = []
+    removed_count = 0
+    for title_norm, p in existing_papers_dict.items():
+        if title_norm in current_csv_titles:
+            final_papers.append(p)
+        else:
+            removed_count += 1
+            
+    added_count = sum(new_files_info.values())
+    
+    # 如果检测到任何变化，才进行覆写操作
+    if added_count > 0 or removed_count > 0:
+        save_json(DB_FILE, final_papers)
+        
+        # ⚠️ 如果发生了删除行为，向量矩阵索引已错位，必须删掉 numpy 缓存强制重组
+        if removed_count > 0:
+            for c_f in glob.glob('cache_*.npy'): 
+                try: os.remove(c_f)
+                except: pass
+                
+    return added_count, removed_count, [f"📄 {k} (+{v}篇)" for k, v in new_files_info.items()]
 
 current_csv_state = sum(os.path.getmtime(f) for f in glob.glob('*.csv')) if glob.glob('*.csv') else 0
 if st.session_state.get('csv_state') != current_csv_state:
-    with st.spinner("Syncing Library..."):
-        added_count = scan_and_import_csvs()
+    with st.spinner("Syncing Library (Scanning Additions & Deletions)..."):
+        added_count, removed_count, new_files_info = scan_and_import_csvs()
         st.session_state['csv_state'] = current_csv_state
-        if added_count > 0:
-            st.toast(f"🎉 Imported {added_count} new entries.")
+        
+        if added_count > 0 or removed_count > 0:
+            msg = []
+            if added_count > 0:
+                file_msg = " | ".join(new_files_info)
+                msg.append(f"🎉 发现新知识载入!\n{file_msg}\n总计新增: {added_count} 项。")
+            if removed_count > 0:
+                msg.append(f"🗑️ 移除了 {removed_count} 项在CSV中失效的文献。")
+            
+            st.toast("\n\n".join(msg))
             if 'get_searcher_engine' in st.session_state: st.cache_resource.clear()
+            # 强制刷新确保下方的 db_stats 拿到最新数据
+            time.sleep(1.5)
+            st.rerun()
 
 def get_batch_citations(dois):
     valid_dois = [d for d in dois if d]
@@ -387,22 +432,79 @@ else:
 
 if not searcher: st.stop()
 
+
+# ================= 核心修复 2：交互式深度数据清理 =================
 st.sidebar.markdown("---")
 st.sidebar.header("🧹 DB Maintenance")
-if st.sidebar.button("Purge Junk Papers", help="Scans and removes non-academic entries based on enhanced regex", use_container_width=True):
-    with st.spinner("Scanning and purging junk..."):
-        all_p = load_json(DB_FILE, [])
-        original_len = len(all_p)
-        clean_p = [p for p in all_p if not is_junk_paper(p.get('title', ''), p.get('abstract', ''))]
-        removed = original_len - len(clean_p)
-        
-        if removed > 0:
-            save_json(DB_FILE, clean_p)
-            for c_f in glob.glob('cache_*.npy'): os.remove(c_f)
-            if 'get_searcher_engine' in st.session_state: st.cache_resource.clear()
-            st.sidebar.success(f"✅ Success! Purged {removed} junk entries.")
-        else:
-            st.sidebar.info("Database is already clean. No junk found.")
+
+# 找出分类为 Other 以及论文数不足50的 Venue
+low_vol_venues = [v_name for v_name, content in db_stats.items() if sum(content['years'].values()) < 50]
+papers_to_purge = [p for p in all_papers_in_db if analyze_venue(p.get('venue', ''))['n'] in low_vol_venues or analyze_venue(p.get('venue', ''))['n'] == 'Other']
+
+if 'purge_mode' not in st.session_state:
+    st.session_state.purge_mode = False
+
+if st.sidebar.button("🗑️ Scan & Purge Low-Volume Papers", help="Select and delete papers from unclassified or <50 papers venues", use_container_width=True):
+    st.session_state.purge_mode = not st.session_state.purge_mode
+
+if st.session_state.purge_mode:
+    if not papers_to_purge:
+        st.sidebar.success("🎉 Database is perfectly clean! No low-volume papers found.")
+        st.session_state.purge_mode = False
+    else:
+        with st.sidebar.form("purge_form"):
+            st.warning(f"⚠️ Found {len(papers_to_purge)} papers in venues with <50 records or unclassified.")
+            # 为多选框生成选项，携带名称及场馆信息方便辨认
+            options = [f"{p['title']}  [{p.get('venue', 'Other')}]" for p in papers_to_purge]
+            
+            selected_options = st.multiselect(
+                "Select papers to permanently delete:",
+                options=options,
+                default=[]
+            )
+            
+            if st.form_submit_button("🔥 Confirm Delete from CSV & JSON", use_container_width=True):
+                if selected_options:
+                    selected_titles_lower = set()
+                    for opt in selected_options:
+                        idx = options.index(opt)
+                        selected_titles_lower.add(papers_to_purge[idx]['title'].strip().lower())
+                    
+                    # 1. 深入修改 CSV 源文件，移除这些选中的行
+                    csv_files = glob.glob('*.csv')
+                    for file in csv_files:
+                        try:
+                            with open(file, 'r', encoding='utf-8-sig', errors='ignore') as f:
+                                reader = list(csv.DictReader(f))
+                                if not reader: continue
+                                headers = reader[0].keys()
+                            
+                            new_rows = []
+                            modified = False
+                            for row in reader:
+                                t_norm = row.get('Document Title', '').strip().lower()
+                                if t_norm in selected_titles_lower:
+                                    modified = True # 标记此 CSV 被改动过了
+                                else:
+                                    new_rows.append(row)
+                                    
+                            if modified:
+                                with open(file, 'w', encoding='utf-8-sig', newline='') as f:
+                                    writer = csv.DictWriter(f, fieldnames=headers)
+                                    writer.writeheader()
+                                    writer.writerows(new_rows)
+                        except Exception as e: pass
+                            
+                    # 2. 清除向量缓存，防止出现索引越界和张量错位
+                    for c_f in glob.glob('cache_*.npy'): 
+                        try: os.remove(c_f)
+                        except: pass
+                        
+                    st.session_state.purge_mode = False
+                    st.session_state['csv_state'] = 0  # 强制使顶部的 Sync 检测生效
+                    st.rerun() # 重新运行整个 Streamlit 加载最新改动的数据库
+                else:
+                    st.warning("No papers selected.")
 
 st.markdown("---")
 st.markdown("### 💡 Keyword Generator")
@@ -434,7 +536,6 @@ with st.expander("🛠️ Metadata Pre-Filters (Optional)", expanded=False):
     with c_f2:
         if active_years: 
             min_y, max_y = min(active_years), max(active_years)
-            # 🌟 核心修复：如果只有一个年份，强行把下限往前推一年，避免滑动条崩溃
             if min_y == max_y: min_y -= 1 
             selected_years = st.slider("Filter by Year", min_y, max_y, (min_y, max_y))
         else: 
@@ -578,7 +679,6 @@ elif sort_option == "🏆 Comprehensive Score":
 with col_batch:
     st.markdown("### 🛠️ Batch Select")
     rel_threshold = st.slider("Select Relevance >=", 0.0, 1.0, 0.40, 0.05)
-    # 增加为 5 列
     c_b1, c_b2, c_b3, c_b4, c_b5 = st.columns(5)
     
     def do_batch_select(mode, val=None):
@@ -590,7 +690,7 @@ with col_batch:
             if mode == 'threshold' and (sim >= val or not search_query): 
                 st.session_state[chk_key] = True
                 count += 1
-            elif mode == 'rare' and (sim >= 0.60 or not search_query): # 新增 Rare 逻辑
+            elif mode == 'rare' and (sim >= 0.60 or not search_query): 
                 st.session_state[chk_key] = True
                 count += 1
             elif mode == 'perfect' and (sim >= 0.40 or not search_query): 
@@ -605,7 +705,6 @@ with col_batch:
         if mode == 'deselect': st.toast("🧹 Cleared all selections.")
         else: st.toast(f"✅ Successfully selected {count} papers!")
 
-    # 按钮绑定
     with c_b1: st.button(f"≥ {rel_threshold:.2f}", on_click=do_batch_select, args=('threshold', rel_threshold), use_container_width=True)
     with c_b2: st.button("💎 Rare", on_click=do_batch_select, args=('rare',), use_container_width=True)
     with c_b3: st.button("🎯 Perfect", on_click=do_batch_select, args=('perfect',), use_container_width=True)
@@ -753,15 +852,7 @@ if st.sidebar.button("📄 Open Selected PDFs", type="secondary", use_container_
         if url: webbrowser.open_new_tab(url); success_count += 1
     st.sidebar.info(f"Opened {success_count} tabs.")
 
-import time
-import random
-import os
-import re
-from playwright.sync_api import sync_playwright
-import streamlit as st
-
 st.sidebar.markdown("---")
-# 已经帮你加了 r 前缀，并修改为新的目标文件夹
 save_dir = st.sidebar.text_input("📁 Local Save Folder", value=r"G:\我的云端硬盘\TSMC018202604", help="The local directory where PDFs will be saved.")
 
 if st.sidebar.button("⬇️ Batch Download Selected PDFs", type="primary", use_container_width=True):
@@ -773,7 +864,6 @@ if st.sidebar.button("⬇️ Batch Download Selected PDFs", type="primary", use_
         status_text = st.sidebar.empty()
         success_n, fail_n = 0, 0
         
-        # 启动虚拟浏览器引擎 (Headless 改回 True)
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True, args=["--disable-blink-features=AutomationControlled"])
             context = browser.new_context(
@@ -794,7 +884,7 @@ if st.sidebar.button("⬇️ Batch Download Selected PDFs", type="primary", use_
                 
                 try:
                     page.goto(url, wait_until="domcontentloaded", timeout=20000)
-                    time.sleep(2) # 增加渲染等待时间，更像人类
+                    time.sleep(2)
                     
                     actual_pdf_url = url
                     if "ieeexplore.ieee.org" in page.url or "stamp.jsp" in page.url:
@@ -819,12 +909,11 @@ if st.sidebar.button("⬇️ Batch Download Selected PDFs", type="primary", use_
                     
                 progress_bar.progress((i + 1) / len(selected_papers))
                 
-                # 💥 核心防封禁机制：动态长延迟 + 批量强制休息
                 sleep_time = random.uniform(8.0, 18.0) 
                 time.sleep(sleep_time)
                 if (i + 1) % 10 == 0:
                     status_text.markdown(f"**☕ Anti-Scraping Cooldown:** Resting for 45 seconds to reset IP trust...")
-                    time.sleep(45) # 每下10篇，强制休息45秒
+                    time.sleep(45)
                 
             browser.close() 
             
