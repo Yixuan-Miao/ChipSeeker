@@ -55,8 +55,41 @@ class PaperSearcher:
     def _l_c(self):
         if os.path.exists(self.cf):
             print(f"⚡ [系统日志] I/O 快速命中 | 提取预编译高维张量缓存: {self.cf}")
-            return np.load(self.cf)
-        print(f"🚀 [系统日志] 本地矩阵空缺 | 触发 {self.mn} 全局张量重构协议 (警告: 若挂载云端模型将产生 Token 计费)")
+            try:
+                # 尝试加载旧的矩阵
+                e = np.load(self.cf)
+                
+                # 1. 如果长度一致，说明没有新文章，直接返回
+                if e.shape[0] == len(self.dt):
+                    return e
+                
+                # 2. 如果旧矩阵长度 < JSON论文库长度，说明有新文章加入了！触发【增量更新】
+                elif e.shape[0] < len(self.dt):
+                    print(f"📈 [系统日志] 触发【增量编译】! 现有缓存: {e.shape[0]}，目标总数: {len(self.dt)}")
+                    # 切片提取出新增的文章
+                    new_papers = self.dt[e.shape[0]:]
+                    t = [(p.get('title', '') + " " + p.get('abstract', '')) for p in new_papers]
+                    
+                    # 只对新文章跑 Embedding
+                    new_e = self._e_b(t)
+                    
+                    # 将新矩阵拼接到旧矩阵的末尾
+                    e = np.vstack((e, new_e))
+                    
+                    # 保存拼接后的新矩阵覆盖旧文件
+                    np.save(self.cf, e)
+                    print(f"✅ [系统日志] 矩阵无缝拼接完成 | 增量固化至: {self.cf}")
+                    return e
+                
+                # 3. 如果旧矩阵长度 > JSON库，或者发生了错位，说明文件体系损坏
+                else:
+                    print(f"⚠️ [系统日志] 数据库索引发生错乱 (NPY大于JSON)。疑似受到损坏，启动安全协议：强制全局重构...")
+            
+            except Exception as ex:
+                print(f"⚠️ [系统日志] 缓存文件底层损坏无法读取 ({ex})。启动安全协议：强制全局重构...")
+
+        # 4. 如果没有 .npy 文件，或者上面触发了重构机制，则全量重跑
+        print(f"🚀 [系统日志] 本地矩阵空缺或已损坏 | 触发 {self.mn} 全局张量重构协议 (警告: 挂载云端模型将产生 Token 计费)")
         t = [(p.get('title', '') + " " + p.get('abstract', '')) for p in self.dt]
         e = self._e_b(t)
         np.save(self.cf, e)
