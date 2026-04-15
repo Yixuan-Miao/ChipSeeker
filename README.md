@@ -1,55 +1,5 @@
 ﻿# ChipSeeker / SearchPaperByEmbedding
 
-ChipSeeker is a local paper search tool for chip, circuit, RF, mixed-signal, quantum hardware, and related topics.
-
-## What It Does
-
-- Streamlit UI for paper search and review
-- Local or API-based embedding search
-- Auto-sync from compatible CSV files into a local JSON database
-- Versioned `local_data` schema with automatic migrations
-- Hybrid filtering by year, venue, and exact-match keywords
-- Conflict review page for dedupe edge cases before import collapses them
-- LLM keyword generation, single-paper analysis, and global review generation
-- Export selected papers to NotebookLM markdown, CSV, and BibTeX
-- Background embedding build and background PDF download queue
-- Built-in `Nature_Grabber.py` for Nature / Nature Electronics metadata collection
-- Venue rules stored in `chipseeker/data/venue_rules.json`
-
-## Repo Layout
-
-- `app.py`: main Streamlit app
-- `chipseeker/app_main.py`: Streamlit UI entry implementation
-- `chipseeker/data_sync.py`: CSV sync, deduplication, source manifest, source organization
-- `chipseeker/conflict_review.py`: source-record conflict detection and review helpers
-- `chipseeker/search_ui.py`: hybrid filtering, highlight, ranking helpers
-- `chipseeker/exports.py`: NotebookLM / CSV / BibTeX export helpers
-- `chipseeker/maintenance.py`: purge and cache maintenance helpers
-- `chipseeker/migrations.py`: local data schema versioning and migrations
-- `chipseeker/task_queue.py`: background task queue for embedding and PDF downloads
-- `chipseeker/data/venue_rules.json`: editable venue rules and color metadata
-- `search_runtime.py`: active embedding search runtime
-- `search.py`: compatibility shim
-- `Nature_Grabber.py`: Nature metadata collector
-- `scripts/setup.ps1`: Windows setup
-- `scripts/setup.sh`: macOS / Linux setup
-- `config.example.json`: public config template
-- `config.local.json`: local private config, do not commit
-- `local_data/`: runtime data directory, ignored by git
-
-## local_data Layout
-
-- `local_data/sources/`: source CSV files scanned by the app
-- `local_data/sources/manual/`: hand-collected and Nature-collected CSVs
-- `local_data/sources/generated_exports/`: exported CSV batches
-- `local_data/cache/`: embedding cache files
-- `local_data/exports/`: NotebookLM markdown and future exports
-- `local_data/downloads/`: downloaded PDFs
-- `local_data/backups/`: purge backups
-- `local_data/schema_state.json`: local schema version state
-- `local_data/conflict_resolutions.json`: dismissed conflict review items
-- `local_data/*.json`: local database and user state
-
 ## Quick Install
 
 Windows:
@@ -100,15 +50,14 @@ pip install .[dev]
 
 ## Config
 
-1. Copy `config.example.json` to `config.local.json`
+1. Copy `config.example.json` to `config.local.json`.
 2. Fill the fields you need:
    - `embedding_model`
    - `emb_api_key`
    - `llm_api_key`
    - `llm_base_url`
    - `llm_model`
-
-If you only want local embedding, set `embedding_model` to `all-MiniLM-L6-v2`.
+3. If you only want local embedding, set `embedding_model` to `all-MiniLM-L6-v2`.
 
 ## Run
 
@@ -124,35 +73,46 @@ CLI example:
 python Nature_Grabber.py --query "cryogenic CMOS qubit readout" --journal nature-electronics --output nature_quantum.csv
 ```
 
+Incremental example:
+
+```bash
+python Nature_Grabber.py --query "cryogenic CMOS qubit readout" --start-date 2026-04-01 --output nature_quantum_incremental.csv
+```
+
 If `--output` is a relative path, the CSV is written to `local_data/sources/manual/`.
 
-The Streamlit sidebar also exposes Nature Grabber directly. The output CSV is app-compatible and will be picked up by the library sync.
+## Update Manager
 
-## CSV Schema
+- `IEEE Incremental`: ChipSeeker tracks each venue watermark, opens the venue page for your manual CSV export, and advances the watermark after you upload the exported batch.
+- `Nature Incremental`: ChipSeeker tracks each query's last checked date and runs incremental pulls in the background.
+- `Conflict Review`: surfaces dedupe anomalies such as same title with different years, or same DOI with different abstracts before they silently collapse into one record.
 
-The app scans compatible source CSV files recursively under `local_data/sources/`.
-Root-level CSVs are automatically organized into `manual/` or `generated_exports/`, and a manifest is written to `local_data/source_manifest.json`.
-The manifest is versioned, and startup migrations keep `local_data` compatible when the on-disk layout changes.
+## Repo Layout
 
-Required fields:
+- `app.py`: main Streamlit entry
+- `chipseeker/app_main.py`: Streamlit UI entry implementation
+- `chipseeker/data_sync.py`: CSV sync, deduplication, source manifest, source organization
+- `chipseeker/conflict_review.py`: source-record conflict detection and review helpers
+- `chipseeker/migrations.py`: local data schema versioning and migrations
+- `chipseeker/task_queue.py`: background task queue for embedding, PDF, and Nature incremental jobs
+- `chipseeker/update_manager.py`: source registry, update watermarks, IEEE batches, and Nature incremental helpers
+- `chipseeker/data/venue_rules.json`: editable venue rules and color metadata
+- `chipseeker/data/source_registry_template.json`: default IEEE / Nature update source template
+- `search_runtime.py`: active embedding search runtime
+- `search.py`: compatibility shim
+- `Nature_Grabber.py`: Nature metadata collector
 
-- `Document Title`
-- `Abstract`
-- `Authors`
-- `Author Keywords`
-- `Publication Year`
-- `Publication Title`
-- `DOI`
-- `PDF Link`
+## local_data Layout
 
-When source CSV files change, the app automatically syncs the local paper database and rebuilds cache when needed.
-
-## Review And Background Jobs
-
-- `Conflict Review` in the sidebar exposes dedupe anomalies such as same title with different years, or same DOI with different abstracts.
-- Missing embedding cache is built in a background task instead of blocking app startup.
-- PDF batch download now runs as a background queue, so the UI stays usable while downloads continue.
-- Venue matching is editable through `chipseeker/data/venue_rules.json`; updating the rules no longer requires touching Python code.
+- `local_data/sources/manual/`: hand-collected CSVs and IEEE incremental upload batches
+- `local_data/sources/generated_exports/`: generated CSV batches, including Nature incremental outputs
+- `local_data/cache/`: embedding cache files
+- `local_data/exports/`: NotebookLM markdown and future exports
+- `local_data/downloads/`: downloaded PDFs
+- `local_data/backups/`: purge backups
+- `local_data/schema_state.json`: local schema version state
+- `local_data/conflict_resolutions.json`: dismissed conflict review items
+- `local_data/source_registry.json`: IEEE / Nature update registry and watermarks
 
 ## Tests
 
@@ -166,3 +126,146 @@ pytest
 - Do not commit local CSV / JSON / NPY / PDF data
 - Do not commit any real API key
 - `.gitignore` is already set up to ignore `local_data/`
+
+## Original README
+
+The original project README content is preserved below.
+
+[English](#english-version) | [简体中文](#中文版本)
+
+---
+
+<a id="english-version"></a>
+# 🔬 ChipSeeker - The Ultimate AI Search Engine for IC Design
+
+**ChipSeeker** is a localized, intelligent paper repository tailored specifically for **IC design engineers and researchers**. 
+
+Tired of incomplete or inaccurate keyword searches and the hassle of filtering out low-quality papers on IEEE Xplore or other academic search engines? ChipSeeker leverages high-dimensional vector semantic retrieval to build a fast, localized, and highly accurate personal knowledge base.
+
+---
+<img width="1703" height="936" alt="45ab0a5d948316db7a7896ffe000673b" src="https://github.com/user-attachments/assets/e886569a-a144-48eb-8a27-cc83e67ffba4" />
+<img width="1712" height="1089" alt="959728b4c0db5f5d2ea8eb08bc877126" src="https://github.com/user-attachments/assets/ba21993f-a6c8-4904-8cd3-37dfad642b52" />
+
+## Key Features
+
+* **Semantic High-Dimensional Retrieval** Powered by top-tier academic LLMs like Voyage-4 and OpenAI. Break free from rigid keyword matching; perform deep semantic searches based on circuit architectures and specifications. This ensures you never miss highly relevant, high-quality papers, even if they lack exact keyword matches.
+* **IC-Specific Scoring System** Features a comprehensive ranking of top IC conferences and journals, assigning exclusive tags like S+ or AA to premier venues (e.g., ISSCC, JSSC). It scientifically quantifies a paper's value by combining real-time citation counts from Semantic Scholar with publication years.
+* **LLM Integration** Seamlessly connects with DeepSeek, Kimi, and other leading LLM APIs.
+* **One-Click Export** Instantly open PDFs or seamlessly generate CSV databases, standard IEEE BibTeX citations, and Markdown knowledge packs optimized for NotebookLM.
+* **Permanent Local Storage** Keep a permanent log of your reading history. Rate papers (from "Masterpiece" to "Trash"), add custom notes, and save search queries—a reliable companion for your entire academic career.
+* **Automated Data Cleaning** Uses underlying regex rules to clean up messy CSV exports from IEEE. It physically filters out non-academic clutter, such as special issue introductions and conference table of contents, ensuring a 100% pure repository.
+
+---
+
+## Quick Start  
+
+### 1. Installation
+Clone the repository and install the required dependencies (Python 3.9+ recommended):
+```bash
+git clone [https://github.com/Yixuan-Miao/ChipSeeker.git](https://github.com/Yixuan-Miao/ChipSeeker.git)
+cd ChipSeeker
+pip install -r requirements.txt
+
+```
+
+### 2. Run the App
+
+Start the application from your terminal:
+
+```bash
+streamlit run app.py
+
+```
+
+Once started, the terminal will output a `Local URL` (e.g., `http://localhost:8501`). Open this address in your browser to access the web interface.
+
+### 3. Try the Demo
+
+For easy testing, the system comes pre-loaded with approximately 300 IEEE TMTT papers from 2026.
+Open the web page, configure your DeepSeek or OpenAI API Key in the left sidebar, and try searching for a paper to experience the scoring, AI analysis, and batch export features.
+
+## How to Build Your Private Database?
+
+**Method 1: Manual Import** Drop your exported `.csv` files (must include the `Abstract` column) into the designated folder and refresh the web page.
+
+**Method 2: Get the Pro Database Curated by the Author** * **27,000+ Selected Top IC Papers:** Covers nearly 20 years of premier venues including ISSCC, JSSC, VLSI, and CICC.
+
+* **Pre-computed SOTA Vector Matrices:** Includes 1024-dimensional `.npy` matrix files generated by the state-of-the-art academic model `voyage-4-large`. Simply overwrite your local files to instantly unlock top-tier retrieval accuracy.
+
+**Contact:**
+
+* **Email:** guangeofaisa@gmail.com
+* **Xiaohongshu (RED):** guangeofaisa
+
+Developed with ❤️ by Miao Yixuan. For IC Designers, by an IC Designer. If you find this helpful, please leave a Star! ⭐
+
+---
+
+<a id="中文版本"></a>
+
+# 🔬 ChipSeeker (芯寻) - The Ultimate IC Design AI Search Engine
+
+**ChipSeeker** 是一款专为**集成电路设计工程师与研究人员**打造的本地化智能论文库。
+
+解决IEEE Xplore/各大AI找文网站关键词找论文不全不准/低质量论文不方便筛出，ChipSeeker 利用高维向量语义检索，构建快速搜索、本地化、找论文又准又精的私人知识库。
+
+---
+
+<img width="1703" height="936" alt="45ab0a5d948316db7a7896ffe000673b" src="https://github.com/user-attachments/assets/e886569a-a144-48eb-8a27-cc83e67ffba4" />
+<img width="1712" height="1089" alt="959728b4c0db5f5d2ea8eb08bc877126" src="https://github.com/user-attachments/assets/ba21993f-a6c8-4904-8cd3-37dfad642b52" />
+
+## ChipSeeker 核心特性
+
+* **语义级高维检索** 对接 Voyage-4 / OpenAI 等顶尖学术大模型。摆脱死板的关键词匹配，基于电路架构和指标进行深层语义检索，不漏过字面不包含但强相关的优质论文。
+* **IC 专属打分系统** IC 圈顶会顶刊综排，为 ISSCC、JSSC 等打上 S+ / AA 专属标签；
+结合 Semantic Scholar 实时被引量与发表年份，科学量化论文价值。
+* **LLM接口** 无缝接入 DeepSeek / Kimi 等 API。
+* **一键导出** 支持一键打开 PDF，无缝生成 CSV 数据库、标准 IEEE BibTeX 引文代码，以及专供 NotebookLM 的 Markdown 喂料包。
+* **本地记录永久保存** 永久记录你的阅读历史。支持为论文打分（神作至垃圾）、添加专属笔记、记录搜索匹配词，伴随你的整个科研生涯。
+* **全自动数据清洗** 针对 IEEE 导出的混乱 CSV 进行底层正则拦截。物理级过滤特刊介绍、会议目录等非学术废料，保证文库 100% 纯净。
+
+---
+
+## Quick Start
+
+### 1. 环境安装
+
+克隆代码并安装必要的依赖（建议 Python 3.9+）：
+
+```bash
+git clone [https://github.com/Yixuan-Miao/ChipSeeker.git](https://github.com/Yixuan-Miao/ChipSeeker.git)
+cd ChipSeeker
+pip install -r requirements.txt
+
+```
+
+### 2. 运行
+
+在终端输入以下命令启动：
+
+```bash
+streamlit run app.py
+
+```
+
+启动后，终端会输出一行类似于 `Local URL: http://localhost:8501` 的地址。打开你的浏览器，输入 `localhost:8501` 即可进入系统网页。
+
+### 3. 体验预设数据 (Demo)
+
+为了方便测试，系统中已预设了约 300 篇 2026 年的 IEEE TMTT 论文数据。
+打开网页后，你可以直接在左侧边栏配置你自己的 DeepSeek 或 OpenAI API Key，尝试搜索一篇论文，体验打分、AI 分析和批量导出功能。
+
+## 如何构建你的私人Database？
+
+**一：手动导入** 导出为 `.csv` 格式（需包含 Abstract）的文件丢入文件夹，刷新网页即可。
+
+**二：联系获取作者整理好的 Pro 完整版数据库** * **27,000+ 篇精选 IC 顶刊顶会：** 涵盖近 20 年的 ISSCC, JSSC, VLSI, CICC 等。
+
+* **自带 SOTA 向量矩阵：** 附带使用现役最强学术模型 `voyage-4-large` 跑满的 1024 维 `.npy` 矩阵文件。下载后直接覆盖本地，瞬间解锁顶级精准度的检索体验。
+
+**获取方式 (Contact):**
+
+* **Email:** guangeofaisa@gmail.com
+* **小红书:** guangeofaisa
+
+Developed by Miao Yixuan. 如果满意请帮作者点一个Star吧！⭐

@@ -8,6 +8,8 @@ DATA_DIR = os.path.join(BASE_DIR, "local_data")
 SOURCE_CSV_DIR = os.path.join(DATA_DIR, "sources")
 MANUAL_SOURCE_DIR = os.path.join(SOURCE_CSV_DIR, "manual")
 GENERATED_SOURCE_DIR = os.path.join(SOURCE_CSV_DIR, "generated_exports")
+IEEE_UPDATE_DIR = os.path.join(MANUAL_SOURCE_DIR, "ieee_updates")
+NATURE_UPDATE_DIR = os.path.join(GENERATED_SOURCE_DIR, "nature_updates")
 CACHE_DIR = os.path.join(DATA_DIR, "cache")
 EXPORT_DIR = os.path.join(DATA_DIR, "exports")
 DOWNLOAD_DIR = os.path.join(DATA_DIR, "downloads")
@@ -20,12 +22,14 @@ RESULTS_FILE = os.path.join(DATA_DIR, "results.json")
 SOURCE_MANIFEST_FILE = os.path.join(DATA_DIR, "source_manifest.json")
 LOCAL_DATA_STATE_FILE = os.path.join(DATA_DIR, "schema_state.json")
 CONFLICT_RESOLUTIONS_FILE = os.path.join(DATA_DIR, "conflict_resolutions.json")
+SOURCE_REGISTRY_FILE = os.path.join(DATA_DIR, "source_registry.json")
 NOTEBOOKLM_EXPORT_FILE = os.path.join(EXPORT_DIR, "NotebookLM_Sources.md")
 VENUE_RULES_FILE = os.path.join(PACKAGE_DATA_DIR, "venue_rules.json")
+SOURCE_REGISTRY_TEMPLATE_FILE = os.path.join(PACKAGE_DATA_DIR, "source_registry_template.json")
 CONFIG_FILE = os.path.join(BASE_DIR, "config.local.json")
 LEGACY_CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
 EXAMPLE_CONFIG_FILE = os.path.join(BASE_DIR, "config.example.json")
-CURRENT_LOCAL_DATA_VERSION = 2
+CURRENT_LOCAL_DATA_VERSION = 3
 
 
 def ensure_runtime_dirs():
@@ -35,6 +39,8 @@ def ensure_runtime_dirs():
         SOURCE_CSV_DIR,
         MANUAL_SOURCE_DIR,
         GENERATED_SOURCE_DIR,
+        IEEE_UPDATE_DIR,
+        NATURE_UPDATE_DIR,
         CACHE_DIR,
         EXPORT_DIR,
         DOWNLOAD_DIR,

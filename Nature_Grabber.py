@@ -50,11 +50,11 @@ def resolve_output_path(output_file):
     return target_path
 
 
-def build_search_params(query, journal, year_from, page):
+def build_search_params(query, journal, year_from, page, start_date=None):
     params = {
         "q": query,
         "page": page,
-        "date_range": f"{year_from}-01-01_{time.strftime('%Y-%m-%d')}",
+        "date_range": f"{start_date or f'{year_from}-01-01'}_{time.strftime('%Y-%m-%d')}",
     }
     if journal:
         params["journal"] = journal
@@ -126,7 +126,7 @@ def parse_article(session, article_url):
     }
 
 
-def grab_nature(query, output_file, journal="", year_from=2015, max_pages=5, sleep_seconds=1.0):
+def grab_nature(query, output_file, journal="", year_from=2015, start_date=None, max_pages=5, sleep_seconds=1.0):
     ensure_bs4()
     output_path = resolve_output_path(output_file)
     session = requests.Session()
@@ -134,7 +134,7 @@ def grab_nature(query, output_file, journal="", year_from=2015, max_pages=5, sle
     seen_urls = set()
 
     for page in range(1, max_pages + 1):
-        html = fetch_html(session, SEARCH_URL, build_search_params(query, journal, year_from, page))
+        html = fetch_html(session, SEARCH_URL, build_search_params(query, journal, year_from, page, start_date=start_date))
         article_urls = parse_search_results(html)
         if not article_urls:
             break
@@ -157,6 +157,7 @@ def grab_nature(query, output_file, journal="", year_from=2015, max_pages=5, sle
         writer.writerows(rows)
 
     print(f"[Nature_Grabber] wrote {len(rows)} rows to {output_path}")
+    return rows
 
 
 def main():
@@ -165,6 +166,7 @@ def main():
     parser.add_argument("--output", required=True, help="Output CSV path")
     parser.add_argument("--journal", default="", help="Journal filter, e.g. nature or nature-electronics")
     parser.add_argument("--year-from", type=int, default=2015, help="Start year")
+    parser.add_argument("--start-date", default="", help="Optional ISO start date for incremental updates, e.g. 2026-04-01")
     parser.add_argument("--max-pages", type=int, default=5, help="Max search pages to scan")
     parser.add_argument("--sleep", type=float, default=1.0, help="Delay between article requests in seconds")
     args = parser.parse_args()
@@ -174,6 +176,7 @@ def main():
         output_file=args.output,
         journal=args.journal,
         year_from=args.year_from,
+        start_date=args.start_date or None,
         max_pages=args.max_pages,
         sleep_seconds=args.sleep,
     )

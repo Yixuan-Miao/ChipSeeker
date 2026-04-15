@@ -4,8 +4,10 @@ import re
 import threading
 import time
 import uuid
+from datetime import date
 from concurrent.futures import ThreadPoolExecutor
 
+from chipseeker.update_manager import default_nature_start_date, find_source, load_source_registry, save_nature_run_result, save_source_registry
 from search_runtime import PaperSearcher
 
 
@@ -144,4 +146,53 @@ def submit_pdf_download(papers, save_dir):
         "pdf-download",
         {"papers": papers, "save_dir": save_dir},
         _download_pdfs,
+    )
+
+
+def _run_nature_incremental(task_id, payload):
+    from Nature_Grabber import grab_nature
+
+    registry = load_source_registry(payload["registry_path"])
+    source_ids = payload["source_ids"]
+    output_dir = payload["output_dir"]
+    run_date = date.today().isoformat()
+    completed_ids = []
+    written_files = []
+
+    for index, source_id in enumerate(source_ids):
+        source = find_source(registry, source_id)
+        if not source or not source.get("enabled") or not source.get("query"):
+            continue
+        update_progress(task_id, index / max(1, len(source_ids)), f"Fetching Nature source {source.get('name', source_id)}")
+        source_dir = os.path.join(output_dir, source_id)
+        os.makedirs(source_dir, exist_ok=True)
+        output_file = os.path.join(source_dir, f"{source.get('export_prefix', source_id)}_{run_date}.csv")
+        try:
+            rows = grab_nature(
+                query=source["query"],
+                output_file=output_file,
+                journal=source.get("journal", ""),
+                year_from=2015,
+                start_date=default_nature_start_date(source),
+                max_pages=int(source.get("max_pages", 5)),
+                sleep_seconds=float(source.get("sleep_seconds", 1.0)),
+            )
+        except Exception as exc:
+            written_files.append({"source_id": source_id, "output_file": output_file, "rows": 0, "error": str(exc)})
+            continue
+        written_files.append({"source_id": source_id, "output_file": output_file, "rows": len(rows)})
+        completed_ids.append(source_id)
+
+    if completed_ids:
+        save_nature_run_result(registry, completed_ids, run_date)
+        save_source_registry(registry, payload["registry_path"])
+    update_progress(task_id, 1.0, "Nature incremental update finished")
+    return {"source_ids": completed_ids, "written_files": written_files, "checked_date": run_date}
+
+
+def submit_nature_incremental(registry_path, source_ids, output_dir):
+    return submit_task(
+        "nature-incremental",
+        {"registry_path": registry_path, "source_ids": source_ids, "output_dir": output_dir},
+        _run_nature_incremental,
     )

@@ -16,18 +16,24 @@ def test_migrate_local_data_wraps_manifest_and_moves_root_csv(tmp_path, monkeypa
 
     state_path = data_dir / "schema_state.json"
     conflict_path = data_dir / "conflict_resolutions.json"
+    registry_path = data_dir / "source_registry.json"
+    template_path = tmp_path / "source_registry_template.json"
+    template_path.write_text('{"schema_version":1,"sources":[{"id":"ieee_jssc","provider":"ieee"}],"pending_ieee_batch":null}', encoding="utf-8")
 
     monkeypatch.setattr(migrations, "SOURCE_CSV_DIR", str(source_dir))
     monkeypatch.setattr(migrations, "MANUAL_SOURCE_DIR", str(manual_dir))
     monkeypatch.setattr(migrations, "SOURCE_MANIFEST_FILE", str(manifest_path))
     monkeypatch.setattr(migrations, "LOCAL_DATA_STATE_FILE", str(state_path))
     monkeypatch.setattr(migrations, "CONFLICT_RESOLUTIONS_FILE", str(conflict_path))
+    monkeypatch.setattr(migrations, "SOURCE_REGISTRY_FILE", str(registry_path))
+    monkeypatch.setattr(migrations, "SOURCE_REGISTRY_TEMPLATE_FILE", str(template_path))
 
     state = migrations.migrate_local_data()
 
-    assert state["schema_version"] == 2
+    assert state["schema_version"] == 3
     assert (manual_dir / "legacy.csv").exists()
     manifest = load_json(str(manifest_path), {})
     assert manifest["schema_version"] >= 1
     assert manifest["entries"][0]["relative_path"] == "legacy.csv"
     assert load_json(str(conflict_path), {})["dismissed"] == []
+    assert load_json(str(registry_path), {})["sources"][0]["id"] == "ieee_jssc"

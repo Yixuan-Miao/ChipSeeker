@@ -4,7 +4,7 @@ import os
 import sys
 import time
 import webbrowser
-from datetime import datetime
+from datetime import date, datetime
 
 import streamlit as st
 
@@ -29,15 +29,34 @@ from chipseeker.paths import (
     DB_FILE,
     DOWNLOAD_DIR,
     EXAMPLE_CONFIG_FILE,
+    IEEE_UPDATE_DIR,
     LEGACY_CONFIG_FILE,
     LOCAL_DATA_STATE_FILE,
+    NATURE_UPDATE_DIR,
     NOTEBOOKLM_EXPORT_FILE,
     SOURCE_CSV_DIR,
     SOURCE_MANIFEST_FILE,
+    SOURCE_REGISTRY_FILE,
     USER_DATA_FILE,
 )
 from chipseeker.search_ui import collect_year_counts, filter_search_results, get_paper_id, highlight_text, required_words_from_query, result_bucket_counts, sort_results
-from chipseeker.task_queue import cleanup_task, get_task, submit_embedding_build, submit_pdf_download
+from chipseeker.task_queue import cleanup_task, get_task, submit_embedding_build, submit_nature_incremental, submit_pdf_download
+from chipseeker.update_manager import (
+    advance_ieee_sources,
+    build_ieee_search_url,
+    clear_pending_ieee_batch,
+    current_month_string,
+    default_nature_start_date,
+    find_source,
+    list_sources,
+    load_source_registry,
+    month_bounds,
+    replace_source,
+    save_ieee_uploaded_file,
+    save_source_registry,
+    source_target_window,
+    start_ieee_batch,
+)
 from chipseeker.utils import extract_year, load_json, save_json, slugify_filename
 from chipseeker.venue_data import DOMAIN_COLORS, TIER_COLORS, analyze_venue, get_venue_display_str
 from search_runtime import PaperSearcher, get_cache_paths
@@ -172,6 +191,240 @@ def render_conflict_review(source_csv_files):
                 st.rerun()
 
 
+def render_update_manager(source_csv_files):
+    st.header("Update Manager")
+    st.caption("IEEE uses manual incremental batches. Nature uses automatic incremental updates.")
+
+    registry = load_source_registry(SOURCE_REGISTRY_FILE)
+    ieee_sources = list_sources(registry, "ieee")
+    nature_sources = list_sources(registry, "nature")
+
+    metric_col1, metric_col2, metric_col3 = st.columns(3)
+    metric_col1.metric("IEEE Sources", sum(1 for source in ieee_sources if source.get("enabled")))
+    metric_col2.metric("Nature Sources", sum(1 for source in nature_sources if source.get("enabled")))
+    metric_col3.metric("Pending IEEE Batch", 1 if registry.get("pending_ieee_batch") else 0)
+
+    tab_ieee, tab_nature = st.tabs(["IEEE Incremental", "Nature Incremental"])
+
+    with tab_ieee:
+        st.markdown("### IEEE Source Registry")
+        st.caption("ChipSeeker opens venue-specific IEEE Xplore pages and shows the exact target date window. Xplore date facets are not stable enough to encode as a durable URL.")
+
+        with st.form("ieee_registry_form"):
+            for source in ieee_sources:
+                with st.expander(source.get("name", source["id"]), expanded=False):
+                    st.checkbox("Enabled", value=source.get("enabled", True), key=f"ieee_enabled_{source['id']}")
+                    st.text_input("Search Query", value=source.get("search_query", ""), key=f"ieee_query_{source['id']}")
+                    st.text_input("Open URL", value=source.get("open_url", ""), key=f"ieee_url_{source['id']}")
+                    st.text_input("Last Completed Month (YYYY-MM)", value=source.get("last_completed_month", ""), key=f"ieee_last_month_{source['id']}")
+                    st.caption(source.get("notes", ""))
+            if st.form_submit_button("Save IEEE Source Settings", use_container_width=True):
+                for source in ieee_sources:
+                    replace_source(
+                        registry,
+                        source["id"],
+                        {
+                            "enabled": st.session_state[f"ieee_enabled_{source['id']}"],
+                            "search_query": st.session_state[f"ieee_query_{source['id']}"],
+                            "open_url": st.session_state[f"ieee_url_{source['id']}"],
+                            "last_completed_month": st.session_state[f"ieee_last_month_{source['id']}"],
+                        },
+                    )
+                save_source_registry(registry, SOURCE_REGISTRY_FILE)
+                st.success("IEEE source settings saved.")
+
+        enabled_ieee_sources = [source for source in list_sources(load_source_registry(SOURCE_REGISTRY_FILE), "ieee") if source.get("enabled")]
+        default_ieee_selection = [source["id"] for source in enabled_ieee_sources]
+        target_month = st.text_input("Target Update Month (YYYY-MM)", value=current_month_string(), key="ieee_target_month")
+        selected_ieee_ids = st.multiselect(
+            "Sources to update",
+            options=[source["id"] for source in enabled_ieee_sources],
+            default=default_ieee_selection,
+            format_func=lambda source_id: find_source(load_source_registry(SOURCE_REGISTRY_FILE), source_id).get("name", source_id),
+            key="ieee_selected_sources",
+        )
+
+        for source_id in selected_ieee_ids:
+            source = find_source(load_source_registry(SOURCE_REGISTRY_FILE), source_id)
+            start_date, end_date = source_target_window(source, target_month)
+            open_url = build_ieee_search_url(source, start_date, end_date)
+            st.markdown(
+                f"- **{source['name']}**: export papers for `{start_date}` to `{end_date}`. "
+                f"[Open IEEE Xplore]({open_url})"
+            )
+
+        action_col1, action_col2 = st.columns(2)
+        with action_col1:
+            if st.button("Open Selected IEEE Pages", use_container_width=True):
+                if not selected_ieee_ids:
+                    st.warning("Select at least one IEEE source.")
+                else:
+                    registry = load_source_registry(SOURCE_REGISTRY_FILE)
+                    batch = start_ieee_batch(registry, selected_ieee_ids, target_month)
+                    save_source_registry(registry, SOURCE_REGISTRY_FILE)
+                    for window in batch["windows"]:
+                        webbrowser.open_new_tab(window["open_url"])
+                    st.success("IEEE source pages opened. Download CSVs, then upload them below to finalize the batch.")
+
+        pending_batch = load_source_registry(SOURCE_REGISTRY_FILE).get("pending_ieee_batch")
+        with action_col2:
+            if pending_batch and st.button("Cancel Pending IEEE Batch", use_container_width=True):
+                registry = load_source_registry(SOURCE_REGISTRY_FILE)
+                clear_pending_ieee_batch(registry)
+                save_source_registry(registry, SOURCE_REGISTRY_FILE)
+                st.rerun()
+
+        if pending_batch:
+            st.markdown("### Finalize IEEE Batch")
+            st.info(
+                f"Pending batch `{pending_batch['id']}` targeting `{pending_batch['target_month']}` "
+                f"for {len(pending_batch['source_ids'])} source(s)."
+            )
+            uploaded_ieee_files = st.file_uploader(
+                "Upload the IEEE CSV exports for this batch",
+                type=["csv"],
+                accept_multiple_files=True,
+                key="ieee_batch_uploads",
+            )
+            if uploaded_ieee_files:
+                with st.form("ieee_import_form"):
+                    file_mappings = {}
+                    for index, uploaded_file in enumerate(uploaded_ieee_files):
+                        mapped_source_id = st.selectbox(
+                            f"Map `{uploaded_file.name}` to source",
+                            options=pending_batch["source_ids"],
+                            format_func=lambda source_id: find_source(load_source_registry(SOURCE_REGISTRY_FILE), source_id).get("name", source_id),
+                            key=f"ieee_map_{index}_{uploaded_file.name}",
+                        )
+                        file_mappings[uploaded_file.name] = mapped_source_id
+                    if st.form_submit_button("Import IEEE Batch and Advance Watermarks", use_container_width=True):
+                        registry = load_source_registry(SOURCE_REGISTRY_FILE)
+                        touched_source_ids = []
+                        saved_paths = []
+                        for uploaded_file in uploaded_ieee_files:
+                            source_id = file_mappings[uploaded_file.name]
+                            source = find_source(registry, source_id)
+                            if not source:
+                                continue
+                            saved_paths.append(save_ieee_uploaded_file(uploaded_file, source, pending_batch["target_month"], IEEE_UPDATE_DIR))
+                            touched_source_ids.append(source_id)
+                        scan_and_import_csvs(
+                            DB_FILE,
+                            CACHE_DIR,
+                            source_root=SOURCE_CSV_DIR,
+                            manifest_path=SOURCE_MANIFEST_FILE,
+                        )
+                        advance_ieee_sources(registry, sorted(set(touched_source_ids)), pending_batch["target_month"])
+                        clear_pending_ieee_batch(registry)
+                        save_source_registry(registry, SOURCE_REGISTRY_FILE)
+                        st.session_state["csv_state"] = ()
+                        st.success(f"Imported {len(saved_paths)} IEEE CSV file(s) and advanced {len(set(touched_source_ids))} source watermark(s).")
+                        st.rerun()
+
+    with tab_nature:
+        st.markdown("### Nature Source Registry")
+        with st.form("nature_registry_form"):
+            for source in nature_sources:
+                with st.expander(source.get("name", source["id"]), expanded=False):
+                    st.checkbox("Enabled", value=source.get("enabled", True), key=f"nature_enabled_{source['id']}")
+                    st.text_input("Display Name", value=source.get("name", ""), key=f"nature_name_{source['id']}")
+                    st.text_input("Query", value=source.get("query", ""), key=f"nature_query_{source['id']}")
+                    st.selectbox(
+                        "Journal Filter",
+                        options=["", "nature", "nature-electronics"],
+                        index=["", "nature", "nature-electronics"].index(source.get("journal", "")) if source.get("journal", "") in {"", "nature", "nature-electronics"} else 0,
+                        format_func=lambda value: {"": "All Nature journals", "nature": "Nature", "nature-electronics": "Nature Electronics"}.get(value, value),
+                        key=f"nature_journal_{source['id']}",
+                    )
+                    st.number_input("Max Pages", min_value=1, max_value=50, value=int(source.get("max_pages", 5)), step=1, key=f"nature_pages_{source['id']}")
+                    st.number_input("Request Delay (s)", min_value=0.0, max_value=10.0, value=float(source.get("sleep_seconds", 1.0)), step=0.5, key=f"nature_sleep_{source['id']}")
+                    last_checked = source.get("last_checked_date", "") or "2015-01-01"
+                    st.date_input("Last Checked Date", value=date.fromisoformat(last_checked), key=f"nature_last_checked_{source['id']}")
+                    st.caption(f"Next incremental start date: `{default_nature_start_date(source)}`")
+                    st.caption(source.get("notes", ""))
+            if st.form_submit_button("Save Nature Source Settings", use_container_width=True):
+                for source in nature_sources:
+                    replace_source(
+                        registry,
+                        source["id"],
+                        {
+                            "enabled": st.session_state[f"nature_enabled_{source['id']}"],
+                            "name": st.session_state[f"nature_name_{source['id']}"],
+                            "query": st.session_state[f"nature_query_{source['id']}"],
+                            "journal": st.session_state[f"nature_journal_{source['id']}"],
+                            "max_pages": int(st.session_state[f"nature_pages_{source['id']}"]),
+                            "sleep_seconds": float(st.session_state[f"nature_sleep_{source['id']}"]),
+                            "last_checked_date": st.session_state[f"nature_last_checked_{source['id']}"].isoformat(),
+                        },
+                    )
+                save_source_registry(registry, SOURCE_REGISTRY_FILE)
+                st.success("Nature source settings saved.")
+
+        with st.expander("Add Nature Source", expanded=False):
+            with st.form("nature_add_form"):
+                new_id = st.text_input("New Source ID", value="nature_new_source")
+                new_name = st.text_input("New Source Name", value="New Nature Source")
+                new_query = st.text_input("Nature Query", value="")
+                new_journal = st.selectbox("Journal", options=["", "nature", "nature-electronics"], format_func=lambda value: {"": "All Nature journals", "nature": "Nature", "nature-electronics": "Nature Electronics"}.get(value, value))
+                if st.form_submit_button("Add Nature Source", use_container_width=True):
+                    registry = load_source_registry(SOURCE_REGISTRY_FILE)
+                    if find_source(registry, new_id):
+                        st.error("Source ID already exists.")
+                    else:
+                        registry["sources"].append(
+                            {
+                                "id": new_id,
+                                "provider": "nature",
+                                "mode": "auto_incremental",
+                                "enabled": True,
+                                "name": new_name,
+                                "query": new_query,
+                                "journal": new_journal,
+                                "max_pages": 5,
+                                "sleep_seconds": 1.0,
+                                "last_checked_date": "",
+                                "export_prefix": new_id,
+                                "notes": "",
+                            }
+                        )
+                        save_source_registry(registry, SOURCE_REGISTRY_FILE)
+                        st.rerun()
+
+        registry = load_source_registry(SOURCE_REGISTRY_FILE)
+        runnable_nature_sources = [source for source in list_sources(registry, "nature") if source.get("enabled") and source.get("query")]
+        selected_nature_ids = st.multiselect(
+            "Nature sources to run",
+            options=[source["id"] for source in runnable_nature_sources],
+            default=[source["id"] for source in runnable_nature_sources],
+            format_func=lambda source_id: find_source(load_source_registry(SOURCE_REGISTRY_FILE), source_id).get("name", source_id),
+            key="nature_selected_sources",
+        )
+        for source_id in selected_nature_ids:
+            source = find_source(registry, source_id)
+            st.markdown(
+                f"- **{source['name']}**: query `{source.get('query', '')}` | "
+                f"journal `{source.get('journal') or 'all'}` | next start `{default_nature_start_date(source)}`"
+            )
+
+        nature_task_key = "nature_incremental_task"
+        nature_task_id = st.session_state.get(nature_task_key)
+        task = render_task_status(
+            nature_task_id,
+            "Nature incremental update",
+            success_message=lambda result: f"Nature incremental update finished for {len(result.get('source_ids', []))} source(s).",
+        )
+        if task is None and nature_task_id:
+            st.session_state.pop(nature_task_key, None)
+            st.session_state["csv_state"] = ()
+            st.rerun()
+        if st.button("Run Nature Incremental Update", type="primary", use_container_width=True):
+            if not selected_nature_ids:
+                st.warning("Select at least one Nature source with a query.")
+            else:
+                st.session_state[nature_task_key] = submit_nature_incremental(SOURCE_REGISTRY_FILE, selected_nature_ids, NATURE_UPDATE_DIR)
+                st.success("Nature incremental update queued in the background.")
+
+
 def run():
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
@@ -227,11 +480,15 @@ def run():
                 time.sleep(1.0)
                 st.rerun()
 
-    workspace_view = st.sidebar.radio("Workspace", ["Search", "Conflict Review"], horizontal=False)
+    workspace_view = st.sidebar.radio("Workspace", ["Search", "Update Manager", "Conflict Review"], horizontal=False)
     st.sidebar.caption(f"local_data schema v{schema_state.get('schema_version', '?')}")
 
     all_papers_in_db = load_json(DB_FILE, [])
     total_papers, db_stats, active_years = generate_db_stats(all_papers_in_db, analyze_venue)
+
+    if workspace_view == "Update Manager":
+        render_update_manager(source_csv_files)
+        return
 
     if workspace_view == "Conflict Review":
         render_conflict_review(source_csv_files)

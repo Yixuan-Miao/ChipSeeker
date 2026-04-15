@@ -1,0 +1,92 @@
+{
+  "schema_version": 1,
+  "sources": [
+    {
+      "id": "ieee_isscc",
+      "provider": "ieee",
+      "mode": "manual_incremental",
+      "enabled": true,
+      "name": "ISSCC",
+      "search_query": "ISSCC",
+      "open_url": "https://ieeexplore.ieee.org/search/searchresult.jsp?newsearch=true&queryText=ISSCC",
+      "export_prefix": "ieee_isscc",
+      "last_completed_month": "",
+      "notes": "Open IEEE Xplore, apply the target date window shown in ChipSeeker, then export CSV with abstracts."
+    },
+    {
+      "id": "ieee_jssc",
+      "provider": "ieee",
+      "mode": "manual_incremental",
+      "enabled": true,
+      "name": "JSSC",
+      "search_query": "Journal of Solid-State Circuits",
+      "open_url": "https://ieeexplore.ieee.org/search/searchresult.jsp?newsearch=true&queryText=Journal%20of%20Solid-State%20Circuits",
+      "export_prefix": "ieee_jssc",
+      "last_completed_month": "",
+      "notes": "Open IEEE Xplore, apply the target date window shown in ChipSeeker, then export CSV with abstracts."
+    },
+    {
+      "id": "ieee_cicc",
+      "provider": "ieee",
+      "mode": "manual_incremental",
+      "enabled": true,
+      "name": "CICC",
+      "search_query": "Custom Integrated Circuits Conference",
+      "open_url": "https://ieeexplore.ieee.org/search/searchresult.jsp?newsearch=true&queryText=Custom%20Integrated%20Circuits%20Conference",
+      "export_prefix": "ieee_cicc",
+      "last_completed_month": "",
+      "notes": "Open IEEE Xplore, apply the target date window shown in ChipSeeker, then export CSV with abstracts."
+    },
+    {
+      "id": "ieee_rfic",
+      "provider": "ieee",
+      "mode": "manual_incremental",
+      "enabled": true,
+      "name": "RFIC",
+      "search_query": "Radio Frequency Integrated Circuits Symposium",
+      "open_url": "https://ieeexplore.ieee.org/search/searchresult.jsp?newsearch=true&queryText=Radio%20Frequency%20Integrated%20Circuits%20Symposium",
+      "export_prefix": "ieee_rfic",
+      "last_completed_month": "",
+      "notes": "Open IEEE Xplore, apply the target date window shown in ChipSeeker, then export CSV with abstracts."
+    },
+    {
+      "id": "ieee_vlsi",
+      "provider": "ieee",
+      "mode": "manual_incremental",
+      "enabled": true,
+      "name": "VLSI Symposium",
+      "search_query": "Symposium on VLSI Circuits",
+      "open_url": "https://ieeexplore.ieee.org/search/searchresult.jsp?newsearch=true&queryText=Symposium%20on%20VLSI%20Circuits",
+      "export_prefix": "ieee_vlsi",
+      "last_completed_month": "",
+      "notes": "Open IEEE Xplore, apply the target date window shown in ChipSeeker, then export CSV with abstracts."
+    },
+    {
+      "id": "ieee_asscc",
+      "provider": "ieee",
+      "mode": "manual_incremental",
+      "enabled": true,
+      "name": "A-SSCC / ASSCC",
+      "search_query": "Asian Solid-State Circuits Conference",
+      "open_url": "https://ieeexplore.ieee.org/search/searchresult.jsp?newsearch=true&queryText=Asian%20Solid-State%20Circuits%20Conference",
+      "export_prefix": "ieee_asscc",
+      "last_completed_month": "",
+      "notes": "Open IEEE Xplore, apply the target date window shown in ChipSeeker, then export CSV with abstracts."
+    },
+    {
+      "id": "nature_quantum_ic",
+      "provider": "nature",
+      "mode": "auto_incremental",
+      "enabled": true,
+      "name": "Nature / Nature Electronics Quantum IC",
+      "query": "cryogenic CMOS qubit readout",
+      "journal": "",
+      "max_pages": 5,
+      "sleep_seconds": 1.0,
+      "last_checked_date": "",
+      "export_prefix": "nature_quantum_ic",
+      "notes": "Edit this query in the update manager to match your exact Nature / Nature Electronics interests."
+    }
+  ],
+  "pending_ieee_batch": null
+}

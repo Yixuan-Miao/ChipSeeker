@@ -7,6 +7,8 @@ from chipseeker.paths import (
     CURRENT_LOCAL_DATA_VERSION,
     LOCAL_DATA_STATE_FILE,
     MANUAL_SOURCE_DIR,
+    SOURCE_REGISTRY_FILE,
+    SOURCE_REGISTRY_TEMPLATE_FILE,
     SOURCE_CSV_DIR,
     SOURCE_MANIFEST_FILE,
 )
@@ -63,6 +65,13 @@ def _migrate_to_v2(state):
     _record_state(state, 2, "Normalized source CSV layout under local_data/sources.")
 
 
+def _migrate_to_v3(state):
+    if not os.path.exists(SOURCE_REGISTRY_FILE):
+        template = load_json(SOURCE_REGISTRY_TEMPLATE_FILE, {"sources": [], "pending_ieee_batch": None})
+        save_json(SOURCE_REGISTRY_FILE, template)
+    _record_state(state, 3, "Initialized source registry for IEEE and Nature incremental updates.")
+
+
 def migrate_local_data():
     state = load_json(LOCAL_DATA_STATE_FILE, _default_state())
     if not isinstance(state, dict):
@@ -75,6 +84,9 @@ def migrate_local_data():
     if version < 2:
         _migrate_to_v2(state)
         version = 2
+    if version < 3:
+        _migrate_to_v3(state)
+        version = 3
 
     if version != CURRENT_LOCAL_DATA_VERSION:
         state["schema_version"] = CURRENT_LOCAL_DATA_VERSION
