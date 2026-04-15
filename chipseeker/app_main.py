@@ -17,12 +17,14 @@ from chipseeker.data_sync import (
     paper_identity_key,
     scan_and_import_csvs,
 )
+from chipseeker.embedding_scope import available_years, build_scope_key, filter_papers_by_years, scope_label
 from chipseeker.exports import build_bibtex, build_csv_rows, build_notebooklm_export, generate_csv_link, write_text_file
 from chipseeker.llm_tools import analyze_with_llm, generate_global_report_with_llm, generate_search_keywords, get_batch_citations
 from chipseeker.maintenance import compute_papers_to_purge, generate_db_stats, purge_papers_from_sources
 from chipseeker.migrations import migrate_local_data
 from chipseeker.paths import (
     BACKUP_ROOT_DIR,
+    ARXIV_UPDATE_DIR,
     CACHE_DIR,
     CONFIG_FILE,
     CONFLICT_RESOLUTIONS_FILE,
@@ -40,17 +42,16 @@ from chipseeker.paths import (
     USER_DATA_FILE,
 )
 from chipseeker.search_ui import collect_year_counts, filter_search_results, get_paper_id, highlight_text, required_words_from_query, result_bucket_counts, sort_results
-from chipseeker.task_queue import cleanup_task, get_task, submit_embedding_build, submit_nature_incremental, submit_pdf_download
+from chipseeker.task_queue import cleanup_task, get_task, submit_arxiv_incremental, submit_embedding_build, submit_nature_incremental, submit_pdf_download
 from chipseeker.update_manager import (
     advance_ieee_sources,
     build_ieee_search_url,
     clear_pending_ieee_batch,
     current_month_string,
-    default_nature_start_date,
+    default_incremental_start_date,
     find_source,
     list_sources,
     load_source_registry,
-    month_bounds,
     replace_source,
     save_ieee_uploaded_file,
     save_source_registry,
@@ -76,8 +77,11 @@ def _vx_auth():
 
 
 @st.cache_resource(show_spinner=False)
-def get_searcher_engine(db_file, model_name, api_key=""):
-    return PaperSearcher(db_file, model_name=model_name, api_key=api_key)
+def get_searcher_engine(db_file, model_name, api_key="", scope_key="all", scope_years=()):
+    papers_override = None
+    if scope_years:
+        papers_override = filter_papers_by_years(load_json(db_file, []), scope_years)
+    return PaperSearcher(db_file, model_name=model_name, api_key=api_key, papers_override=papers_override, scope_key=scope_key)
 
 
 def render_taxonomy_matrix(total_papers, db_stats, active_years):
@@ -198,13 +202,14 @@ def render_update_manager(source_csv_files):
     registry = load_source_registry(SOURCE_REGISTRY_FILE)
     ieee_sources = list_sources(registry, "ieee")
     nature_sources = list_sources(registry, "nature")
+    arxiv_sources = list_sources(registry, "arxiv")
 
     metric_col1, metric_col2, metric_col3 = st.columns(3)
     metric_col1.metric("IEEE Sources", sum(1 for source in ieee_sources if source.get("enabled")))
-    metric_col2.metric("Nature Sources", sum(1 for source in nature_sources if source.get("enabled")))
+    metric_col2.metric("Auto Sources", sum(1 for source in (nature_sources + arxiv_sources) if source.get("enabled")))
     metric_col3.metric("Pending IEEE Batch", 1 if registry.get("pending_ieee_batch") else 0)
 
-    tab_ieee, tab_nature = st.tabs(["IEEE Incremental", "Nature Incremental"])
+    tab_ieee, tab_nature, tab_arxiv = st.tabs(["IEEE Incremental", "Nature Incremental", "arXiv Incremental"])
 
     with tab_ieee:
         st.markdown("### IEEE Source Registry")
@@ -340,7 +345,7 @@ def render_update_manager(source_csv_files):
                     st.number_input("Request Delay (s)", min_value=0.0, max_value=10.0, value=float(source.get("sleep_seconds", 1.0)), step=0.5, key=f"nature_sleep_{source['id']}")
                     last_checked = source.get("last_checked_date", "") or "2015-01-01"
                     st.date_input("Last Checked Date", value=date.fromisoformat(last_checked), key=f"nature_last_checked_{source['id']}")
-                    st.caption(f"Next incremental start date: `{default_nature_start_date(source)}`")
+                    st.caption(f"Next incremental start date: `{default_incremental_start_date(source)}`")
                     st.caption(source.get("notes", ""))
             if st.form_submit_button("Save Nature Source Settings", use_container_width=True):
                 for source in nature_sources:
@@ -403,7 +408,7 @@ def render_update_manager(source_csv_files):
             source = find_source(registry, source_id)
             st.markdown(
                 f"- **{source['name']}**: query `{source.get('query', '')}` | "
-                f"journal `{source.get('journal') or 'all'}` | next start `{default_nature_start_date(source)}`"
+                f"journal `{source.get('journal') or 'all'}` | next start `{default_incremental_start_date(source)}`"
             )
 
         nature_task_key = "nature_incremental_task"
@@ -423,6 +428,73 @@ def render_update_manager(source_csv_files):
             else:
                 st.session_state[nature_task_key] = submit_nature_incremental(SOURCE_REGISTRY_FILE, selected_nature_ids, NATURE_UPDATE_DIR)
                 st.success("Nature incremental update queued in the background.")
+
+    with tab_arxiv:
+        st.markdown("### arXiv Source Registry")
+        with st.form("arxiv_registry_form"):
+            for source in arxiv_sources:
+                with st.expander(source.get("name", source["id"]), expanded=False):
+                    st.checkbox("Enabled", value=source.get("enabled", True), key=f"arxiv_enabled_{source['id']}")
+                    st.text_input("Display Name", value=source.get("name", ""), key=f"arxiv_name_{source['id']}")
+                    st.text_input("Query", value=source.get("query", ""), key=f"arxiv_query_{source['id']}")
+                    st.text_input("Categories (; separated)", value="; ".join(source.get("categories", [])), key=f"arxiv_categories_{source['id']}")
+                    st.number_input("Max Results", min_value=10, max_value=300, value=int(source.get("max_results", 100)), step=10, key=f"arxiv_results_{source['id']}")
+                    st.number_input("Request Delay (s)", min_value=0.0, max_value=10.0, value=float(source.get("sleep_seconds", 0.5)), step=0.5, key=f"arxiv_sleep_{source['id']}")
+                    last_checked = source.get("last_checked_date", "") or "2015-01-01"
+                    st.date_input("Last Checked Date", value=date.fromisoformat(last_checked), key=f"arxiv_last_checked_{source['id']}")
+                    st.caption(f"Next incremental start date: `{default_incremental_start_date(source)}`")
+                    st.caption(source.get("notes", ""))
+            if st.form_submit_button("Save arXiv Source Settings", use_container_width=True):
+                for source in arxiv_sources:
+                    replace_source(
+                        registry,
+                        source["id"],
+                        {
+                            "enabled": st.session_state[f"arxiv_enabled_{source['id']}"],
+                            "name": st.session_state[f"arxiv_name_{source['id']}"],
+                            "query": st.session_state[f"arxiv_query_{source['id']}"],
+                            "categories": [item.strip() for item in str(st.session_state[f"arxiv_categories_{source['id']}"]).split(";") if item.strip()],
+                            "max_results": int(st.session_state[f"arxiv_results_{source['id']}"]),
+                            "sleep_seconds": float(st.session_state[f"arxiv_sleep_{source['id']}"]),
+                            "last_checked_date": st.session_state[f"arxiv_last_checked_{source['id']}"].isoformat(),
+                        },
+                    )
+                save_source_registry(registry, SOURCE_REGISTRY_FILE)
+                st.success("arXiv source settings saved.")
+
+        registry = load_source_registry(SOURCE_REGISTRY_FILE)
+        runnable_arxiv_sources = [source for source in list_sources(registry, "arxiv") if source.get("enabled") and source.get("query")]
+        selected_arxiv_ids = st.multiselect(
+            "arXiv sources to run",
+            options=[source["id"] for source in runnable_arxiv_sources],
+            default=[source["id"] for source in runnable_arxiv_sources],
+            format_func=lambda source_id: find_source(load_source_registry(SOURCE_REGISTRY_FILE), source_id).get("name", source_id),
+            key="arxiv_selected_sources",
+        )
+        for source_id in selected_arxiv_ids:
+            source = find_source(registry, source_id)
+            st.markdown(
+                f"- **{source['name']}**: query `{source.get('query', '')}` | "
+                f"categories `{', '.join(source.get('categories', [])) or 'all'}` | next start `{default_incremental_start_date(source)}`"
+            )
+
+        arxiv_task_key = "arxiv_incremental_task"
+        arxiv_task_id = st.session_state.get(arxiv_task_key)
+        task = render_task_status(
+            arxiv_task_id,
+            "arXiv incremental update",
+            success_message=lambda result: f"arXiv incremental update finished for {len(result.get('source_ids', []))} source(s).",
+        )
+        if task is None and arxiv_task_id:
+            st.session_state.pop(arxiv_task_key, None)
+            st.session_state["csv_state"] = ()
+            st.rerun()
+        if st.button("Run arXiv Incremental Update", type="primary", use_container_width=True):
+            if not selected_arxiv_ids:
+                st.warning("Select at least one arXiv source with a query.")
+            else:
+                st.session_state[arxiv_task_key] = submit_arxiv_incremental(SOURCE_REGISTRY_FILE, selected_arxiv_ids, ARXIV_UPDATE_DIR)
+                st.success("arXiv incremental update queued in the background.")
 
 
 def run():
@@ -484,6 +556,7 @@ def run():
     st.sidebar.caption(f"local_data schema v{schema_state.get('schema_version', '?')}")
 
     all_papers_in_db = load_json(DB_FILE, [])
+    library_years = available_years(all_papers_in_db)
     total_papers, db_stats, active_years = generate_db_stats(all_papers_in_db, analyze_venue)
 
     if workspace_view == "Update Manager":
@@ -502,6 +575,21 @@ def run():
     emb_api_key = ""
     if "voyage" in selected_emb_model or "text-embedding" in selected_emb_model:
         emb_api_key = st.sidebar.text_input("Embedding API Key", value=app_config.get("emb_api_key", ""), type="password")
+    scope_mode = st.sidebar.radio(
+        "Semantic Coverage",
+        ["Latest Year (Recommended)", "Latest 3 Years", "Custom Years", "Full Library"],
+        index=0 if total_papers > 10000 else 3,
+    )
+    selected_scope_years = []
+    if scope_mode == "Latest Year (Recommended)" and library_years:
+        selected_scope_years = [library_years[0]]
+    elif scope_mode == "Latest 3 Years":
+        selected_scope_years = library_years[:3]
+    elif scope_mode == "Custom Years":
+        selected_scope_years = st.sidebar.multiselect("Years To Embed/Search", options=library_years, default=library_years[:1] if library_years else [])
+    scope_key = build_scope_key(selected_scope_years)
+    scope_text = scope_label(selected_scope_years)
+    st.sidebar.caption(f"Semantic scope: {scope_text}")
 
     st.sidebar.markdown("---")
     st.sidebar.header("LLM API Config")
@@ -525,18 +613,18 @@ def run():
         st.cache_resource.clear()
         st.sidebar.success("Config saved.")
 
-    cache_file, _ = get_cache_paths(DB_FILE, selected_emb_model)
-    embedding_task_key = f"embedding_task::{selected_emb_model}"
+    cache_file, _ = get_cache_paths(DB_FILE, selected_emb_model, scope_key=scope_key)
+    embedding_task_key = f"embedding_task::{selected_emb_model}::{scope_key}"
     embedding_task_id = st.session_state.get(embedding_task_key)
     embedding_ready = os.path.exists(cache_file)
     if not embedding_ready and os.path.exists(DB_FILE):
         if not embedding_task_id:
-            st.session_state[embedding_task_key] = submit_embedding_build(DB_FILE, selected_emb_model, emb_api_key)
+            st.session_state[embedding_task_key] = submit_embedding_build(DB_FILE, selected_emb_model, emb_api_key, years=selected_scope_years, scope_key=scope_key)
             embedding_task_id = st.session_state[embedding_task_key]
         task = render_task_status(
             embedding_task_id,
-            f"Embedding build for {selected_emb_model}",
-            success_message=lambda result: f"Embedding cache ready for {result.get('model_name', selected_emb_model)}.",
+            f"Embedding build for {selected_emb_model} ({scope_text})",
+            success_message=lambda result: f"Embedding cache ready for {result.get('model_name', selected_emb_model)} on {scope_label(result.get('years', []))}.",
             container=st.sidebar,
         )
         if task is None:
@@ -546,15 +634,55 @@ def run():
     elif embedding_task_id:
         task = render_task_status(
             embedding_task_id,
-            f"Embedding build for {selected_emb_model}",
-            success_message=lambda result: f"Embedding cache ready for {result.get('model_name', selected_emb_model)}.",
+            f"Embedding build for {selected_emb_model} ({scope_text})",
+            success_message=lambda result: f"Embedding cache ready for {result.get('model_name', selected_emb_model)} on {scope_label(result.get('years', []))}.",
             container=st.sidebar,
         )
         if task is None:
             st.session_state.pop(embedding_task_key, None)
             st.cache_resource.clear()
 
-    searcher = get_searcher_engine(DB_FILE, selected_emb_model, emb_api_key) if embedding_ready else None
+    searcher = get_searcher_engine(DB_FILE, selected_emb_model, emb_api_key, scope_key=scope_key, scope_years=tuple(selected_scope_years)) if embedding_ready else None
+
+    with st.sidebar.expander("Background Coverage Builder", expanded=False):
+        st.caption("Queue other year ranges in the background so you can keep using the current scope immediately.")
+        for state_key, state_value in list(st.session_state.items()):
+            if not str(state_key).startswith(f"embedding_task::{selected_emb_model}::"):
+                continue
+            if state_key == embedding_task_key:
+                continue
+            task_scope_key = state_key.split("::", 2)[-1]
+            task = render_task_status(
+                state_value,
+                f"Background embedding build ({task_scope_key})",
+                success_message=lambda result: f"Background cache ready for {scope_label(result.get('years', []))}.",
+                container=st.sidebar,
+            )
+            if task is None:
+                st.session_state.pop(state_key, None)
+        background_choice = st.radio(
+            "Queue Build",
+            ["Latest Year", "Latest 3 Years", "Full Library", "Custom Years"],
+            key="background_scope_mode",
+        )
+        background_years = []
+        if background_choice == "Latest Year" and library_years:
+            background_years = [library_years[0]]
+        elif background_choice == "Latest 3 Years":
+            background_years = library_years[:3]
+        elif background_choice == "Custom Years":
+            background_years = st.multiselect("Background Years", options=library_years, default=library_years[:1] if library_years else [], key="background_years")
+        background_scope_key = build_scope_key(background_years)
+        background_cache_file, _ = get_cache_paths(DB_FILE, selected_emb_model, scope_key=background_scope_key)
+        if st.button("Queue Background Embedding Build", use_container_width=True):
+            if background_choice != "Full Library" and not background_years:
+                st.sidebar.warning("Select at least one year for background embedding.")
+            elif os.path.exists(background_cache_file):
+                st.sidebar.info("That background scope is already cached.")
+            else:
+                bg_task_key = f"embedding_task::{selected_emb_model}::{background_scope_key}"
+                st.session_state[bg_task_key] = submit_embedding_build(DB_FILE, selected_emb_model, emb_api_key, years=background_years, scope_key=background_scope_key)
+                st.sidebar.success(f"Queued background build for {scope_label(background_years)}.")
 
     st.sidebar.markdown("---")
     st.sidebar.header("DB Maintenance")
@@ -620,6 +748,7 @@ def run():
 
     st.markdown("---")
     st.markdown("### Hybrid Search Engine")
+    st.caption(f"Semantic search currently uses embedding coverage: {scope_text}")
     with st.expander("Metadata Pre-Filters", expanded=False):
         filter_col1, filter_col2 = st.columns(2)
         with filter_col1:

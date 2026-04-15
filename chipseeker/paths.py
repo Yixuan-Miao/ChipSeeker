@@ -10,6 +10,7 @@ MANUAL_SOURCE_DIR = os.path.join(SOURCE_CSV_DIR, "manual")
 GENERATED_SOURCE_DIR = os.path.join(SOURCE_CSV_DIR, "generated_exports")
 IEEE_UPDATE_DIR = os.path.join(MANUAL_SOURCE_DIR, "ieee_updates")
 NATURE_UPDATE_DIR = os.path.join(GENERATED_SOURCE_DIR, "nature_updates")
+ARXIV_UPDATE_DIR = os.path.join(GENERATED_SOURCE_DIR, "arxiv_updates")
 CACHE_DIR = os.path.join(DATA_DIR, "cache")
 EXPORT_DIR = os.path.join(DATA_DIR, "exports")
 DOWNLOAD_DIR = os.path.join(DATA_DIR, "downloads")
@@ -29,7 +30,7 @@ SOURCE_REGISTRY_TEMPLATE_FILE = os.path.join(PACKAGE_DATA_DIR, "source_registry_
 CONFIG_FILE = os.path.join(BASE_DIR, "config.local.json")
 LEGACY_CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
 EXAMPLE_CONFIG_FILE = os.path.join(BASE_DIR, "config.example.json")
-CURRENT_LOCAL_DATA_VERSION = 3
+CURRENT_LOCAL_DATA_VERSION = 4
 
 
 def ensure_runtime_dirs():
@@ -41,6 +42,7 @@ def ensure_runtime_dirs():
         GENERATED_SOURCE_DIR,
         IEEE_UPDATE_DIR,
         NATURE_UPDATE_DIR,
+        ARXIV_UPDATE_DIR,
         CACHE_DIR,
         EXPORT_DIR,
         DOWNLOAD_DIR,

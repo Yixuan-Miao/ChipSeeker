@@ -92,6 +92,9 @@ def month_bounds(month_str):
 
 
 def source_next_start_date(source, target_month):
+    if source.get("source_kind") == "conference":
+        target_year = parse_month_string(target_month).year
+        return f"{target_year}-01-01"
     last_completed = parse_month_string(source.get("last_completed_month", "")) if source.get("last_completed_month") else None
     if not last_completed:
         return month_bounds(target_month)[0]
@@ -106,6 +109,9 @@ def source_next_start_date(source, target_month):
 
 
 def source_target_window(source, target_month):
+    if source.get("source_kind") == "conference":
+        target_year = parse_month_string(target_month).year
+        return f"{target_year}-01-01", f"{target_year}-12-31"
     start_date = source_next_start_date(source, target_month)
     _, end_date = month_bounds(target_month)
     return start_date, end_date
@@ -114,6 +120,9 @@ def source_target_window(source, target_month):
 def build_ieee_search_url(source, start_date, end_date):
     open_url = normalize_text(source.get("open_url", ""))
     if open_url:
+        year = start_date[:4]
+        month = start_date[5:7]
+        open_url = open_url.replace("{year}", year).replace("{month}", month)
         return open_url
     query = normalize_text(source.get("search_query", source.get("name", "")))
     encoded_query = quote(query or source.get("name", "IEEE"))
@@ -154,7 +163,12 @@ def clear_pending_ieee_batch(payload):
 
 def advance_ieee_sources(payload, source_ids, target_month):
     for source_id in source_ids:
-        replace_source(payload, source_id, {"last_completed_month": target_month})
+        source = find_source(payload, source_id)
+        if source and source.get("source_kind") == "conference":
+            target_year = parse_month_string(target_month).year
+            replace_source(payload, source_id, {"last_completed_month": f"{target_year}-12"})
+        else:
+            replace_source(payload, source_id, {"last_completed_month": target_month})
 
 
 def save_ieee_uploaded_file(uploaded_file, source, target_month, ieee_update_dir):
@@ -168,13 +182,21 @@ def save_ieee_uploaded_file(uploaded_file, source, target_month, ieee_update_dir
     return target_path
 
 
-def default_nature_start_date(source):
+def default_incremental_start_date(source):
     last_checked = parse_iso_date(source.get("last_checked_date", ""))
     if last_checked:
         return (last_checked + timedelta(days=1)).isoformat()
     return "2015-01-01"
 
 
-def save_nature_run_result(payload, source_ids, checked_date):
+def default_nature_start_date(source):
+    return default_incremental_start_date(source)
+
+
+def save_incremental_run_result(payload, source_ids, checked_date):
     for source_id in source_ids:
         replace_source(payload, source_id, {"last_checked_date": checked_date})
+
+
+def save_nature_run_result(payload, source_ids, checked_date):
+    save_incremental_run_result(payload, source_ids, checked_date)

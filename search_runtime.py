@@ -8,28 +8,31 @@ import numpy as np
 from sentence_transformers import SentenceTransformer, util
 
 
-def get_cache_paths(db_file, model_name):
+def get_cache_paths(db_file, model_name, scope_key="all"):
     db_name = os.path.splitext(os.path.basename(db_file))[0]
     db_safe = re.sub(r'[^A-Za-z0-9._-]+', '_', db_name)
     db_hash = hashlib.sha1(os.path.abspath(db_file).encode('utf-8')).hexdigest()[:8]
     model_safe = re.sub(r'[^A-Za-z0-9._-]+', '_', model_name)
+    scope_safe = re.sub(r'[^A-Za-z0-9._-]+', '_', scope_key or "all")
     cache_dir = os.path.join(os.path.dirname(os.path.abspath(db_file)), "cache")
     os.makedirs(cache_dir, exist_ok=True)
-    cache_file = os.path.join(cache_dir, f"cache_{db_safe}_{db_hash}_{model_safe}.npy")
-    meta_file = os.path.join(cache_dir, f"cache_{db_safe}_{db_hash}_{model_safe}.meta.json")
+    cache_file = os.path.join(cache_dir, f"cache_{db_safe}_{db_hash}_{model_safe}_{scope_safe}.npy")
+    meta_file = os.path.join(cache_dir, f"cache_{db_safe}_{db_hash}_{model_safe}_{scope_safe}.meta.json")
     return cache_file, meta_file
 
 
 class PaperSearcher:
-    def __init__(self, db_file, model_name='BAAI/bge-large-en-v1.5', api_key=""):
+    def __init__(self, db_file, model_name='BAAI/bge-large-en-v1.5', api_key="", papers_override=None, scope_key="all", progress_callback=None):
         self.jp = db_file
         self.mn = model_name
         self.ak = api_key
+        self.scope_key = scope_key or "all"
+        self.progress_callback = progress_callback
         self.mt = 'v' if 'voyage' in self.mn else ('o' if 'text-embedding' in self.mn else 'l')
-        self.dt = self._load_db()
-        self.cf, self.mf = get_cache_paths(self.jp, self.mn)
+        self.dt = papers_override if papers_override is not None else self._load_db()
+        self.cf, self.mf = get_cache_paths(self.jp, self.mn, self.scope_key)
 
-        print(f"[search] init model={self.mn} mode={self.mt} cache={self.cf}")
+        print(f"[search] init model={self.mn} mode={self.mt} scope={self.scope_key} cache={self.cf}")
         self.md = self._init_model()
         self.eb = self._load_cache()
 
@@ -74,9 +77,21 @@ class PaperSearcher:
         with open(self.mf, 'w', encoding='utf-8') as f:
             json.dump(payload, f, indent=2, ensure_ascii=False)
 
-    def _embed(self, texts):
+    def _emit_progress(self, done, total, message):
+        if self.progress_callback:
+            self.progress_callback(done, total, message)
+
+    def _embed(self, texts, stage_message="Embedding papers"):
+        total = max(1, len(texts))
         if self.mt == 'l':
-            return self.md.encode(texts, convert_to_numpy=True, show_progress_bar=True)
+            rows = []
+            batch_size = 64
+            for i in range(0, len(texts), batch_size):
+                batch = texts[i:i + batch_size]
+                result = self.md.encode(batch, convert_to_numpy=True, show_progress_bar=False)
+                rows.extend(result)
+                self._emit_progress(min(i + len(batch), total), total, f"{stage_message}: {min(i + len(batch), total)}/{total}")
+            return np.array(rows, dtype=np.float32)
 
         rows = []
         batch_size = 100 if self.mt == 'v' else 400
@@ -87,6 +102,7 @@ class PaperSearcher:
             else:
                 result = [x.embedding for x in self.md.embeddings.create(input=batch, model=self.mn).data]
             rows.extend(result)
+            self._emit_progress(min(i + len(batch), total), total, f"{stage_message}: {min(i + len(batch), total)}/{total}")
             time.sleep(0.6)
         return np.array(rows, dtype=np.float32)
 
@@ -110,7 +126,7 @@ class PaperSearcher:
                     and current_fingerprints[:len(old_fingerprints)] == old_fingerprints
                 ):
                     print(f"[search] append-only update {len(old_fingerprints)} -> {len(current_fingerprints)}")
-                    new_embeddings = self._embed(texts[len(old_fingerprints):])
+                    new_embeddings = self._embed(texts[len(old_fingerprints):], stage_message="Appending embeddings")
                     embeddings = np.vstack((embeddings, new_embeddings))
                     np.save(self.cf, embeddings)
                     self._save_meta(current_fingerprints)
@@ -126,7 +142,7 @@ class PaperSearcher:
         return embeddings
 
     def search(self, query, top_k=50):
-        qe = self._embed([query]) if self.mt != 'l' else self.md.encode(query, convert_to_numpy=True)
+        qe = self._embed([query], stage_message="Embedding query") if self.mt != 'l' else self.md.encode(query, convert_to_numpy=True)
         if self.mt != 'l':
             qe = np.array(qe).reshape(1, -1)
         hits = util.semantic_search(qe, self.eb, top_k=top_k)[0]

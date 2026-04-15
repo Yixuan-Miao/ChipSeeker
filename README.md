@@ -85,7 +85,9 @@ If `--output` is a relative path, the CSV is written to `local_data/sources/manu
 
 - `IEEE Incremental`: ChipSeeker tracks each venue watermark, opens the venue page for your manual CSV export, and advances the watermark after you upload the exported batch.
 - `Nature Incremental`: ChipSeeker tracks each query's last checked date and runs incremental pulls in the background.
+- `arXiv Incremental`: ChipSeeker tracks AI hardware / quantum hardware preprint queries and incrementally collects compatible CSVs in the background.
 - `Conflict Review`: surfaces dedupe anomalies such as same title with different years, or same DOI with different abstracts before they silently collapse into one record.
+- `Embedding Coverage Builder`: lets you start with `2026` or a custom year slice, then queue additional year ranges in the background instead of blocking on all 30k+ papers at once.
 
 ## Repo Layout
 
@@ -101,6 +103,7 @@ If `--output` is a relative path, the CSV is written to `local_data/sources/manu
 - `search_runtime.py`: active embedding search runtime
 - `search.py`: compatibility shim
 - `Nature_Grabber.py`: Nature metadata collector
+- `Arxiv_Grabber.py`: arXiv metadata collector
 
 ## local_data Layout
 

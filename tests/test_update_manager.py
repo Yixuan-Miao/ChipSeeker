@@ -25,6 +25,16 @@ def test_source_registry_batch_and_watermark(tmp_path, monkeypatch):
       "last_completed_month": "2026-03"
     },
     {
+      "id": "ieee_rfic",
+      "provider": "ieee",
+      "enabled": true,
+      "source_kind": "conference",
+      "name": "RFIC",
+      "search_query": "RFIC",
+      "open_url": "https://example.com/rfic",
+      "last_completed_month": "2025-12"
+    },
+    {
       "id": "nature_q",
       "provider": "nature",
       "enabled": true,
@@ -48,7 +58,8 @@ def test_source_registry_batch_and_watermark(tmp_path, monkeypatch):
     assert batch["target_month"] == "2026-04"
     assert batch["windows"][0]["start_date"] == "2026-04-01"
     assert batch["windows"][0]["end_date"] == "2026-04-30"
+    assert start_ieee_batch(registry, ["ieee_rfic"], "2026-04")["windows"][0]["start_date"] == "2026-01-01"
 
     advance_ieee_sources(registry, ["ieee_jssc"], "2026-04")
     assert source_target_window(registry["sources"][0], "2026-04") == ("2026-04-01", "2026-04-30")
-    assert default_nature_start_date(registry["sources"][1]) == "2026-04-11"
+    assert default_nature_start_date(registry["sources"][2]) == "2026-04-11"

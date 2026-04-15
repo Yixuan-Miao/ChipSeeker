@@ -4,7 +4,7 @@ from chipseeker import task_queue
 
 
 class DummySearcher:
-    def __init__(self, db_file, model_name, api_key=""):
+    def __init__(self, db_file, model_name, api_key="", **_kwargs):
         self.db_file = db_file
         self.model_name = model_name
         self.api_key = api_key

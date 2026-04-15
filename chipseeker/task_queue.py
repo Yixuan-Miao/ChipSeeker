@@ -7,7 +7,9 @@ import uuid
 from datetime import date
 from concurrent.futures import ThreadPoolExecutor
 
-from chipseeker.update_manager import default_nature_start_date, find_source, load_source_registry, save_nature_run_result, save_source_registry
+from chipseeker.embedding_scope import build_scope_key, filter_papers_by_years
+from chipseeker.update_manager import default_incremental_start_date, find_source, load_source_registry, save_incremental_run_result, save_source_registry
+from chipseeker.utils import load_json
 from search_runtime import PaperSearcher
 
 
@@ -71,16 +73,31 @@ def cleanup_task(task_id):
 
 
 def _build_embeddings(task_id, payload):
-    update_progress(task_id, 0.05, "Loading library and building embeddings")
-    PaperSearcher(payload["db_file"], model_name=payload["model_name"], api_key=payload.get("api_key", ""))
+    papers = load_json(payload["db_file"], [])
+    years = payload.get("years") or []
+    scoped_papers = filter_papers_by_years(papers, years) if years else papers
+    scope_key = payload.get("scope_key") or build_scope_key(years)
+
+    def progress(done, total, message):
+        update_progress(task_id, done / max(1, total), message)
+
+    update_progress(task_id, 0.01, f"Loading library for scope {scope_key}")
+    PaperSearcher(
+        payload["db_file"],
+        model_name=payload["model_name"],
+        api_key=payload.get("api_key", ""),
+        papers_override=scoped_papers,
+        scope_key=scope_key,
+        progress_callback=progress,
+    )
     update_progress(task_id, 1.0, "Embedding cache is ready")
-    return {"model_name": payload["model_name"]}
+    return {"model_name": payload["model_name"], "scope_key": scope_key, "paper_count": len(scoped_papers), "years": years}
 
 
-def submit_embedding_build(db_file, model_name, api_key=""):
+def submit_embedding_build(db_file, model_name, api_key="", years=None, scope_key=None):
     return submit_task(
         "embedding-build",
-        {"db_file": db_file, "model_name": model_name, "api_key": api_key},
+        {"db_file": db_file, "model_name": model_name, "api_key": api_key, "years": years or [], "scope_key": scope_key},
         _build_embeddings,
     )
 
@@ -149,12 +166,14 @@ def submit_pdf_download(papers, save_dir):
     )
 
 
-def _run_nature_incremental(task_id, payload):
+def _run_provider_incremental(task_id, payload):
     from Nature_Grabber import grab_nature
+    from Arxiv_Grabber import grab_arxiv
 
     registry = load_source_registry(payload["registry_path"])
     source_ids = payload["source_ids"]
     output_dir = payload["output_dir"]
+    provider = payload["provider"]
     run_date = date.today().isoformat()
     completed_ids = []
     written_files = []
@@ -163,20 +182,30 @@ def _run_nature_incremental(task_id, payload):
         source = find_source(registry, source_id)
         if not source or not source.get("enabled") or not source.get("query"):
             continue
-        update_progress(task_id, index / max(1, len(source_ids)), f"Fetching Nature source {source.get('name', source_id)}")
+        update_progress(task_id, index / max(1, len(source_ids)), f"Fetching {provider} source {source.get('name', source_id)}")
         source_dir = os.path.join(output_dir, source_id)
         os.makedirs(source_dir, exist_ok=True)
         output_file = os.path.join(source_dir, f"{source.get('export_prefix', source_id)}_{run_date}.csv")
         try:
-            rows = grab_nature(
-                query=source["query"],
-                output_file=output_file,
-                journal=source.get("journal", ""),
-                year_from=2015,
-                start_date=default_nature_start_date(source),
-                max_pages=int(source.get("max_pages", 5)),
-                sleep_seconds=float(source.get("sleep_seconds", 1.0)),
-            )
+            if provider == "nature":
+                rows = grab_nature(
+                    query=source["query"],
+                    output_file=output_file,
+                    journal=source.get("journal", ""),
+                    year_from=2015,
+                    start_date=default_incremental_start_date(source),
+                    max_pages=int(source.get("max_pages", 5)),
+                    sleep_seconds=float(source.get("sleep_seconds", 1.0)),
+                )
+            else:
+                rows = grab_arxiv(
+                    query=source["query"],
+                    output_file=output_file,
+                    categories=source.get("categories", []),
+                    start_date=default_incremental_start_date(source),
+                    max_results=int(source.get("max_results", 100)),
+                    sleep_seconds=float(source.get("sleep_seconds", 0.5)),
+                )
         except Exception as exc:
             written_files.append({"source_id": source_id, "output_file": output_file, "rows": 0, "error": str(exc)})
             continue
@@ -184,15 +213,23 @@ def _run_nature_incremental(task_id, payload):
         completed_ids.append(source_id)
 
     if completed_ids:
-        save_nature_run_result(registry, completed_ids, run_date)
+        save_incremental_run_result(registry, completed_ids, run_date)
         save_source_registry(registry, payload["registry_path"])
-    update_progress(task_id, 1.0, "Nature incremental update finished")
-    return {"source_ids": completed_ids, "written_files": written_files, "checked_date": run_date}
+    update_progress(task_id, 1.0, f"{provider} incremental update finished")
+    return {"provider": provider, "source_ids": completed_ids, "written_files": written_files, "checked_date": run_date}
 
 
 def submit_nature_incremental(registry_path, source_ids, output_dir):
     return submit_task(
         "nature-incremental",
-        {"registry_path": registry_path, "source_ids": source_ids, "output_dir": output_dir},
-        _run_nature_incremental,
+        {"registry_path": registry_path, "source_ids": source_ids, "output_dir": output_dir, "provider": "nature"},
+        _run_provider_incremental,
+    )
+
+
+def submit_arxiv_incremental(registry_path, source_ids, output_dir):
+    return submit_task(
+        "arxiv-incremental",
+        {"registry_path": registry_path, "source_ids": source_ids, "output_dir": output_dir, "provider": "arxiv"},
+        _run_provider_incremental,
     )
