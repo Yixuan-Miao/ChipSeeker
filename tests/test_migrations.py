@@ -1,0 +1,33 @@
+from chipseeker import migrations
+from chipseeker.utils import load_json
+
+
+def test_migrate_local_data_wraps_manifest_and_moves_root_csv(tmp_path, monkeypatch):
+    data_dir = tmp_path / "local_data"
+    source_dir = data_dir / "sources"
+    manual_dir = source_dir / "manual"
+    source_dir.mkdir(parents=True)
+
+    legacy_csv = source_dir / "legacy.csv"
+    legacy_csv.write_text("Document Title,Abstract\nA,B\n", encoding="utf-8")
+
+    manifest_path = data_dir / "source_manifest.json"
+    manifest_path.write_text('[{"relative_path":"legacy.csv","valid_source":true}]', encoding="utf-8")
+
+    state_path = data_dir / "schema_state.json"
+    conflict_path = data_dir / "conflict_resolutions.json"
+
+    monkeypatch.setattr(migrations, "SOURCE_CSV_DIR", str(source_dir))
+    monkeypatch.setattr(migrations, "MANUAL_SOURCE_DIR", str(manual_dir))
+    monkeypatch.setattr(migrations, "SOURCE_MANIFEST_FILE", str(manifest_path))
+    monkeypatch.setattr(migrations, "LOCAL_DATA_STATE_FILE", str(state_path))
+    monkeypatch.setattr(migrations, "CONFLICT_RESOLUTIONS_FILE", str(conflict_path))
+
+    state = migrations.migrate_local_data()
+
+    assert state["schema_version"] == 2
+    assert (manual_dir / "legacy.csv").exists()
+    manifest = load_json(str(manifest_path), {})
+    assert manifest["schema_version"] >= 1
+    assert manifest["entries"][0]["relative_path"] == "legacy.csv"
+    assert load_json(str(conflict_path), {})["dismissed"] == []

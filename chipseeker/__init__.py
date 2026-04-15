@@ -1,0 +1,1 @@
+"""ChipSeeker application package."""

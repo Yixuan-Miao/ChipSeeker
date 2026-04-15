@@ -1,0 +1,8 @@
+{
+    "embedding_model": "all-MiniLM-L6-v2",
+    "emb_api_key": "",
+    "provider_preset": "DeepSeek",
+    "llm_api_key": "",
+    "llm_base_url": "https://api.deepseek.com",
+    "llm_model": "deepseek-chat"
+}

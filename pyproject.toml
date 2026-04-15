@@ -1,0 +1,35 @@
+[project]
+name = "chipseeker"
+version = "0.1.0"
+description = "Local embedding-based paper search for chip, circuit, RF, and quantum hardware literature."
+requires-python = ">=3.10"
+dependencies = [
+  "streamlit>=1.43,<2",
+  "requests>=2.32,<3",
+  "numpy>=1.26,<3",
+  "sentence-transformers>=3.4,<4",
+  "openai>=1.68,<2",
+  "voyageai>=0.3,<1",
+  "playwright>=1.50,<2",
+  "scikit-learn>=1.6,<2",
+  "beautifulsoup4>=4.12,<5",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3,<9",
+  "pytest-cov>=6.0,<7",
+]
+optional = [
+  "watchdog>=6.0,<7",
+]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["chipseeker", "chipseeker.data"]
+
+[tool.setuptools.package-data]
+chipseeker = ["data/*.json"]

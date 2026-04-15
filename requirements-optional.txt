@@ -1,0 +1,2 @@
+-r requirements.txt
+watchdog>=6.0,<7

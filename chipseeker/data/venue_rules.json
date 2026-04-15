@@ -1,0 +1,476 @@
+{
+  "domain_colors": {
+    "Analog Circuits": "#1565C0",
+    "Devices": "#C62828",
+    "Quantum & Physics": "#6A1B9A",
+    "RF & mm-Wave": "#EF6C00",
+    "Education": "#4E342E",
+    "EDA": "#00897B",
+    "Other": "#757575"
+  },
+  "tier_colors": {
+    "SS": "#9C27B0",
+    "S+": "#D32F2F",
+    "S": "#F57C00",
+    "AA": "#1976D2",
+    "A": "#388E3C",
+    "B": "#757575",
+    "C": "#9E9E9E"
+  },
+  "default_venue": {
+    "n": "Other",
+    "t": "C",
+    "s": 50,
+    "d": [
+      "Other"
+    ],
+    "ty": "Journal",
+    "u": "#",
+    "if": null,
+    "q": null
+  },
+  "venues": [
+    {
+      "k": ["nature electronics"],
+      "n": "Nature Electronics",
+      "t": "SS",
+      "s": 98,
+      "d": ["Devices", "Analog Circuits"],
+      "ty": "Journal",
+      "u": "https://www.nature.com/natelectron/",
+      "if": 33.7,
+      "q": "Q1"
+    },
+    {
+      "k": ["nature communications"],
+      "n": "Nature Communications",
+      "t": "SS",
+      "s": 97,
+      "d": ["Quantum & Physics", "Devices"],
+      "ty": "Journal",
+      "u": "https://www.nature.com/ncomms/",
+      "if": 14.8,
+      "q": "Q1"
+    },
+    {
+      "k": ["nature physics"],
+      "n": "Nature Physics",
+      "t": "SS",
+      "s": 97,
+      "d": ["Quantum & Physics"],
+      "ty": "Journal",
+      "u": "https://www.nature.com/nphys/",
+      "if": 19.6,
+      "q": "Q1"
+    },
+    {
+      "k": ["nature nanotechnology"],
+      "n": "Nature Nanotech",
+      "t": "SS",
+      "s": 97,
+      "d": ["Devices", "Quantum & Physics"],
+      "ty": "Journal",
+      "u": "https://www.nature.com/nnano/",
+      "if": 38.3,
+      "q": "Q1"
+    },
+    {
+      "k": ["nature"],
+      "n": "Nature",
+      "t": "SS",
+      "s": 99,
+      "d": ["Quantum & Physics", "Devices", "Analog Circuits"],
+      "ty": "Journal",
+      "u": "https://www.nature.com/",
+      "if": 50.5,
+      "q": "Q1"
+    },
+    {
+      "k": ["science"],
+      "n": "Science",
+      "t": "SS",
+      "s": 99,
+      "d": ["Quantum & Physics", "Devices", "Analog Circuits"],
+      "ty": "Journal",
+      "u": "https://www.science.org/",
+      "if": 44.7,
+      "q": "Q1"
+    },
+    {
+      "k": ["cell device", "device"],
+      "ex": ["electron", "circuit", "system", "solid"],
+      "n": "Device (Cell)",
+      "t": "SS",
+      "s": 96,
+      "d": ["Devices"],
+      "ty": "Journal",
+      "u": "https://www.cell.com/device/home",
+      "if": 10.7,
+      "q": "Q1"
+    },
+    {
+      "k": ["prx", "physical review x"],
+      "n": "PRX",
+      "t": "SS",
+      "s": 96,
+      "d": ["Quantum & Physics"],
+      "ty": "Journal",
+      "u": "https://journals.aps.org/prx/",
+      "if": 12.5,
+      "q": "Q1"
+    },
+    {
+      "k": ["isscc", "solid-state circuits conference"],
+      "ex": ["asian", "a-sscc", "european", "esscirc"],
+      "n": "ISSCC",
+      "t": "S+",
+      "s": 95,
+      "d": ["Analog Circuits", "RF & mm-Wave", "Quantum & Physics"],
+      "ty": "Conference",
+      "u": "https://www.isscc.org/"
+    },
+    {
+      "k": ["jssc", "journal of solid-state circuits"],
+      "n": "JSSC",
+      "t": "S+",
+      "s": 94,
+      "d": ["Analog Circuits", "RF & mm-Wave"],
+      "ty": "Journal",
+      "u": "https://ieeexplore.ieee.org/xpl/RecentIssue.jsp?punumber=4",
+      "if": 6.2,
+      "q": "Q1"
+    },
+    {
+      "k": ["vlsi", "symposium on vlsi"],
+      "n": "VLSI",
+      "t": "S+",
+      "s": 92,
+      "d": ["Analog Circuits", "Devices"],
+      "ty": "Conference",
+      "u": "https://www.vlsisymposium.org/"
+    },
+    {
+      "k": ["prl", "physical review letters"],
+      "n": "PRL",
+      "t": "S",
+      "s": 90,
+      "d": ["Quantum & Physics"],
+      "ty": "Journal",
+      "u": "https://journals.aps.org/prl/",
+      "if": 8.1,
+      "q": "Q1"
+    },
+    {
+      "k": ["iedm", "electron devices meeting"],
+      "n": "IEDM",
+      "t": "S",
+      "s": 90,
+      "d": ["Devices", "Analog Circuits"],
+      "ty": "Conference",
+      "u": "https://www.ieee-iedm.org/"
+    },
+    {
+      "k": ["npj quantum information", "quantum information"],
+      "n": "npj Quantum Info",
+      "t": "S",
+      "s": 88,
+      "d": ["Quantum & Physics"],
+      "ty": "Journal",
+      "u": "https://www.nature.com/npjqi/",
+      "if": 9.2,
+      "q": "Q1"
+    },
+    {
+      "k": ["quantum"],
+      "n": "Quantum",
+      "t": "S",
+      "s": 88,
+      "d": ["Quantum & Physics"],
+      "ty": "Journal",
+      "u": "https://quantum-journal.org/",
+      "if": 6.7,
+      "q": "Q1"
+    },
+    {
+      "k": ["tcas-ii", "tcas ii", "circuits and systems ii"],
+      "n": "TCAS-II",
+      "t": "A",
+      "s": 82,
+      "d": ["Analog Circuits"],
+      "ty": "Journal",
+      "u": "https://ieee-cas.org/pubs/tcas-ii",
+      "if": 4.8,
+      "q": "Q2"
+    },
+    {
+      "k": ["tcas-i", "tcas i", "circuits and systems i"],
+      "n": "TCAS-I",
+      "t": "AA",
+      "s": 85,
+      "d": ["Analog Circuits"],
+      "ty": "Journal",
+      "u": "https://ieee-cas.org/pubs/tcas-i",
+      "if": 5.1,
+      "q": "Q1"
+    },
+    {
+      "k": ["tmtt", "microwave theory and techniques"],
+      "n": "TMTT",
+      "t": "AA",
+      "s": 85,
+      "d": ["RF & mm-Wave"],
+      "ty": "Journal",
+      "u": "https://mtt.org/publications/transactions-on-microwave-theory-and-techniques/",
+      "if": 4.7,
+      "q": "Q1"
+    },
+    {
+      "k": ["tbcas", "biomedical circuits and systems", "biocas"],
+      "n": "BioCAS/TBCAS",
+      "t": "AA",
+      "s": 85,
+      "d": ["Analog Circuits"],
+      "ty": "Journal",
+      "u": "https://ieee-cas.org/pubs/tbcas",
+      "if": 5.5,
+      "q": "Q1"
+    },
+    {
+      "k": ["tqe", "quantum engineering"],
+      "n": "IEEE TQE",
+      "t": "A",
+      "s": 80,
+      "d": ["Quantum & Physics"],
+      "ty": "Journal",
+      "u": "https://tqe.ieee.org/",
+      "if": 3.8,
+      "q": "Q2"
+    },
+    {
+      "k": ["cicc", "custom integrated circuits"],
+      "n": "CICC",
+      "t": "AA",
+      "s": 85,
+      "d": ["Analog Circuits"],
+      "ty": "Conference",
+      "u": "https://ieee-cicc.org/"
+    },
+    {
+      "k": ["esscirc", "european solid-state circuits", "european solid state circuits", "european solid-state", "european solid state"],
+      "n": "ESSCIRC",
+      "t": "AA",
+      "s": 85,
+      "d": ["Analog Circuits"],
+      "ty": "Conference",
+      "u": "https://www.esscirc-essderc.org/"
+    },
+    {
+      "k": ["rfic", "radio frequency integrated circuits"],
+      "n": "RFIC",
+      "t": "AA",
+      "s": 85,
+      "d": ["RF & mm-Wave", "Analog Circuits"],
+      "ty": "Conference",
+      "u": "https://rfic-ieee.org/"
+    },
+    {
+      "k": ["a-sscc", "asscc", "asian solid-state", "asian solid state"],
+      "n": "A-SSCC",
+      "t": "AA",
+      "s": 85,
+      "d": ["Analog Circuits"],
+      "ty": "Conference",
+      "u": "https://www.a-sscc.org/"
+    },
+    {
+      "k": ["dac", "design automation conference"],
+      "n": "DAC",
+      "t": "AA",
+      "s": 85,
+      "d": ["Analog Circuits", "EDA"],
+      "ty": "Conference",
+      "u": "https://www.dac.com/"
+    },
+    {
+      "k": ["iccad"],
+      "n": "ICCAD",
+      "t": "AA",
+      "s": 85,
+      "d": ["Analog Circuits", "EDA"],
+      "ty": "Conference",
+      "u": "https://iccad.com/"
+    },
+    {
+      "k": ["ims", "international microwave symposium"],
+      "n": "IMS",
+      "t": "A",
+      "s": 82,
+      "d": ["RF & mm-Wave"],
+      "ty": "Conference",
+      "u": "https://ims-ieee.org/"
+    },
+    {
+      "k": ["textbook", "book", "textbooks"],
+      "n": "Textbook",
+      "t": "A",
+      "s": 82,
+      "d": ["Education"],
+      "ty": "Textbook",
+      "u": "#"
+    },
+    {
+      "k": ["ssc-l", "solid-state circuits letters"],
+      "n": "SSC-L",
+      "t": "A",
+      "s": 80,
+      "d": ["Analog Circuits"],
+      "ty": "Journal",
+      "u": "https://sscs.ieee.org/publications/ieee-solid-state-circuits-letters",
+      "if": 3.5,
+      "q": "Q2"
+    },
+    {
+      "k": ["ted", "transactions on electron devices"],
+      "n": "TED",
+      "t": "A",
+      "s": 80,
+      "d": ["Devices"],
+      "ty": "Journal",
+      "u": "https://eds.ieee.org/publications/transactions-on-electron-devices",
+      "if": 3.4,
+      "q": "Q2"
+    },
+    {
+      "k": ["apl", "applied physics letters"],
+      "n": "APL",
+      "t": "A",
+      "s": 80,
+      "d": ["Quantum & Physics", "Devices"],
+      "ty": "Journal",
+      "u": "https://pubs.aip.org/aip/apl",
+      "if": 4.0,
+      "q": "Q2"
+    },
+    {
+      "k": ["prb", "physical review b"],
+      "n": "PRB",
+      "t": "A",
+      "s": 80,
+      "d": ["Quantum & Physics"],
+      "ty": "Journal",
+      "u": "https://journals.aps.org/prb/",
+      "if": 3.7,
+      "q": "Q2"
+    },
+    {
+      "k": ["mwcl", "microwave and wireless components"],
+      "n": "MWCL",
+      "t": "A",
+      "s": 80,
+      "d": ["RF & mm-Wave"],
+      "ty": "Journal",
+      "u": "https://mtt.org/publications/microwave-and-wireless-components-letters/",
+      "if": 3.2,
+      "q": "Q2"
+    },
+    {
+      "k": ["rsi", "review of scientific instruments"],
+      "n": "Rev. Sci. Instrum.",
+      "t": "B",
+      "s": 75,
+      "d": ["Quantum & Physics", "Devices"],
+      "ty": "Journal",
+      "u": "https://pubs.aip.org/aip/rsi",
+      "if": 1.6,
+      "q": "Q3"
+    },
+    {
+      "k": ["tas", "applied superconductivity"],
+      "n": "IEEE TAS",
+      "t": "B",
+      "s": 75,
+      "d": ["Quantum & Physics"],
+      "ty": "Journal",
+      "u": "https://ieeexplore.ieee.org/xpl/RecentIssue.jsp?punumber=77",
+      "if": 1.8,
+      "q": "Q3"
+    },
+    {
+      "k": ["iscas"],
+      "n": "ISCAS",
+      "t": "B",
+      "s": 75,
+      "d": ["Analog Circuits"],
+      "ty": "Conference",
+      "u": "https://ieee-cas.org/conferences/iscas"
+    },
+    {
+      "k": ["iws", "international wireless symposium", "wireless symposium"],
+      "n": "IWS",
+      "t": "B",
+      "s": 75,
+      "d": ["RF & mm-Wave"],
+      "ty": "Conference",
+      "u": "https://mtt.org/conferences/iws/"
+    },
+    {
+      "k": ["tcas", "circuits and systems"],
+      "ex": ["tcas-i", "tcas i", "tcas-ii", "tcas ii"],
+      "n": "TCAS (Gen)",
+      "t": "B",
+      "s": 70,
+      "d": ["Analog Circuits"],
+      "ty": "Journal",
+      "u": "https://ieee-cas.org/",
+      "if": 2.9,
+      "q": "Q3"
+    },
+    {
+      "k": ["sscm", "solid-state circuits magazine"],
+      "n": "SSC-M",
+      "t": "C",
+      "s": 65,
+      "d": ["Analog Circuits"],
+      "ty": "Journal",
+      "u": "https://sscs.ieee.org/publications/ieee-solid-state-circuits-magazine",
+      "if": 1.5,
+      "q": "Q4"
+    },
+    {
+      "k": ["mwcas"],
+      "n": "MWCAS",
+      "t": "C",
+      "s": 60,
+      "d": ["Analog Circuits"],
+      "ty": "Conference",
+      "u": "#"
+    },
+    {
+      "k": ["apccas"],
+      "n": "APCCAS",
+      "t": "C",
+      "s": 60,
+      "d": ["Analog Circuits"],
+      "ty": "Conference",
+      "u": "#"
+    },
+    {
+      "k": ["icta"],
+      "n": "ICTA",
+      "t": "C",
+      "s": 60,
+      "d": ["Analog Circuits"],
+      "ty": "Conference",
+      "u": "#"
+    },
+    {
+      "k": ["appeec"],
+      "n": "APPEEC",
+      "t": "C",
+      "s": 60,
+      "d": ["Analog Circuits"],
+      "ty": "Conference",
+      "u": "#"
+    }
+  ]
+}
