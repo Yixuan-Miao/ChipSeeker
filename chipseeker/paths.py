@@ -4,6 +4,7 @@ import os
 PACKAGE_DIR = os.path.dirname(os.path.abspath(__file__))
 BASE_DIR = os.path.dirname(PACKAGE_DIR)
 PACKAGE_DATA_DIR = os.path.join(PACKAGE_DIR, "data")
+DEMO_DATA_DIR = os.path.join(BASE_DIR, "demo_data")
 DATA_DIR = os.path.join(BASE_DIR, "local_data")
 SOURCE_CSV_DIR = os.path.join(DATA_DIR, "sources")
 MANUAL_SOURCE_DIR = os.path.join(SOURCE_CSV_DIR, "manual")
@@ -13,6 +14,7 @@ NATURE_UPDATE_DIR = os.path.join(GENERATED_SOURCE_DIR, "nature_updates")
 ARXIV_UPDATE_DIR = os.path.join(GENERATED_SOURCE_DIR, "arxiv_updates")
 CACHE_DIR = os.path.join(DATA_DIR, "cache")
 EXPORT_DIR = os.path.join(DATA_DIR, "exports")
+CONTENT_PACK_EXPORT_DIR = os.path.join(EXPORT_DIR, "content_packs")
 DOWNLOAD_DIR = os.path.join(DATA_DIR, "downloads")
 BACKUP_ROOT_DIR = os.path.join(DATA_DIR, "backups")
 DB_FILE = os.path.join(DATA_DIR, "isscc_papers.json")
@@ -30,7 +32,8 @@ SOURCE_REGISTRY_TEMPLATE_FILE = os.path.join(PACKAGE_DATA_DIR, "source_registry_
 CONFIG_FILE = os.path.join(BASE_DIR, "config.local.json")
 LEGACY_CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
 EXAMPLE_CONFIG_FILE = os.path.join(BASE_DIR, "config.example.json")
-CURRENT_LOCAL_DATA_VERSION = 4
+BUNDLED_DEMO_CSV = os.path.join(DEMO_DATA_DIR, "export2026.03.04-08.56.26.csv")
+CURRENT_LOCAL_DATA_VERSION = 5
 
 
 def ensure_runtime_dirs():
@@ -45,6 +48,7 @@ def ensure_runtime_dirs():
         ARXIV_UPDATE_DIR,
         CACHE_DIR,
         EXPORT_DIR,
+        CONTENT_PACK_EXPORT_DIR,
         DOWNLOAD_DIR,
         BACKUP_ROOT_DIR,
     ):

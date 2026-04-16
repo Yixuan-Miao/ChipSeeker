@@ -86,6 +86,21 @@ def _migrate_to_v4(state):
     _record_state(state, 4, "Merged new default update sources into source registry.")
 
 
+def _migrate_to_v5(state):
+    registry = load_json(SOURCE_REGISTRY_FILE, {"sources": [], "pending_ieee_batch": None})
+    template = load_json(SOURCE_REGISTRY_TEMPLATE_FILE, {"sources": [], "pending_ieee_batch": None})
+    if not isinstance(registry, dict):
+        registry = {"sources": [], "pending_ieee_batch": None}
+    registry.setdefault("sources", [])
+    existing_ids = {source.get("id") for source in registry["sources"]}
+    for template_source in template.get("sources", []):
+        if template_source.get("id") not in existing_ids:
+            registry["sources"].append(template_source)
+    save_json(SOURCE_REGISTRY_FILE, registry)
+    state.setdefault("library_sync", {})
+    _record_state(state, 5, "Expanded default update sources and initialized product-pack state.")
+
+
 def migrate_local_data():
     state = load_json(LOCAL_DATA_STATE_FILE, _default_state())
     if not isinstance(state, dict):
@@ -104,6 +119,9 @@ def migrate_local_data():
     if version < 4:
         _migrate_to_v4(state)
         version = 4
+    if version < 5:
+        _migrate_to_v5(state)
+        version = 5
 
     if version != CURRENT_LOCAL_DATA_VERSION:
         state["schema_version"] = CURRENT_LOCAL_DATA_VERSION

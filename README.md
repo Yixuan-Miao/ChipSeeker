@@ -14,6 +14,17 @@ macOS / Linux:
 bash ./scripts/setup.sh
 ```
 
+Quick launch on Windows after setup:
+
+- Double-click `Start_ChipSeeker.bat`
+- Or create a desktop shortcut pointing to `Start_ChipSeeker.bat`
+
+Bundled demo data:
+
+- The repo now ships with `demo_data/export2026.03.04-08.56.26.csv`
+- This is a `2026` `TMTT` demo CSV so new users can validate the app quickly
+- In the app's `Quick Start`, click `Load Bundled TMTT 2026 Demo CSV` to import it into `local_data`
+
 ## One-Line Agent Install
 
 `codex`:
@@ -65,6 +76,12 @@ pip install .[dev]
 streamlit run app.py
 ```
 
+Windows double-click launch:
+
+```bat
+Start_ChipSeeker.bat
+```
+
 ## Nature Grabber
 
 CLI example:
@@ -88,11 +105,14 @@ If `--output` is a relative path, the CSV is written to `local_data/sources/manu
 - `arXiv Incremental`: ChipSeeker tracks AI hardware / quantum hardware preprint queries and incrementally collects compatible CSVs in the background.
 - `Conflict Review`: surfaces dedupe anomalies such as same title with different years, or same DOI with different abstracts before they silently collapse into one record.
 - `Embedding Coverage Builder`: lets you start with `2026` or a custom year slice, then queue additional year ranges in the background instead of blocking on all 30k+ papers at once.
+- `Quick Start`: first-run onboarding that defaults to bundled local MiniLM search, treats cloud APIs as optional, and lets users import a bundled demo CSV or a paid content pack ZIP.
 
 ## Repo Layout
 
 - `app.py`: main Streamlit entry
+- `Start_ChipSeeker.bat`: Windows double-click launcher
 - `chipseeker/app_main.py`: Streamlit UI entry implementation
+- `chipseeker/content_pack.py`: content pack build/install helpers plus bundled demo CSV install
 - `chipseeker/data_sync.py`: CSV sync, deduplication, source manifest, source organization
 - `chipseeker/conflict_review.py`: source-record conflict detection and review helpers
 - `chipseeker/migrations.py`: local data schema versioning and migrations
@@ -116,6 +136,7 @@ If `--output` is a relative path, the CSV is written to `local_data/sources/manu
 - `local_data/schema_state.json`: local schema version state
 - `local_data/conflict_resolutions.json`: dismissed conflict review items
 - `local_data/source_registry.json`: IEEE / Nature update registry and watermarks
+- `demo_data/export2026.03.04-08.56.26.csv`: bundled 2026 TMTT demo CSV for quick trial
 
 ## Tests
 

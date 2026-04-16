@@ -4,15 +4,18 @@ import os
 import sys
 import time
 import webbrowser
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 
 import streamlit as st
 
 from chipseeker.config_store import UserDataStore, load_app_config
+from chipseeker.content_pack import build_content_pack, detect_content_pack_status, install_bundled_demo_csv, install_content_pack
 from chipseeker.conflict_review import collect_source_records, detect_conflicts, dismiss_conflict, load_conflict_resolutions, restore_conflicts
 from chipseeker.data_sync import (
     build_paper_from_row,
+    build_source_snapshot,
     build_source_state,
+    library_sync_required,
     list_source_csv_files,
     paper_identity_key,
     scan_and_import_csvs,
@@ -27,7 +30,10 @@ from chipseeker.paths import (
     ARXIV_UPDATE_DIR,
     CACHE_DIR,
     CONFIG_FILE,
+    BUNDLED_DEMO_CSV,
+    CONTENT_PACK_EXPORT_DIR,
     CONFLICT_RESOLUTIONS_FILE,
+    DATA_DIR,
     DB_FILE,
     DOWNLOAD_DIR,
     EXAMPLE_CONFIG_FILE,
@@ -144,6 +150,136 @@ def render_task_status(task_id, label, success_message=None, container=st):
     elif status == "failed":
         container.error(f"{label} failed: {task.get('error', 'unknown error')}")
     return task
+
+
+def embedding_model_requires_api(model_name):
+    return "voyage" in model_name or "text-embedding" in model_name
+
+
+def resolve_provider_defaults(current_preset, app_config):
+    if current_preset == "DeepSeek":
+        return "https://api.deepseek.com", "deepseek-chat"
+    if current_preset == "SiliconFlow":
+        return "https://api.siliconflow.cn/v1", "Qwen/Qwen2.5-7B-Instruct"
+    if current_preset == "Kimi":
+        return "https://api.moonshot.cn/v1", "moonshot-v1-8k"
+    return app_config.get("llm_base_url", ""), app_config.get("llm_model", "")
+
+
+def install_uploaded_content_pack(uploaded_pack):
+    result = install_content_pack(uploaded_pack, DATA_DIR)
+    st.cache_resource.clear()
+    st.session_state["csv_state"] = ()
+    st.success(f"Installed content pack into `{result['data_dir']}` with {result['copied_entries']} copied entries.")
+    time.sleep(1.0)
+    st.rerun()
+
+
+def install_bundled_demo_library():
+    target_path = install_bundled_demo_csv(BUNDLED_DEMO_CSV, SOURCE_CSV_DIR)
+    st.cache_resource.clear()
+    st.session_state["csv_state"] = ()
+    st.success(f"Bundled demo CSV installed to `{target_path}`.")
+    time.sleep(1.0)
+    st.rerun()
+
+
+def render_content_pack_sidebar(content_status):
+    with st.sidebar.expander("Content Pack", expanded=False):
+        status_text = "Ready" if content_status["pack_ready"] else "Not installed"
+        st.caption(
+            f"Status: {status_text} | Papers: {content_status['paper_count']} | "
+            f"Sources: {content_status['source_count']} | Cache files: {content_status['cache_count']}"
+        )
+        if st.button("Open Quick Start", use_container_width=True):
+            st.session_state["show_quick_start"] = True
+            st.rerun()
+        if st.button("Build Content Pack ZIP", use_container_width=True):
+            build_result = build_content_pack(
+                DATA_DIR,
+                DB_FILE,
+                CACHE_DIR,
+                SOURCE_MANIFEST_FILE,
+                schema_state=load_json(LOCAL_DATA_STATE_FILE, {}),
+                output_dir=CONTENT_PACK_EXPORT_DIR,
+            )
+            st.success(f"Created: {build_result['zip_path']}")
+        uploaded_pack = st.file_uploader("Install Content Pack ZIP", type=["zip"], key="sidebar_content_pack_upload")
+        if uploaded_pack is not None and st.button("Install Uploaded Pack", use_container_width=True):
+            install_uploaded_content_pack(uploaded_pack)
+        if os.path.exists(BUNDLED_DEMO_CSV) and st.button("Install Bundled TMTT 2026 Demo", use_container_width=True):
+            install_bundled_demo_library()
+
+
+def render_quick_start(app_config, content_status):
+    st.header("Quick Start")
+    st.caption("Default mode is bundled local search. Cloud APIs are optional upgrades, not setup blockers.")
+
+    info_col1, info_col2, info_col3 = st.columns(3)
+    info_col1.metric("Bundled Papers", content_status["paper_count"])
+    info_col2.metric("Source CSVs", content_status["source_count"])
+    info_col3.metric("Cache Files", content_status["cache_count"])
+
+    if content_status["pack_ready"]:
+        st.success("Bundled library detected. You can start searching immediately after this one-time setup.")
+    else:
+        st.warning("No bundled content pack detected yet. Import one now, or continue with an empty library.")
+
+    uploaded_pack = st.file_uploader("Import Content Pack ZIP", type=["zip"], key="quickstart_content_pack_upload")
+    if uploaded_pack is not None and st.button("Install Content Pack", type="primary", use_container_width=True):
+        install_uploaded_content_pack(uploaded_pack)
+    if os.path.exists(BUNDLED_DEMO_CSV):
+        st.info("Repo bundle includes `export2026.03.04-08.56.26.csv`, a 2026 TMTT demo CSV for quick validation.")
+        if st.button("Load Bundled TMTT 2026 Demo CSV", use_container_width=True):
+            install_bundled_demo_library()
+
+    with st.form("quick_start_form"):
+        search_mode = st.radio(
+            "Search Mode",
+            ["Bundled MiniLM (No API Required)", "Voyage 4 Large (Requires API Key)"],
+            index=0 if content_status["has_minilm_cache"] or app_config.get("embedding_model", "all-MiniLM-L6-v2") == "all-MiniLM-L6-v2" else 1,
+        )
+        st.caption("MiniLM may download model weights once on the first machine that uses it, unless you bundle them separately.")
+        with st.expander("Optional Cloud APIs", expanded=False):
+            emb_api_key = st.text_input("Voyage / OpenAI Embedding API Key", value=app_config.get("emb_api_key", ""), type="password")
+            preset_options = ["DeepSeek", "SiliconFlow", "Kimi", "Custom OpenAI"]
+            current_preset = st.selectbox(
+                "LLM Provider Preset",
+                preset_options,
+                index=preset_options.index(app_config.get("provider_preset", "DeepSeek")) if app_config.get("provider_preset") in preset_options else 0,
+            )
+            default_base, default_model = resolve_provider_defaults(current_preset, app_config)
+            llm_api_key = st.text_input("LLM API Key", value=app_config.get("llm_api_key", ""), type="password")
+            llm_base_url = st.text_input("LLM Base URL", value=default_base)
+            llm_model = st.text_input("LLM Model", value=default_model)
+
+        start_now = st.form_submit_button("Save and Start Exploring", type="primary", use_container_width=True)
+
+    if start_now:
+        app_config.update(
+            {
+                "embedding_model": "all-MiniLM-L6-v2" if search_mode.startswith("Bundled MiniLM") else "voyage-4-large",
+                "emb_api_key": emb_api_key,
+                "provider_preset": current_preset,
+                "llm_api_key": llm_api_key,
+                "llm_base_url": llm_base_url,
+                "llm_model": llm_model,
+                "onboarding_completed": True,
+            }
+        )
+        save_json(CONFIG_FILE, app_config)
+        st.session_state.pop("show_quick_start", None)
+        st.cache_resource.clear()
+        st.rerun()
+
+    if st.button("Continue Without Bundled Content", use_container_width=True):
+        app_config.update({"embedding_model": "all-MiniLM-L6-v2", "onboarding_completed": True})
+        save_json(CONFIG_FILE, app_config)
+        st.session_state.pop("show_quick_start", None)
+        st.cache_resource.clear()
+        st.rerun()
+
+    st.stop()
 
 
 def render_conflict_review(source_csv_files):
@@ -519,6 +655,10 @@ def run():
     app_config = load_app_config((CONFIG_FILE, LEGACY_CONFIG_FILE, EXAMPLE_CONFIG_FILE))
     user_store = UserDataStore(USER_DATA_FILE)
     schema_state = load_json(LOCAL_DATA_STATE_FILE, {})
+    content_status = detect_content_pack_status(DATA_DIR, DB_FILE, CACHE_DIR, SOURCE_MANIFEST_FILE, schema_state=schema_state)
+
+    if st.session_state.get("show_quick_start") or not app_config.get("onboarding_completed", False):
+        render_quick_start(app_config, content_status)
 
     def get_user_data(title):
         return user_store.get(title)
@@ -528,7 +668,8 @@ def run():
 
     source_csv_files = list_source_csv_files(source_root=SOURCE_CSV_DIR, manifest_path=SOURCE_MANIFEST_FILE)
     current_csv_state = build_source_state(source_csv_files)
-    if st.session_state.get("csv_state") != current_csv_state:
+    current_source_snapshot = build_source_snapshot(source_csv_files, source_root=SOURCE_CSV_DIR)
+    if library_sync_required(schema_state, current_source_snapshot, DB_FILE):
         with st.spinner("Syncing library..."):
             added_count, updated_count, removed_count, file_summaries = scan_and_import_csvs(
                 DB_FILE,
@@ -536,6 +677,14 @@ def run():
                 source_root=SOURCE_CSV_DIR,
                 manifest_path=SOURCE_MANIFEST_FILE,
             )
+            schema_state["library_sync"] = {
+                "db_file": os.path.abspath(DB_FILE),
+                "source_token": current_source_snapshot["token"],
+                "source_files": current_source_snapshot["files"],
+                "last_synced_at_utc": datetime.now(timezone.utc).isoformat(),
+                "db_record_count": len(load_json(DB_FILE, [])),
+            }
+            save_json(LOCAL_DATA_STATE_FILE, schema_state)
             st.session_state["csv_state"] = current_csv_state
             if added_count or updated_count or removed_count:
                 msg = list(file_summaries)
@@ -547,13 +696,17 @@ def run():
                     msg.append(f"Updated: {updated_count}")
                 for state_key in ("current_query", "raw_results", "initial_count"):
                     st.session_state.pop(state_key, None)
-                st.toast("\n\n".join(msg))
+                st.toast("\n\n".join(msg + ["Embedding cache preserved; search cache will refresh incrementally if needed."]))
                 st.cache_resource.clear()
                 time.sleep(1.0)
                 st.rerun()
+    else:
+        st.session_state["csv_state"] = current_csv_state
 
+    content_status = detect_content_pack_status(DATA_DIR, DB_FILE, CACHE_DIR, SOURCE_MANIFEST_FILE, schema_state=load_json(LOCAL_DATA_STATE_FILE, {}))
     workspace_view = st.sidebar.radio("Workspace", ["Search", "Update Manager", "Conflict Review"], horizontal=False)
     st.sidebar.caption(f"local_data schema v{schema_state.get('schema_version', '?')}")
+    render_content_pack_sidebar(content_status)
 
     all_papers_in_db = load_json(DB_FILE, [])
     library_years = available_years(all_papers_in_db)
@@ -569,12 +722,14 @@ def run():
 
     render_taxonomy_matrix(total_papers, db_stats, active_years)
 
-    st.sidebar.header("Embedding Engine")
+    st.sidebar.header("Search Mode")
     emb_models = ["voyage-4-large", "voyage-4", "voyage-4-lite", "voyage-context-3", "text-embedding-3-large", "all-MiniLM-L6-v2"]
     selected_emb_model = st.sidebar.selectbox("Model", emb_models, index=emb_models.index(app_config.get("embedding_model", "all-MiniLM-L6-v2")) if app_config.get("embedding_model") in emb_models else 5)
-    emb_api_key = ""
-    if "voyage" in selected_emb_model or "text-embedding" in selected_emb_model:
-        emb_api_key = st.sidebar.text_input("Embedding API Key", value=app_config.get("emb_api_key", ""), type="password")
+    emb_api_key = app_config.get("emb_api_key", "")
+    if selected_emb_model == "all-MiniLM-L6-v2":
+        st.sidebar.caption("Bundled local model. No embedding API key required.")
+    else:
+        st.sidebar.caption("Remote embedding model selected. Provide an API key below or switch back to MiniLM.")
     scope_mode = st.sidebar.radio(
         "Semantic Coverage",
         ["Latest Year (Recommended)", "Latest 3 Years", "Custom Years", "Full Library"],
@@ -592,45 +747,52 @@ def run():
     st.sidebar.caption(f"Semantic scope: {scope_text}")
 
     st.sidebar.markdown("---")
-    st.sidebar.header("LLM API Config")
-    preset_options = ["DeepSeek", "SiliconFlow", "Kimi", "Custom OpenAI"]
-    current_preset = st.sidebar.selectbox("Provider Preset", preset_options, index=preset_options.index(app_config.get("provider_preset", "DeepSeek")) if app_config.get("provider_preset") in preset_options else 0)
-    default_base, default_model = "", ""
-    if current_preset == "DeepSeek":
-        default_base, default_model = "https://api.deepseek.com", "deepseek-chat"
-    elif current_preset == "SiliconFlow":
-        default_base, default_model = "https://api.siliconflow.cn/v1", "Qwen/Qwen2.5-7B-Instruct"
-    elif current_preset == "Kimi":
-        default_base, default_model = "https://api.moonshot.cn/v1", "moonshot-v1-8k"
-    else:
-        default_base, default_model = app_config.get("llm_base_url", ""), app_config.get("llm_model", "")
-    api_key = st.sidebar.text_input("LLM API Key", value=app_config.get("llm_api_key", ""), type="password")
-    base_url = st.sidebar.text_input("Base URL", value=default_base)
-    model_name = st.sidebar.text_input("Model ID", value=default_model)
-    if st.sidebar.button("Save Global Config", use_container_width=True):
-        app_config.update({"embedding_model": selected_emb_model, "emb_api_key": emb_api_key, "provider_preset": current_preset, "llm_api_key": api_key, "llm_base_url": base_url, "llm_model": model_name})
-        save_json(CONFIG_FILE, app_config)
-        st.cache_resource.clear()
-        st.sidebar.success("Config saved.")
+    with st.sidebar.expander("Optional AI / Cloud APIs", expanded=False):
+        if embedding_model_requires_api(selected_emb_model):
+            emb_api_key = st.text_input("Embedding API Key", value=app_config.get("emb_api_key", ""), type="password")
+        else:
+            st.caption("Embedding API key not needed for MiniLM.")
+        preset_options = ["DeepSeek", "SiliconFlow", "Kimi", "Custom OpenAI"]
+        current_preset = st.selectbox("Provider Preset", preset_options, index=preset_options.index(app_config.get("provider_preset", "DeepSeek")) if app_config.get("provider_preset") in preset_options else 0)
+        default_base, default_model = resolve_provider_defaults(current_preset, app_config)
+        api_key = st.text_input("LLM API Key", value=app_config.get("llm_api_key", ""), type="password")
+        base_url = st.text_input("Base URL", value=default_base)
+        model_name = st.text_input("Model ID", value=default_model)
+        if st.button("Save Global Config", use_container_width=True):
+            app_config.update({"embedding_model": selected_emb_model, "emb_api_key": emb_api_key, "provider_preset": current_preset, "llm_api_key": api_key, "llm_base_url": base_url, "llm_model": model_name})
+            save_json(CONFIG_FILE, app_config)
+            st.cache_resource.clear()
+            st.sidebar.success("Config saved.")
+
+    if "current_preset" not in locals():
+        current_preset = app_config.get("provider_preset", "DeepSeek")
+    if "api_key" not in locals():
+        api_key = app_config.get("llm_api_key", "")
+    if "base_url" not in locals() or "model_name" not in locals():
+        base_url, model_name = resolve_provider_defaults(current_preset, app_config)
+    embedding_api_ready = (not embedding_model_requires_api(selected_emb_model)) or bool(str(emb_api_key).strip())
 
     cache_file, _ = get_cache_paths(DB_FILE, selected_emb_model, scope_key=scope_key)
     embedding_task_key = f"embedding_task::{selected_emb_model}::{scope_key}"
     embedding_task_id = st.session_state.get(embedding_task_key)
     embedding_ready = os.path.exists(cache_file)
     if not embedding_ready and os.path.exists(DB_FILE):
-        if not embedding_task_id:
+        if embedding_model_requires_api(selected_emb_model) and not embedding_api_ready:
+            st.sidebar.warning("Selected embedding model needs an API key. Use MiniLM for zero-config search, or add a key in Optional AI / Cloud APIs.")
+        elif not embedding_task_id:
             st.session_state[embedding_task_key] = submit_embedding_build(DB_FILE, selected_emb_model, emb_api_key, years=selected_scope_years, scope_key=scope_key)
             embedding_task_id = st.session_state[embedding_task_key]
-        task = render_task_status(
-            embedding_task_id,
-            f"Embedding build for {selected_emb_model} ({scope_text})",
-            success_message=lambda result: f"Embedding cache ready for {result.get('model_name', selected_emb_model)} on {scope_label(result.get('years', []))}.",
-            container=st.sidebar,
-        )
-        if task is None:
-            st.session_state.pop(embedding_task_key, None)
-            st.cache_resource.clear()
-            embedding_ready = os.path.exists(cache_file)
+        if embedding_task_id:
+            task = render_task_status(
+                embedding_task_id,
+                f"Embedding build for {selected_emb_model} ({scope_text})",
+                success_message=lambda result: f"Embedding cache ready for {result.get('model_name', selected_emb_model)} on {scope_label(result.get('years', []))}.",
+                container=st.sidebar,
+            )
+            if task is None:
+                st.session_state.pop(embedding_task_key, None)
+                st.cache_resource.clear()
+                embedding_ready = os.path.exists(cache_file)
     elif embedding_task_id:
         task = render_task_status(
             embedding_task_id,
@@ -642,7 +804,11 @@ def run():
             st.session_state.pop(embedding_task_key, None)
             st.cache_resource.clear()
 
-    searcher = get_searcher_engine(DB_FILE, selected_emb_model, emb_api_key, scope_key=scope_key, scope_years=tuple(selected_scope_years)) if embedding_ready else None
+    searcher = (
+        get_searcher_engine(DB_FILE, selected_emb_model, emb_api_key, scope_key=scope_key, scope_years=tuple(selected_scope_years))
+        if embedding_ready and embedding_api_ready
+        else None
+    )
 
     with st.sidebar.expander("Background Coverage Builder", expanded=False):
         st.caption("Queue other year ranges in the background so you can keep using the current scope immediately.")
@@ -677,6 +843,8 @@ def run():
         if st.button("Queue Background Embedding Build", use_container_width=True):
             if background_choice != "Full Library" and not background_years:
                 st.sidebar.warning("Select at least one year for background embedding.")
+            elif embedding_model_requires_api(selected_emb_model) and not embedding_api_ready:
+                st.sidebar.warning("Add the embedding API key first, or switch to MiniLM for local background builds.")
             elif os.path.exists(background_cache_file):
                 st.sidebar.info("That background scope is already cached.")
             else:
@@ -780,7 +948,10 @@ def run():
             st.session_state.citations_map = {}
             with st.spinner("Scanning library..."):
                 if search_query and not searcher:
-                    st.warning("Embedding cache is still building in the background. You can use metadata filters now and run semantic search after the task completes.")
+                    if embedding_model_requires_api(selected_emb_model) and not embedding_api_ready:
+                        st.warning("Semantic query search is disabled because the selected embedding model requires an API key. Switch to MiniLM or add a key in Optional AI / Cloud APIs.")
+                    else:
+                        st.warning("Embedding cache is still building in the background. You can use metadata filters now and run semantic search after the task completes.")
                     raw_hits = []
                 else:
                     raw_hits = searcher.search(query=search_query, top_k=top_k_val) if search_query else [{"similarity": 1.0, "paper": paper} for paper in all_papers_in_db]
@@ -816,12 +987,26 @@ def run():
     st.markdown("---")
     col_sort, col_batch, col_cite = st.columns([1.5, 2.5, 1])
     with col_sort:
-        sort_option = st.radio("Sort By", ["Relevance", "Year (Newest)", "Comprehensive Score"], horizontal=True)
+        st.markdown("### 🔀 Sort By")
+        sort_option = st.radio(
+            "Dimension",
+            ["⚡ Relevance", "📅 Year (Newest)", "🏆 Comprehensive Score"],
+            horizontal=True,
+            label_visibility="collapsed",
+        )
     with col_cite:
+        st.markdown("### 🔄 Citations")
         default_fetch_num = sum(1 for item in results if item["similarity"] >= 0.40 or not search_query)
         if default_fetch_num == 0 and results:
             default_fetch_num = min(10, len(results))
-        fetch_limit = st.number_input("Fetch Count", min_value=0, max_value=max(1, len(results)), value=min(default_fetch_num, len(results)), step=10)
+        fetch_limit = st.number_input(
+            "Fetch Count (Top-N)",
+            min_value=0,
+            max_value=max(1, len(results)),
+            value=min(default_fetch_num, len(results)),
+            step=10,
+            label_visibility="collapsed",
+        )
         if st.button("Fetch & Update Scores", use_container_width=True):
             with st.spinner(f"Batch fetching citations for top {fetch_limit} papers..."):
                 dois_to_fetch = [result["paper"].get("doi") for result in results if result["paper"].get("doi")][:fetch_limit]
@@ -834,35 +1019,46 @@ def run():
     high_value_papers_for_report = []
 
     with col_batch:
+        st.markdown("### 🛠️ Batch Select")
         rel_threshold = st.slider("Select Relevance >=", 0.0, 1.0, 0.40, 0.05)
         b1, b2, b3, b4, b5 = st.columns(5)
 
         def do_batch_select(mode, val=None):
+            count = 0
             for idx, item in enumerate(results):
                 paper = item["paper"]
                 chk_key = f"chk_{idx}_{get_paper_id(paper)}"
                 similarity = item["similarity"]
                 if mode == "threshold" and (similarity >= val or not search_query):
                     st.session_state[chk_key] = True
+                    count += 1
                 elif mode == "rare" and (similarity >= 0.60 or not search_query):
                     st.session_state[chk_key] = True
+                    count += 1
                 elif mode == "perfect" and (similarity >= 0.40 or not search_query):
                     st.session_state[chk_key] = True
+                    count += 1
                 elif mode == "valuable" and 0.25 <= similarity < 0.40 and search_query:
                     st.session_state[chk_key] = True
+                    count += 1
                 elif mode == "deselect":
                     st.session_state[chk_key] = False
+                    count += 1
+            if mode == "deselect":
+                st.toast("🧹 Cleared all selections.")
+            else:
+                st.toast(f"✅ Successfully selected {count} papers!")
 
         with b1:
-            st.button(f">= {rel_threshold:.2f}", on_click=do_batch_select, args=("threshold", rel_threshold), use_container_width=True)
+            st.button(f"≥ {rel_threshold:.2f}", on_click=do_batch_select, args=("threshold", rel_threshold), use_container_width=True)
         with b2:
-            st.button("Rare", on_click=do_batch_select, args=("rare",), use_container_width=True)
+            st.button("💎 Rare", on_click=do_batch_select, args=("rare",), use_container_width=True)
         with b3:
-            st.button("Perfect", on_click=do_batch_select, args=("perfect",), use_container_width=True)
+            st.button("🎯 Perfect", on_click=do_batch_select, args=("perfect",), use_container_width=True)
         with b4:
-            st.button("Valuable", on_click=do_batch_select, args=("valuable",), use_container_width=True)
+            st.button("⭐ Valuable", on_click=do_batch_select, args=("valuable",), use_container_width=True)
         with b5:
-            st.button("Clear", on_click=do_batch_select, args=("deselect",), use_container_width=True)
+            st.button("❌ Clear All", on_click=do_batch_select, args=("deselect",), use_container_width=True)
 
     for idx, item in enumerate(results):
         paper = item["paper"]
@@ -882,37 +1078,83 @@ def run():
         year_value = extract_year(year)
         year_bonus = max(0, 10 - (CURRENT_YEAR - year_value)) if year_value > 1900 and (CURRENT_YEAR - year_value) < 10 else (10 if year_value > 1900 and (CURRENT_YEAR - year_value) <= 0 else 0)
         if similarity >= 0.60 or not search_query:
-            color, badge = "#9C27B0", "Rare Match"
+            color, badge = "#9C27B0", "💎 Rare Match"
         elif similarity >= 0.40:
-            color, badge = "#00C853", "Perfect Match"
+            color, badge = "#00C853", "🎯 Perfect Match"
         elif similarity >= 0.25:
-            color, badge = "#2196F3", "Highly Valuable"
+            color, badge = "#2196F3", "⭐ Highly Valuable"
         elif similarity >= 0.15:
-            color, badge = "#FF9800", "Relevant"
+            color, badge = "#FF9800", "💡 Relevant"
         else:
-            color, badge = "#9E9E9E", "Noise"
+            color, badge = "#9E9E9E", "🗑️ Noise"
         if similarity >= 0.25 or not search_query:
             high_value_papers_for_report.append(paper)
+        highlighted_title = highlight_text(title, required_words_hl)
+        highlighted_author = highlight_text(author_str, required_words_hl)
+        venue_display = get_venue_display_str(venue_data)
+        highlighted_venue = highlight_text(venue_display, required_words_hl)
+        highlighted_abstract = highlight_text(abstract, required_words_hl)
         citations = st.session_state.citations_map.get(doi.upper(), 0) if st.session_state.citations_fetched else 0
         citation_bonus = min(15, math.log10(citations + 1) * 6) if citations > 0 else 0
         final_score = item.get("comp_score", base_score + year_bonus + citation_bonus)
-        st.markdown(f"**{badge}** | Relevance: `{similarity * 100:.1f}%` | Score: `{final_score:.1f}`")
+        st.markdown(
+            f"""
+            <div style="display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; margin-bottom: 8px; padding: 6px 12px; background-color: #f8f9fa; border-radius: 8px; border-left: 5px solid {color}; gap: 10px;">
+                <div style="flex: 1 1 auto; min-width: 200px;">
+                    <span style="font-size: 1.1em; font-weight: 900; color: {color};">Relevance: {similarity * 100:.1f}%</span>
+                    <span style="background-color: {color}; color: white; padding: 2px 8px; border-radius: 12px; margin-left: 10px; font-size: 0.8em; display: inline-block;">{badge}</span>
+                </div>
+                <div style="flex: 0 1 auto; text-align: right; font-size: 1.05em; font-weight: bold; color: #D84315;">
+                    🏆 Score: {final_score:.1f} <span style="font-size:0.7em; color:#757575;">(Base {base_score} + Yr {year_bonus} + Cites {citation_bonus:.1f})</span>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
         c1, c2, c3 = st.columns([6, 2, 2])
         with c1:
             cc1, cc2 = st.columns([0.5, 9.5])
             with cc1:
                 checked = st.checkbox(" ", key=chk_key, label_visibility="collapsed")
             with cc2:
-                st.markdown(f"<span style='font-size:1.1em; font-weight:bold; color:{color};'>{highlight_text(title, required_words_hl)}</span>", unsafe_allow_html=True)
-            st.markdown(f"**Authors:** {highlight_text(author_str, required_words_hl)}", unsafe_allow_html=True)
-            st.markdown(f"**Venue:** <span style='color:{domain_color}; font-weight:bold;'>{highlight_text(get_venue_display_str(venue_data), required_words_hl)}</span> ({year}) | **Tier:** <span style='background-color:{tier_color}; color:white; padding:2px 6px; border-radius:4px;'>{venue_data['t']}</span>", unsafe_allow_html=True)
+                st.markdown(f"<span style='font-size:1.1em; font-weight:bold;'>{highlighted_title}</span>", unsafe_allow_html=True)
+            st.markdown(f"**👨‍🔬 Authors:** {highlighted_author}", unsafe_allow_html=True)
+            st.markdown(
+                f"**🏛️ Venue:** <span style='color:{domain_color}; font-weight:bold;'>{highlighted_venue}</span> ({year}) &nbsp;&nbsp;|&nbsp;&nbsp; **Tier:** <span style='background-color:{tier_color}; color:white; padding:2px 6px; border-radius:4px; font-size:0.85em; font-weight:bold;'>{venue_data['t']}</span>",
+                unsafe_allow_html=True,
+            )
             if user_data["matched_queries"]:
-                st.markdown("**Matched:** " + " ".join([f"`{query}`" for query in user_data["matched_queries"]]))
+                st.markdown("**💡 Matched:** " + " ".join([f"`🎯 {query}`" for query in user_data["matched_queries"]]))
         with c2:
-            st.markdown(f"**Reads:** `{user_data['open_count']}`")
-            st.markdown(f"**Cites:** `{citations}`")
+            st.markdown(f"**👀 Reads:** `{user_data['open_count']}`")
+            if st.session_state.citations_fetched:
+                st.markdown(f"**🔥 Cites:** `{citations}` `✅ Fetched`")
+            else:
+                st.markdown("**🔥 Cites:** `⏳ Pending (Manual Fetch)`")
         with c3:
-            new_rating = st.selectbox("Rating", ["Unrated", "Masterpiece", "Solid", "Average", "Marginal", "Poor"], index=["Unrated", "Masterpiece", "Solid", "Average", "Marginal", "Poor"].index(user_data["rating"] if user_data["rating"] in ["Unrated", "Masterpiece", "Solid", "Average", "Marginal", "Poor"] else "Unrated"), key=f"rate_{chk_key}", label_visibility="collapsed")
+            rating_options = [
+                "Unrated",
+                "🌟🌟🌟🌟🌟 Masterpiece",
+                "⭐⭐⭐⭐ Solid",
+                "⭐⭐⭐ Average",
+                "⭐⭐ Marginal",
+                "💩 Poor",
+            ]
+            rating_alias = {
+                "Masterpiece": "🌟🌟🌟🌟🌟 Masterpiece",
+                "Solid": "⭐⭐⭐⭐ Solid",
+                "Average": "⭐⭐⭐ Average",
+                "Marginal": "⭐⭐ Marginal",
+                "Poor": "💩 Poor",
+            }
+            current_rating = rating_alias.get(user_data["rating"], user_data["rating"] if user_data["rating"] in rating_options else "Unrated")
+            new_rating = st.selectbox(
+                "Rating",
+                rating_options,
+                index=rating_options.index(current_rating),
+                key=f"rate_{chk_key}",
+                label_visibility="collapsed",
+            )
             if new_rating != user_data["rating"]:
                 update_user_data(title, "rating", new_rating)
             new_comments = st.text_input("Notes", value=user_data["comments"], key=f"comment_{chk_key}", placeholder="Take notes...")
@@ -920,32 +1162,36 @@ def run():
                 update_user_data(title, "comments", new_comments)
         if checked:
             selected_papers.append(paper)
-        with st.expander("Read Abstract"):
-            st.markdown(highlight_text(abstract, required_words_hl), unsafe_allow_html=True)
+        with st.expander("📖 Read Abstract"):
+            st.markdown(highlighted_abstract, unsafe_allow_html=True)
         if similarity >= 0.25 or not search_query:
-            with st.expander("AI Deep Dive"):
-                if st.button("Analyze with LLM", key=f"ai_btn_{chk_key}"):
+            with st.expander("🤖 AI Deep Dive"):
+                if st.button("🚀 Analyze with LLM", key=f"ai_btn_{chk_key}"):
                     if not api_key:
                         st.error("API key missing.")
                     else:
                         with st.spinner("Analyzing..."):
-                            st.markdown(analyze_with_llm(title, abstract, search_query or "Summarize", api_key, base_url, model_name))
+                            try:
+                                st.markdown(analyze_with_llm(title, abstract, search_query or "Summarize", api_key, base_url, model_name))
+                            except Exception as exc:
+                                st.error(str(exc))
         st.markdown("---")
 
     st.sidebar.markdown("---")
-    if high_value_papers_for_report and st.sidebar.button("Generate State-of-the-Art Review", type="primary", use_container_width=True):
+    st.sidebar.header("🧠 Global Insights")
+    if high_value_papers_for_report and st.sidebar.button("📊 Generate State-of-the-Art Review", type="primary", use_container_width=True):
         if not api_key:
             st.sidebar.error("API key missing.")
         else:
             with st.spinner("LLM is reading top papers..."):
                 st.session_state.mega_report = generate_global_report_with_llm(high_value_papers_for_report, search_query or "General Review", api_key, base_url, model_name)
     if "mega_report" in st.session_state:
-        st.markdown("## AI Global Review Report")
+        st.markdown("## 📊 AI Global Review Report")
         st.markdown(st.session_state.mega_report)
 
     st.sidebar.markdown("---")
-    st.sidebar.header(f"Selected Papers ({len(selected_papers)})")
-    if st.sidebar.button("Open Selected PDFs", use_container_width=True):
+    st.sidebar.header(f"🛒 Selected Papers ({len(selected_papers)})")
+    if st.sidebar.button("📄 Open Selected PDFs", use_container_width=True):
         success_count = 0
         for paper in selected_papers:
             title = paper.get("title")
@@ -958,7 +1204,7 @@ def run():
         st.sidebar.info(f"Opened {success_count} tabs.")
 
     st.sidebar.markdown("---")
-    save_dir = st.sidebar.text_input("Local Save Folder", value=DOWNLOAD_DIR, help="The local directory where PDFs will be saved.")
+    save_dir = st.sidebar.text_input("📁 Local Save Folder", value=DOWNLOAD_DIR, help="The local directory where PDFs will be saved.")
     pdf_task_key = "pdf_download_task"
     pdf_task_id = st.session_state.get(pdf_task_key)
     task = render_task_status(
@@ -969,14 +1215,14 @@ def run():
     )
     if task is None and pdf_task_id:
         st.session_state.pop(pdf_task_key, None)
-    if st.sidebar.button("Batch Download Selected PDFs", type="primary", use_container_width=True):
+    if st.sidebar.button("⬇️ Batch Download Selected PDFs", type="primary", use_container_width=True):
         if not selected_papers:
             st.sidebar.warning("No papers selected.")
         else:
             st.session_state[pdf_task_key] = submit_pdf_download(selected_papers, save_dir)
             st.sidebar.success("PDF download task queued in the background.")
 
-    if st.sidebar.button("Export to NotebookLM", type="primary", use_container_width=True):
+    if st.sidebar.button("📝 Export to NotebookLM", type="primary", use_container_width=True):
         export_content = build_notebooklm_export(selected_papers, search_query or "Filtered Subset", get_user_data)
         write_text_file(NOTEBOOKLM_EXPORT_FILE, export_content)
         st.sidebar.success(f"Markdown generated: {NOTEBOOKLM_EXPORT_FILE}")

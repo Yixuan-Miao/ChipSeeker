@@ -7,6 +7,8 @@ DEFAULT_CONFIG = {
     "llm_model": "deepseek-chat",
     "provider_preset": "DeepSeek",
     "embedding_model": "all-MiniLM-L6-v2",
+    "emb_api_key": "",
+    "onboarding_completed": False,
 }
 
 LEGACY_RATING_MAP = {
