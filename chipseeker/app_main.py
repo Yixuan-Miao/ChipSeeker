@@ -19,7 +19,7 @@ from chipseeker.data_sync import (
     scan_and_import_csvs,
 )
 from chipseeker.embedding_scope import available_years, build_scope_key, filter_papers_by_years, scope_label
-from chipseeker.exports import build_bibtex, build_csv_rows, build_notebooklm_export, generate_csv_link, write_text_file
+from chipseeker.exports import build_bibtex, build_csv_rows, build_notebooklm_export, build_search_results_html, generate_csv_link, write_text_file
 from chipseeker.llm_tools import analyze_with_llm, generate_global_report_with_llm, generate_search_keywords, get_batch_citations
 from chipseeker.maintenance import generate_db_stats
 from chipseeker.migrations import migrate_local_data
@@ -34,6 +34,7 @@ from chipseeker.paths import (
     DB_FILE,
     DOWNLOAD_DIR,
     EXAMPLE_CONFIG_FILE,
+    EXPORT_DIR,
     IEEE_UPDATE_DIR,
     LEGACY_CONFIG_FILE,
     LOCAL_DATA_STATE_FILE,
@@ -1197,7 +1198,7 @@ def run():
                 st.bar_chart(year_counts)
 
     st.markdown("---")
-    col_sort, col_batch, col_cite = st.columns([1.5, 2.5, 1])
+    col_sort, col_batch, col_cite, col_export = st.columns([1.4, 2.2, 1, 1.2])
     with col_sort:
         st.markdown(f"### {tr(ui_language, 'Sort By', '排序方式')}")
         sort_option = st.radio(
@@ -1229,6 +1230,37 @@ def run():
     results = sort_results(results, sort_option, search_query, st.session_state.citations_map, st.session_state.citations_fetched, analyze_venue, extract_year, CURRENT_YEAR)
     selected_papers = []
     high_value_papers_for_report = []
+
+    with col_export:
+        st.markdown(f"### {tr(ui_language, 'Export', '导出')}")
+        export_limit = min(50, len(results))
+        export_query_label = slugify_filename(search_query or must_have or "search_results")
+        export_html_name = f"ChipSeeker_{export_query_label}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
+        export_dir = os.path.join(EXPORT_DIR, "search_results_html")
+        export_html = build_search_results_html(
+            results,
+            search_query,
+            CURRENT_YEAR,
+            analyze_venue,
+            get_user_data,
+            citations_map=st.session_state.citations_map,
+            citations_fetched=st.session_state.citations_fetched,
+            max_results=export_limit,
+        )
+        if st.button(tr(ui_language, f"Export Top {export_limit} as HTML", f"导出前 {export_limit} 条为 HTML"), use_container_width=True):
+            export_path = os.path.join(export_dir, export_html_name)
+            write_text_file(export_path, export_html)
+            st.session_state["last_exported_results_html"] = export_path
+        st.download_button(
+            tr(ui_language, "Download HTML", "下载 HTML"),
+            data=export_html,
+            file_name=export_html_name,
+            mime="text/html",
+            use_container_width=True,
+            key=f"download_results_html_{export_html_name}",
+        )
+        if st.session_state.get("last_exported_results_html"):
+            st.caption(tr(ui_language, f"Saved to: {st.session_state['last_exported_results_html']}", f"已保存到：{st.session_state['last_exported_results_html']}"))
 
     with col_batch:
         st.markdown(f"### {tr(ui_language, 'Batch Select', '批量选择')}")

@@ -1,8 +1,11 @@
 import base64
 import csv
+import html
 import io
+import math
 import os
 import re
+from datetime import datetime
 
 from chipseeker.utils import extract_year
 
@@ -83,3 +86,312 @@ def build_bibtex(selected_papers):
             content += f"  doi={{{paper.get('doi')}}}\n"
         content += "}\n\n"
     return content
+
+
+def _result_badge(similarity, has_query):
+    if similarity >= 0.60 or not has_query:
+        return "#9C27B0", "Rare Match"
+    if similarity >= 0.40:
+        return "#00C853", "Perfect Match"
+    if similarity >= 0.25:
+        return "#2196F3", "Highly Valuable"
+    if similarity >= 0.15:
+        return "#FF9800", "Relevant"
+    return "#9E9E9E", "Noise"
+
+
+def build_search_results_html(results, search_query, current_year, analyze_venue, get_user_data, citations_map=None, citations_fetched=False, max_results=50):
+    citations_map = citations_map or {}
+    cards = []
+    trimmed_results = list(results[:max_results])
+    generated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    for index, item in enumerate(trimmed_results, start=1):
+        paper = item.get("paper", {})
+        similarity = float(item.get("similarity", 0.0))
+        title = paper.get("title", "Untitled")
+        abstract = paper.get("abstract", "No Abstract")
+        venue = paper.get("venue", "Unknown Venue")
+        year = paper.get("year", "N/A")
+        doi = paper.get("doi", "")
+        pdf_link = paper.get("pdf_link", "")
+        authors = paper_authors(paper)
+        author_str = f"{authors[0]} ... {authors[-1]}" if len(authors) > 1 else authors[0]
+        user_data = get_user_data(title)
+        venue_data = analyze_venue(venue)
+        venue_display = venue_data.get("n", venue)
+        base_score = float(venue_data.get("s", 0))
+        year_value = extract_year(year)
+        if year_value > 1900 and (current_year - year_value) < 10:
+            year_bonus = max(0, 10 - (current_year - year_value))
+        elif year_value > 1900 and (current_year - year_value) <= 0:
+            year_bonus = 10
+        else:
+            year_bonus = 0
+        citations = int(citations_map.get(str(doi).upper(), 0)) if citations_fetched else 0
+        citation_bonus = min(15, math.log10(citations + 1) * 6) if citations > 0 else 0
+        final_score = float(item.get("comp_score", base_score + year_bonus + citation_bonus))
+        color, badge = _result_badge(similarity, bool(search_query))
+        tier_color = {
+            "S+": "#E53935",
+            "S": "#FB8C00",
+            "AA": "#1E88E5",
+            "A": "#43A047",
+            "B": "#8E24AA",
+            "C": "#757575",
+        }.get(venue_data.get("t", ""), "#9E9E9E")
+        matched_queries = user_data.get("matched_queries", [])
+        matched_html = ""
+        if matched_queries:
+            matched_html = (
+                "<div class='meta-row'><strong>Matched:</strong> "
+                + " ".join(f"<code>{html.escape(query)}</code>" for query in matched_queries)
+                + "</div>"
+            )
+        citation_text = f"{citations} (Fetched)" if citations_fetched else "Pending (Manual Fetch)"
+        links = []
+        if doi:
+            links.append(f"<a href='https://doi.org/{html.escape(doi)}' target='_blank' rel='noreferrer'>DOI</a>")
+        if pdf_link:
+            links.append(f"<a href='{html.escape(pdf_link)}' target='_blank' rel='noreferrer'>PDF</a>")
+        links_html = " | ".join(links)
+        abstract_block = html.escape(abstract).replace("\n", "<br>")
+        notes = html.escape(user_data.get("comments", "") or "")
+        rating = html.escape(user_data.get("rating", "Unrated"))
+
+        cards.append(
+            f"""
+            <section class="result-card">
+              <div class="result-banner" style="border-left-color:{color};">
+                <div class="banner-left">
+                  <span class="relevance" style="color:{color};">Relevance: {similarity * 100:.1f}%</span>
+                  <span class="badge" style="background:{color};">{html.escape(badge)}</span>
+                </div>
+                <div class="banner-right">
+                  Score: {final_score:.1f}
+                  <span class="score-breakdown">(Base {base_score:.0f} + Yr {year_bonus:.0f} + Cites {citation_bonus:.1f})</span>
+                </div>
+              </div>
+              <div class="result-body">
+                <div class="main-col">
+                  <div class="title-row">
+                    <span class="result-index">#{index}</span>
+                    <span class="title">{html.escape(title)}</span>
+                  </div>
+                  <div class="meta-row"><strong>Authors:</strong> {html.escape(author_str)}</div>
+                  <div class="meta-row">
+                    <strong>Venue:</strong>
+                    <span class="venue">{html.escape(venue_display)}</span> ({html.escape(str(year))})
+                    &nbsp;|&nbsp;
+                    <strong>Tier:</strong>
+                    <span class="tier" style="background:{tier_color};">{html.escape(venue_data.get("t", "N/A"))}</span>
+                  </div>
+                  {matched_html}
+                  <details class="abstract-box">
+                    <summary>Read Abstract</summary>
+                    <div class="abstract-text">{abstract_block}</div>
+                  </details>
+                </div>
+                <div class="side-col">
+                  <div><strong>Reads:</strong> <code>{int(user_data.get("open_count", 0))}</code></div>
+                  <div><strong>Cites:</strong> <code>{html.escape(citation_text)}</code></div>
+                  <div><strong>Rating:</strong> <code>{rating}</code></div>
+                  <div><strong>Notes:</strong> {notes or "<span class='muted'>None</span>"}</div>
+                  <div class="links">{links_html or "<span class='muted'>No DOI / PDF link</span>"}</div>
+                </div>
+              </div>
+            </section>
+            """
+        )
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ChipSeeker Search Results</title>
+  <style>
+    :root {{
+      --bg: #f4f7fb;
+      --card: #ffffff;
+      --line: #dde5ef;
+      --text: #18212b;
+      --muted: #6b7785;
+      --accent: #0f766e;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+      background: linear-gradient(180deg, #f7faff 0%, #eef3f9 100%);
+      color: var(--text);
+    }}
+    .page {{
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 28px 20px 48px;
+    }}
+    .header {{
+      background: rgba(255,255,255,0.86);
+      backdrop-filter: blur(8px);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 20px 22px;
+      margin-bottom: 20px;
+      box-shadow: 0 14px 40px rgba(19, 38, 63, 0.08);
+    }}
+    .header h1 {{
+      margin: 0 0 8px;
+      font-size: 30px;
+    }}
+    .header p {{
+      margin: 4px 0;
+      color: var(--muted);
+    }}
+    .result-card {{
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 14px 16px 16px;
+      margin-bottom: 16px;
+      box-shadow: 0 14px 32px rgba(15, 23, 42, 0.06);
+    }}
+    .result-banner {{
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 10px;
+      padding: 8px 12px;
+      background: #f8fafc;
+      border-radius: 10px;
+      border-left: 5px solid #9e9e9e;
+      flex-wrap: wrap;
+    }}
+    .banner-left {{
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }}
+    .relevance {{
+      font-size: 1.08rem;
+      font-weight: 900;
+    }}
+    .badge {{
+      color: white;
+      padding: 3px 10px;
+      border-radius: 999px;
+      font-size: 0.82rem;
+      font-weight: 700;
+    }}
+    .banner-right {{
+      font-size: 1rem;
+      font-weight: 800;
+      color: #d84315;
+    }}
+    .score-breakdown {{
+      display: block;
+      font-size: 0.74rem;
+      color: var(--muted);
+      font-weight: 600;
+    }}
+    .result-body {{
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 280px;
+      gap: 18px;
+    }}
+    .title-row {{
+      display: flex;
+      gap: 10px;
+      align-items: flex-start;
+      margin-bottom: 8px;
+    }}
+    .result-index {{
+      color: var(--muted);
+      font-weight: 700;
+      min-width: 28px;
+    }}
+    .title {{
+      font-size: 1.08rem;
+      font-weight: 800;
+      line-height: 1.45;
+    }}
+    .meta-row {{
+      margin: 7px 0;
+      line-height: 1.55;
+    }}
+    .venue {{
+      color: var(--accent);
+      font-weight: 800;
+    }}
+    .tier {{
+      color: white;
+      padding: 2px 7px;
+      border-radius: 6px;
+      font-size: 0.82rem;
+      font-weight: 800;
+    }}
+    code {{
+      background: #f1f5f9;
+      border-radius: 6px;
+      padding: 2px 6px;
+      font-family: Consolas, monospace;
+    }}
+    .abstract-box {{
+      margin-top: 12px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 10px 12px;
+      background: #fbfdff;
+    }}
+    .abstract-box summary {{
+      cursor: pointer;
+      font-weight: 700;
+    }}
+    .abstract-text {{
+      margin-top: 10px;
+      color: #334155;
+      line-height: 1.65;
+    }}
+    .side-col {{
+      border-left: 1px dashed var(--line);
+      padding-left: 16px;
+      display: grid;
+      gap: 10px;
+      align-content: start;
+    }}
+    .links a {{
+      color: #0f62fe;
+      text-decoration: none;
+      font-weight: 700;
+    }}
+    .muted {{
+      color: var(--muted);
+    }}
+    @media (max-width: 900px) {{
+      .result-body {{
+        grid-template-columns: 1fr;
+      }}
+      .side-col {{
+        border-left: none;
+        border-top: 1px dashed var(--line);
+        padding-left: 0;
+        padding-top: 12px;
+      }}
+    }}
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header class="header">
+      <h1>ChipSeeker Search Results</h1>
+      <p><strong>Query:</strong> {html.escape(search_query or 'No semantic query')}</p>
+      <p><strong>Exported:</strong> {html.escape(generated_at)}</p>
+      <p><strong>Included Results:</strong> {len(trimmed_results)} / {len(results)}</p>
+    </header>
+    {''.join(cards)}
+  </main>
+</body>
+</html>
+"""
