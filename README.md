@@ -9,6 +9,7 @@ git clone https://github.com/Yixuan-Miao/ChipSeeker.git && cd ChipSeeker && powe
 ```
 
 **Windows**
+双击打开：
 
 ```bat
 Install_ChipSeeker.bat
@@ -57,31 +58,6 @@ Tired of incomplete or inaccurate keyword searches and the hassle of filtering o
 
 ---
 
-## Quick Start
-
-### 1. Installation
-Clone the repository and install the required dependencies (Python 3.9+ recommended):
-```bash
-git clone [https://github.com/Yixuan-Miao/ChipSeeker.git](https://github.com/Yixuan-Miao/ChipSeeker.git)
-cd ChipSeeker
-pip install -r requirements.txt
-```
-
-### 2. Run the App
-
-Start the application from your terminal:
-
-```bash
-streamlit run app.py
-```
-
-Once started, the terminal will output a `Local URL` (e.g., `http://localhost:8501`). Open this address in your browser to access the web interface.
-
-### 3. Try the Demo
-
-For easy testing, the system comes pre-loaded with approximately 300 IEEE TMTT papers from 2026.
-Open the web page, configure your DeepSeek or OpenAI API Key in the left sidebar, and try searching for a paper to experience the scoring, AI analysis, and batch export features.
-
 ## How to Build Your Private Database?
 
 **Method 1: Manual Import** Drop your exported `.csv` files (must include the `Abstract` column) into the designated folder and refresh the web page.
@@ -127,29 +103,7 @@ Developed with ❤️ by Miao Yixuan. For IC Designers, by an IC Designer. If yo
 
 ---
 
-## Quick Start
-
-### 1. 环境安装
-
-克隆代码并安装必要的依赖（建议 Python 3.9+）：
-
-```bash
-git clone [https://github.com/Yixuan-Miao/ChipSeeker.git](https://github.com/Yixuan-Miao/ChipSeeker.git)
-cd ChipSeeker
-pip install -r requirements.txt
-```
-
-### 2. 运行
-
-在终端输入以下命令启动：
-
-```bash
-streamlit run app.py
-```
-
-启动后，终端会输出一行类似于 `Local URL: http://localhost:8501` 的地址。打开你的浏览器，输入 `localhost:8501` 即可进入系统网页。
-
-### 3. 体验预设数据 (Demo)
+## 体验预设数据 (Demo)
 
 为了方便测试，系统中已预设了约 300 篇 2026 年的 IEEE TMTT 论文数据。
 打开网页后，你可以直接在左侧边栏配置你自己的 DeepSeek 或 OpenAI API Key，尝试搜索一篇论文，体验打分、AI 分析和批量导出功能。
