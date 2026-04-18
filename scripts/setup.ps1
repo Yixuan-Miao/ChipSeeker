@@ -9,10 +9,16 @@ function Write-Step([string]$message) {
 
 function Get-BootstrapPython {
     if (Get-Command py -ErrorAction SilentlyContinue) {
-        return @("py", "-3")
+        return [PSCustomObject]@{
+            Command   = "py"
+            Arguments = @("-3")
+        }
     }
     if (Get-Command python -ErrorAction SilentlyContinue) {
-        return @("python")
+        return [PSCustomObject]@{
+            Command   = "python"
+            Arguments = @()
+        }
     }
     throw "Python 3.10+ was not found. Install Python first, then rerun Install_ChipSeeker.bat."
 }
@@ -23,11 +29,7 @@ $venvPython = Join-Path $projectRoot ".venv\Scripts\python.exe"
 if (-not (Test-Path -LiteralPath $venvPython)) {
     $bootstrapPython = Get-BootstrapPython
     Write-Step "creating virtual environment at .venv"
-    if ($bootstrapPython.Length -gt 1) {
-        & $bootstrapPython[0] $bootstrapPython[1] -m venv .venv
-    } else {
-        & $bootstrapPython[0] -m venv .venv
-    }
+    & $bootstrapPython.Command @($bootstrapPython.Arguments) -m venv .venv
 } else {
     Write-Step "reusing existing virtual environment"
 }
