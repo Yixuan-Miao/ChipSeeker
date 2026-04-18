@@ -12,21 +12,18 @@ from chipseeker.config_store import UserDataStore, load_app_config
 from chipseeker.content_pack import build_content_pack, detect_content_pack_status, install_bundled_demo_csv, install_content_pack
 from chipseeker.conflict_review import collect_source_records, detect_conflicts, dismiss_conflict, load_conflict_resolutions, restore_conflicts
 from chipseeker.data_sync import (
-    build_paper_from_row,
     build_source_snapshot,
     build_source_state,
     library_sync_required,
     list_source_csv_files,
-    paper_identity_key,
     scan_and_import_csvs,
 )
 from chipseeker.embedding_scope import available_years, build_scope_key, filter_papers_by_years, scope_label
 from chipseeker.exports import build_bibtex, build_csv_rows, build_notebooklm_export, generate_csv_link, write_text_file
 from chipseeker.llm_tools import analyze_with_llm, generate_global_report_with_llm, generate_search_keywords, get_batch_citations
-from chipseeker.maintenance import compute_papers_to_purge, generate_db_stats, purge_papers_from_sources
+from chipseeker.maintenance import generate_db_stats
 from chipseeker.migrations import migrate_local_data
 from chipseeker.paths import (
-    BACKUP_ROOT_DIR,
     ARXIV_UPDATE_DIR,
     CACHE_DIR,
     CONFIG_FILE,
@@ -66,10 +63,23 @@ from chipseeker.update_manager import (
 )
 from chipseeker.utils import extract_year, load_json, save_json, slugify_filename
 from chipseeker.venue_data import DOMAIN_COLORS, TIER_COLORS, analyze_venue, get_venue_display_str
-from search_runtime import PaperSearcher, get_cache_paths
+from chipseeker.version import APP_VERSION, GITHUB_REPO_URL
+from search_runtime import PaperSearcher, describe_cache_status, get_cache_paths
 
 
 CURRENT_YEAR = datetime.now().year
+LANGUAGE_OPTIONS = ["English", "简体中文"]
+NATURE_JOURNAL_OPTIONS = [
+    ("", "All Nature journals"),
+    ("nature", "Nature"),
+    ("nature-electronics", "Nature Electronics"),
+    ("nature-communications", "Nature Communications"),
+    ("nature-machine-intelligence", "Nature Machine Intelligence"),
+    ("nature-nanotechnology", "Nature Nanotechnology"),
+    ("nature-photonics", "Nature Photonics"),
+    ("communications-engineering", "Communications Engineering"),
+    ("npj-quantum-information", "npj Quantum Information"),
+]
 
 
 def _vx_auth():
@@ -80,6 +90,94 @@ def _vx_auth():
     _y = base64.b64encode(b"guangeofaisa@gmail.com").decode()
     if not _x or not _y:
         raise SystemExit("ERR_LICENSE: Integrity check failed.")
+
+
+def tr(ui_language, english, chinese=None):
+    if ui_language == "简体中文" and chinese:
+        return chinese
+    return english
+
+
+def format_nature_journal(value):
+    return dict(NATURE_JOURNAL_OPTIONS).get(value, value or "All Nature journals")
+
+
+def render_help_panel(ui_language):
+    steps = [
+        (
+            tr(ui_language, "Step 1", "第 1 步"),
+            tr(
+                ui_language,
+                "Choose all-MiniLM-L6-v2 first if you want zero-config local search. Switch to voyage-4-large only after adding the embedding API key.",
+                "如果你想先零配置体验，请先用 all-MiniLM-L6-v2。只有在填好 embedding API key 之后，再切到 voyage-4-large。",
+            ),
+        ),
+        (
+            tr(ui_language, "Step 2", "第 2 步"),
+            tr(
+                ui_language,
+                "Use the build buttons in Search Mode to prepare the newest-year, newest-three-year, or full-library semantic cache. Search will automatically use the largest ready cache.",
+                "在 Search Mode 里用构建按钮准备“最新一年 / 最新三年 / 全库”的语义缓存。搜索会自动使用当前已就绪的最大缓存范围。",
+            ),
+        ),
+        (
+            tr(ui_language, "Step 3", "第 3 步"),
+            tr(
+                ui_language,
+                "Use Semantic Query for meaning-based retrieval, then optionally add Exact Match terms to hard-filter titles and abstracts.",
+                "先用 Semantic Query 做语义检索，再按需用 Exact Match 对标题和摘要做硬关键词过滤。",
+            ),
+        ),
+        (
+            tr(ui_language, "Step 4", "第 4 步"),
+            tr(
+                ui_language,
+                "Use the checkboxes or the batch-selection controls to build your Selected Papers set.",
+                "用复选框或批量选择控件整理出你的 Selected Papers 集合。",
+            ),
+        ),
+        (
+            tr(ui_language, "Step 5", "第 5 步"),
+            tr(
+                ui_language,
+                "From Selected Papers, open PDFs, batch-download PDFs, export BibTeX, or export to NotebookLM. LLM review is optional and stays at the bottom.",
+                "在 Selected Papers 里可以打开 PDF、批量下载 PDF、导出 BibTeX，或者导出到 NotebookLM。LLM 分析是可选项，放在最底部。",
+            ),
+        ),
+    ]
+    st.markdown(f"### {tr(ui_language, 'Quick Help', '快速帮助')}")
+    for title, body in steps:
+        st.markdown(
+            f"""
+<div style="border:1px solid #f3c2c2; background:#fff7f7; padding:14px 16px; border-radius:12px; margin-bottom:12px;">
+  <div style="color:#c62828; font-weight:700; margin-bottom:8px;">➜ {title}</div>
+  <div>{body}</div>
+</div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+
+def semantic_scope_presets(library_years):
+    latest_years = [library_years[0]] if library_years else []
+    latest_three_years = library_years[:3]
+    return [
+        {"id": "latest_year", "label": "Latest Year", "years": latest_years},
+        {"id": "latest_three_years", "label": "Latest 3 Years", "years": latest_three_years},
+        {"id": "full_library", "label": "Full Library", "years": []},
+    ]
+
+
+def semantic_scope_summary(ui_language, label, total_papers, cache_status):
+    cached = cache_status.get("cached_papers", 0)
+    total = total_papers
+    ready = cache_status.get("up_to_date", False)
+    return (
+        f"**{tr(ui_language, label, {'Latest Year': '最新一年', 'Latest 3 Years': '最新三年', 'Full Library': '全库'}[label])}**  \n"
+        f"{tr(ui_language, 'Detected', '检测到')} `{total}` | "
+        f"{tr(ui_language, 'Cached', '已缓存')} `{cached}` | "
+        f"{tr(ui_language, 'Status', '状态')} `{tr(ui_language, 'Ready', '已就绪') if ready else tr(ui_language, 'Needs Build', '需要构建')}`"
+    )
 
 
 @st.cache_resource(show_spinner=False)
@@ -152,6 +250,65 @@ def render_task_status(task_id, label, success_message=None, container=st):
     return task
 
 
+def format_task_history(task, limit=30):
+    history = task.get("history", [])[-limit:] if isinstance(task, dict) else []
+    return "\n".join(f"[{entry.get('timestamp', '--:--:--')}] {entry.get('message', '')}" for entry in history)
+
+
+def render_foreground_task_console(task_id, label, success_message=None):
+    if not task_id:
+        return None
+
+    title_placeholder = st.empty()
+    progress_placeholder = st.empty()
+    status_placeholder = st.empty()
+    history_placeholder = st.empty()
+    detail_placeholder = st.empty()
+
+    def draw(task):
+        status = task.get("status")
+        progress = float(task.get("progress", 0.0))
+        message = task.get("message", "")
+        result = task.get("result", {})
+        title_placeholder.markdown(f"### Embedding Console\n{label}")
+        if status in {"queued", "running"}:
+            progress_placeholder.progress(progress if progress > 0 else 0.01)
+            status_placeholder.info(message or status)
+        elif status == "completed":
+            progress_placeholder.progress(1.0)
+            if success_message:
+                status_placeholder.success(success_message(result))
+            else:
+                status_placeholder.success("Embedding build completed.")
+        else:
+            progress_placeholder.progress(progress if progress > 0 else 0.01)
+            status_placeholder.error(task.get("error", "unknown error"))
+
+        with detail_placeholder.container():
+            detail_cols = st.columns(4)
+            detail_cols[0].metric("Status", status.title())
+            detail_cols[1].metric("Progress", f"{progress * 100:.1f}%")
+            detail_cols[2].metric("Scope", result.get("scope_key", task.get("payload", {}).get("scope_key", "all")))
+            detail_cols[3].metric("Papers", result.get("paper_count", task.get("payload", {}).get("paper_count", 0)))
+        history_placeholder.code(format_task_history(task), language="text")
+
+    task = get_task(task_id)
+    if not task:
+        status_placeholder.warning("Task record was not found.")
+        return None
+
+    loops = 0
+    while task and task.get("status") in {"queued", "running"} and loops < 600:
+        draw(task)
+        time.sleep(1.0)
+        task = get_task(task_id)
+        loops += 1
+
+    if task:
+        draw(task)
+    return task
+
+
 def embedding_model_requires_api(model_name):
     return "voyage" in model_name or "text-embedding" in model_name
 
@@ -184,17 +341,17 @@ def install_bundled_demo_library():
     st.rerun()
 
 
-def render_content_pack_sidebar(content_status):
-    with st.sidebar.expander("Content Pack", expanded=False):
+def render_content_pack_sidebar(content_status, ui_language):
+    with st.sidebar.expander(tr(ui_language, "Content Pack", "内容包"), expanded=False):
         status_text = "Ready" if content_status["pack_ready"] else "Not installed"
         st.caption(
             f"Status: {status_text} | Papers: {content_status['paper_count']} | "
             f"Sources: {content_status['source_count']} | Cache files: {content_status['cache_count']}"
         )
-        if st.button("Open Quick Start", use_container_width=True):
+        if st.button(tr(ui_language, "Open Quick Start", "打开快速开始"), use_container_width=True):
             st.session_state["show_quick_start"] = True
             st.rerun()
-        if st.button("Build Content Pack ZIP", use_container_width=True):
+        if st.button(tr(ui_language, "Build Content Pack ZIP", "生成内容包 ZIP"), use_container_width=True):
             build_result = build_content_pack(
                 DATA_DIR,
                 DB_FILE,
@@ -204,16 +361,17 @@ def render_content_pack_sidebar(content_status):
                 output_dir=CONTENT_PACK_EXPORT_DIR,
             )
             st.success(f"Created: {build_result['zip_path']}")
-        uploaded_pack = st.file_uploader("Install Content Pack ZIP", type=["zip"], key="sidebar_content_pack_upload")
-        if uploaded_pack is not None and st.button("Install Uploaded Pack", use_container_width=True):
+        st.caption(tr(ui_language, "Large ZIP files are supported locally.", "本地支持较大的 ZIP 内容包。"))
+        uploaded_pack = st.file_uploader(tr(ui_language, "Install Content Pack ZIP", "安装内容包 ZIP"), type=["zip"], key="sidebar_content_pack_upload")
+        if uploaded_pack is not None and st.button(tr(ui_language, "Install Uploaded Pack", "安装上传内容包"), use_container_width=True):
             install_uploaded_content_pack(uploaded_pack)
-        if os.path.exists(BUNDLED_DEMO_CSV) and st.button("Install Bundled TMTT 2026 Demo", use_container_width=True):
+        if os.path.exists(BUNDLED_DEMO_CSV) and st.button(tr(ui_language, "Install Bundled TMTT 2026 Demo", "安装内置 TMTT 2026 演示库"), use_container_width=True):
             install_bundled_demo_library()
 
 
-def render_quick_start(app_config, content_status):
-    st.header("Quick Start")
-    st.caption("Default mode is bundled local search. Cloud APIs are optional upgrades, not setup blockers.")
+def render_quick_start(app_config, content_status, ui_language):
+    st.header(tr(ui_language, "Quick Start", "快速开始"))
+    st.caption(tr(ui_language, "Default mode is bundled local search. Cloud APIs are optional upgrades, not setup blockers.", "默认模式是本地搜索。云端 API 是可选增强，不是使用门槛。"))
 
     info_col1, info_col2, info_col3 = st.columns(3)
     info_col1.metric("Bundled Papers", content_status["paper_count"])
@@ -221,30 +379,33 @@ def render_quick_start(app_config, content_status):
     info_col3.metric("Cache Files", content_status["cache_count"])
 
     if content_status["pack_ready"]:
-        st.success("Bundled library detected. You can start searching immediately after this one-time setup.")
+        st.success(tr(ui_language, "Bundled library detected. You can start searching immediately after this one-time setup.", "检测到内容库。完成这一步后可以直接开始搜索。"))
     else:
-        st.warning("No bundled content pack detected yet. Import one now, or continue with an empty library.")
+        st.warning(tr(ui_language, "No bundled content pack detected yet. Import one now, or continue with an empty library.", "还没有检测到内容包。你可以现在导入，或者先用空库继续。"))
 
-    uploaded_pack = st.file_uploader("Import Content Pack ZIP", type=["zip"], key="quickstart_content_pack_upload")
-    if uploaded_pack is not None and st.button("Install Content Pack", type="primary", use_container_width=True):
+    uploaded_pack = st.file_uploader(tr(ui_language, "Import Content Pack ZIP", "导入内容包 ZIP"), type=["zip"], key="quickstart_content_pack_upload")
+    if uploaded_pack is not None and st.button(tr(ui_language, "Install Content Pack", "安装内容包"), type="primary", use_container_width=True):
         install_uploaded_content_pack(uploaded_pack)
     if os.path.exists(BUNDLED_DEMO_CSV):
-        st.info("Repo bundle includes `export2026.03.04-08.56.26.csv`, a 2026 TMTT demo CSV for quick validation.")
-        if st.button("Load Bundled TMTT 2026 Demo CSV", use_container_width=True):
+        st.info(tr(ui_language, "Repo bundle includes `export2026.03.04-08.56.26.csv`, a 2026 TMTT demo CSV for quick validation.", "仓库内置 `export2026.03.04-08.56.26.csv`，可快速体验 2026 TMTT 演示库。"))
+        if st.button(tr(ui_language, "Load Bundled TMTT 2026 Demo CSV", "加载内置 TMTT 2026 演示 CSV"), use_container_width=True):
             install_bundled_demo_library()
 
     with st.form("quick_start_form"):
         search_mode = st.radio(
-            "Search Mode",
-            ["Bundled MiniLM (No API Required)", "Voyage 4 Large (Requires API Key)"],
+            tr(ui_language, "Search Mode", "搜索模式"),
+            [
+                tr(ui_language, "Bundled MiniLM (No API Required)", "内置 MiniLM（不需要 API）"),
+                tr(ui_language, "Voyage 4 Large (Requires API Key)", "Voyage 4 Large（需要 API Key）"),
+            ],
             index=0 if content_status["has_minilm_cache"] or app_config.get("embedding_model", "all-MiniLM-L6-v2") == "all-MiniLM-L6-v2" else 1,
         )
-        st.caption("MiniLM may download model weights once on the first machine that uses it, unless you bundle them separately.")
-        with st.expander("Optional Cloud APIs", expanded=False):
+        st.caption(tr(ui_language, "MiniLM may download model weights once on the first machine that uses it, unless you bundle them separately.", "MiniLM 在新机器首次使用时可能会下载一次模型权重，除非你把本地模型也一起打包。"))
+        with st.expander(tr(ui_language, "Optional Cloud APIs", "可选云端 API"), expanded=False):
             emb_api_key = st.text_input("Voyage / OpenAI Embedding API Key", value=app_config.get("emb_api_key", ""), type="password")
             preset_options = ["DeepSeek", "SiliconFlow", "Kimi", "Custom OpenAI"]
             current_preset = st.selectbox(
-                "LLM Provider Preset",
+                tr(ui_language, "LLM Provider Preset", "LLM 服务商预设"),
                 preset_options,
                 index=preset_options.index(app_config.get("provider_preset", "DeepSeek")) if app_config.get("provider_preset") in preset_options else 0,
             )
@@ -253,12 +414,12 @@ def render_quick_start(app_config, content_status):
             llm_base_url = st.text_input("LLM Base URL", value=default_base)
             llm_model = st.text_input("LLM Model", value=default_model)
 
-        start_now = st.form_submit_button("Save and Start Exploring", type="primary", use_container_width=True)
+        start_now = st.form_submit_button(tr(ui_language, "Save and Start Exploring", "保存并开始使用"), type="primary", use_container_width=True)
 
     if start_now:
         app_config.update(
             {
-                "embedding_model": "all-MiniLM-L6-v2" if search_mode.startswith("Bundled MiniLM") else "voyage-4-large",
+                "embedding_model": "all-MiniLM-L6-v2" if "MiniLM" in search_mode else "voyage-4-large",
                 "emb_api_key": emb_api_key,
                 "provider_preset": current_preset,
                 "llm_api_key": llm_api_key,
@@ -272,7 +433,7 @@ def render_quick_start(app_config, content_status):
         st.cache_resource.clear()
         st.rerun()
 
-    if st.button("Continue Without Bundled Content", use_container_width=True):
+    if st.button(tr(ui_language, "Continue Without Bundled Content", "不导入内容包继续"), use_container_width=True):
         app_config.update({"embedding_model": "all-MiniLM-L6-v2", "onboarding_completed": True})
         save_json(CONFIG_FILE, app_config)
         st.session_state.pop("show_quick_start", None)
@@ -472,9 +633,9 @@ def render_update_manager(source_csv_files):
                     st.text_input("Query", value=source.get("query", ""), key=f"nature_query_{source['id']}")
                     st.selectbox(
                         "Journal Filter",
-                        options=["", "nature", "nature-electronics"],
-                        index=["", "nature", "nature-electronics"].index(source.get("journal", "")) if source.get("journal", "") in {"", "nature", "nature-electronics"} else 0,
-                        format_func=lambda value: {"": "All Nature journals", "nature": "Nature", "nature-electronics": "Nature Electronics"}.get(value, value),
+                        options=[value for value, _ in NATURE_JOURNAL_OPTIONS],
+                        index=[value for value, _ in NATURE_JOURNAL_OPTIONS].index(source.get("journal", "")) if source.get("journal", "") in {value for value, _ in NATURE_JOURNAL_OPTIONS} else 0,
+                        format_func=format_nature_journal,
                         key=f"nature_journal_{source['id']}",
                     )
                     st.number_input("Max Pages", min_value=1, max_value=50, value=int(source.get("max_pages", 5)), step=1, key=f"nature_pages_{source['id']}")
@@ -506,7 +667,7 @@ def render_update_manager(source_csv_files):
                 new_id = st.text_input("New Source ID", value="nature_new_source")
                 new_name = st.text_input("New Source Name", value="New Nature Source")
                 new_query = st.text_input("Nature Query", value="")
-                new_journal = st.selectbox("Journal", options=["", "nature", "nature-electronics"], format_func=lambda value: {"": "All Nature journals", "nature": "Nature", "nature-electronics": "Nature Electronics"}.get(value, value))
+                new_journal = st.selectbox("Journal", options=[value for value, _ in NATURE_JOURNAL_OPTIONS], format_func=format_nature_journal)
                 if st.form_submit_button("Add Nature Source", use_container_width=True):
                     registry = load_source_registry(SOURCE_REGISTRY_FILE)
                     if find_source(registry, new_id):
@@ -564,6 +725,44 @@ def render_update_manager(source_csv_files):
             else:
                 st.session_state[nature_task_key] = submit_nature_incremental(SOURCE_REGISTRY_FILE, selected_nature_ids, NATURE_UPDATE_DIR)
                 st.success("Nature incremental update queued in the background.")
+
+        st.markdown("---")
+        st.markdown("### Manual Nature Grabber")
+        st.caption("Use this only when you want an ad-hoc manual Nature-family pull outside the saved auto-incremental sources.")
+        manual_col1, manual_col2 = st.columns(2)
+        with manual_col1:
+            ng_query = st.text_input("Search Query", key="nature_manual_query", placeholder="e.g. cryogenic CMOS qubit readout")
+            ng_journal = st.selectbox(
+                "Journal Filter",
+                options=[value for value, _ in NATURE_JOURNAL_OPTIONS],
+                format_func=format_nature_journal,
+                key="nature_manual_journal",
+            )
+            ng_year_from = st.number_input("Start Year", min_value=1990, max_value=CURRENT_YEAR, value=2015, step=1, key="nature_manual_year_from")
+        with manual_col2:
+            ng_max_pages = st.number_input("Max Pages", min_value=1, max_value=50, value=5, step=1, key="nature_manual_pages")
+            ng_sleep = st.number_input("Request Delay (s)", min_value=0.0, max_value=10.0, value=1.0, step=0.5, key="nature_manual_sleep")
+            ng_output = st.text_input("Output CSV", value=f"{slugify_filename(ng_query or 'nature_search')}.csv", key="nature_manual_output")
+        if st.button("Run Manual Nature Grabber", use_container_width=True):
+            if not ng_query.strip():
+                st.warning("Nature search query is required.")
+            else:
+                from Nature_Grabber import grab_nature
+
+                output_name = ng_output if ng_output.lower().endswith(".csv") else f"{ng_output}.csv"
+                output_file = output_name if os.path.isabs(output_name) else os.path.join(SOURCE_CSV_DIR, "manual", output_name)
+                with st.spinner("Fetching Nature metadata..."):
+                    grab_nature(
+                        query=ng_query,
+                        output_file=output_file,
+                        journal=ng_journal,
+                        year_from=int(ng_year_from),
+                        max_pages=int(ng_max_pages),
+                        sleep_seconds=float(ng_sleep),
+                    )
+                st.session_state["csv_state"] = ()
+                st.success(f"Saved to {output_file}")
+                st.rerun()
 
     with tab_arxiv:
         st.markdown("### arXiv Source Registry")
@@ -640,25 +839,27 @@ def run():
     _vx_auth()
     migrate_local_data()
 
-    st.set_page_config(page_title="ChipSeeker", layout="wide")
-    st.title("ChipSeeker")
+    st.set_page_config(page_title=f"ChipSeeker {APP_VERSION}", layout="wide")
+    st.title(f"ChipSeeker {APP_VERSION}")
     st.markdown(
         """
 **Author:** Miao Yixuan | **Email:** [guangeofaisa@gmail.com](mailto:guangeofaisa@gmail.com) | **GitHub:** [https://github.com/Yixuan-Miao](https://github.com/Yixuan-Miao)
 """
     )
+    st.caption(f"Version: {APP_VERSION} | Repo: {GITHUB_REPO_URL}")
 
     if "citations_fetched" not in st.session_state:
         st.session_state.citations_fetched = False
         st.session_state.citations_map = {}
 
     app_config = load_app_config((CONFIG_FILE, LEGACY_CONFIG_FILE, EXAMPLE_CONFIG_FILE))
+    ui_language = app_config.get("ui_language", "English")
     user_store = UserDataStore(USER_DATA_FILE)
     schema_state = load_json(LOCAL_DATA_STATE_FILE, {})
     content_status = detect_content_pack_status(DATA_DIR, DB_FILE, CACHE_DIR, SOURCE_MANIFEST_FILE, schema_state=schema_state)
 
     if st.session_state.get("show_quick_start") or not app_config.get("onboarding_completed", False):
-        render_quick_start(app_config, content_status)
+        render_quick_start(app_config, content_status, ui_language)
 
     def get_user_data(title):
         return user_store.get(title)
@@ -704,9 +905,17 @@ def run():
         st.session_state["csv_state"] = current_csv_state
 
     content_status = detect_content_pack_status(DATA_DIR, DB_FILE, CACHE_DIR, SOURCE_MANIFEST_FILE, schema_state=load_json(LOCAL_DATA_STATE_FILE, {}))
-    workspace_view = st.sidebar.radio("Workspace", ["Search", "Update Manager", "Conflict Review"], horizontal=False)
+    ui_language = st.sidebar.selectbox(
+        "Language / 语言",
+        LANGUAGE_OPTIONS,
+        index=LANGUAGE_OPTIONS.index(app_config.get("ui_language", "English")) if app_config.get("ui_language", "English") in LANGUAGE_OPTIONS else 0,
+    )
+    if app_config.get("ui_language", "English") != ui_language:
+        app_config["ui_language"] = ui_language
+        save_json(CONFIG_FILE, app_config)
+    workspace_view = st.sidebar.radio(tr(ui_language, "Workspace", "工作区"), ["Search", "Update Manager", "Conflict Review"], horizontal=False)
     st.sidebar.caption(f"local_data schema v{schema_state.get('schema_version', '?')}")
-    render_content_pack_sidebar(content_status)
+    render_content_pack_sidebar(content_status, ui_language)
 
     all_papers_in_db = load_json(DB_FILE, [])
     library_years = available_years(all_papers_in_db)
@@ -720,190 +929,174 @@ def run():
         render_conflict_review(source_csv_files)
         return
 
+    _, help_col_right = st.columns([8, 1])
+    with help_col_right:
+        if st.button(tr(ui_language, "Help", "帮助"), use_container_width=True):
+            st.session_state["show_help_panel"] = not st.session_state.get("show_help_panel", False)
+    if st.session_state.get("show_help_panel", False):
+        render_help_panel(ui_language)
+
     render_taxonomy_matrix(total_papers, db_stats, active_years)
 
-    st.sidebar.header("Search Mode")
+    st.sidebar.header(tr(ui_language, "Search Mode", "搜索模式"))
     emb_models = ["voyage-4-large", "voyage-4", "voyage-4-lite", "voyage-context-3", "text-embedding-3-large", "all-MiniLM-L6-v2"]
-    selected_emb_model = st.sidebar.selectbox("Model", emb_models, index=emb_models.index(app_config.get("embedding_model", "all-MiniLM-L6-v2")) if app_config.get("embedding_model") in emb_models else 5)
+    selected_emb_model = st.sidebar.selectbox(tr(ui_language, "Model", "模型"), emb_models, index=emb_models.index(app_config.get("embedding_model", "all-MiniLM-L6-v2")) if app_config.get("embedding_model") in emb_models else 5)
     emb_api_key = app_config.get("emb_api_key", "")
     if selected_emb_model == "all-MiniLM-L6-v2":
-        st.sidebar.caption("Bundled local model. No embedding API key required.")
+        st.sidebar.caption(tr(ui_language, "Default local path. No embedding API key required.", "默认本地路径，不需要 embedding API key。"))
     else:
-        st.sidebar.caption("Remote embedding model selected. Provide an API key below or switch back to MiniLM.")
-    scope_mode = st.sidebar.radio(
-        "Semantic Coverage",
-        ["Latest Year (Recommended)", "Latest 3 Years", "Custom Years", "Full Library"],
-        index=0 if total_papers > 10000 else 3,
-    )
-    selected_scope_years = []
-    if scope_mode == "Latest Year (Recommended)" and library_years:
-        selected_scope_years = [library_years[0]]
-    elif scope_mode == "Latest 3 Years":
-        selected_scope_years = library_years[:3]
-    elif scope_mode == "Custom Years":
-        selected_scope_years = st.sidebar.multiselect("Years To Embed/Search", options=library_years, default=library_years[:1] if library_years else [])
-    scope_key = build_scope_key(selected_scope_years)
-    scope_text = scope_label(selected_scope_years)
-    st.sidebar.caption(f"Semantic scope: {scope_text}")
-
-    st.sidebar.markdown("---")
-    with st.sidebar.expander("Optional AI / Cloud APIs", expanded=False):
-        if embedding_model_requires_api(selected_emb_model):
-            emb_api_key = st.text_input("Embedding API Key", value=app_config.get("emb_api_key", ""), type="password")
-        else:
-            st.caption("Embedding API key not needed for MiniLM.")
-        preset_options = ["DeepSeek", "SiliconFlow", "Kimi", "Custom OpenAI"]
-        current_preset = st.selectbox("Provider Preset", preset_options, index=preset_options.index(app_config.get("provider_preset", "DeepSeek")) if app_config.get("provider_preset") in preset_options else 0)
-        default_base, default_model = resolve_provider_defaults(current_preset, app_config)
-        api_key = st.text_input("LLM API Key", value=app_config.get("llm_api_key", ""), type="password")
-        base_url = st.text_input("Base URL", value=default_base)
-        model_name = st.text_input("Model ID", value=default_model)
-        if st.button("Save Global Config", use_container_width=True):
-            app_config.update({"embedding_model": selected_emb_model, "emb_api_key": emb_api_key, "provider_preset": current_preset, "llm_api_key": api_key, "llm_base_url": base_url, "llm_model": model_name})
-            save_json(CONFIG_FILE, app_config)
-            st.cache_resource.clear()
-            st.sidebar.success("Config saved.")
-
-    if "current_preset" not in locals():
-        current_preset = app_config.get("provider_preset", "DeepSeek")
-    if "api_key" not in locals():
-        api_key = app_config.get("llm_api_key", "")
-    if "base_url" not in locals() or "model_name" not in locals():
-        base_url, model_name = resolve_provider_defaults(current_preset, app_config)
-    embedding_api_ready = (not embedding_model_requires_api(selected_emb_model)) or bool(str(emb_api_key).strip())
-
-    cache_file, _ = get_cache_paths(DB_FILE, selected_emb_model, scope_key=scope_key)
-    embedding_task_key = f"embedding_task::{selected_emb_model}::{scope_key}"
-    embedding_task_id = st.session_state.get(embedding_task_key)
-    embedding_ready = os.path.exists(cache_file)
-    if not embedding_ready and os.path.exists(DB_FILE):
-        if embedding_model_requires_api(selected_emb_model) and not embedding_api_ready:
-            st.sidebar.warning("Selected embedding model needs an API key. Use MiniLM for zero-config search, or add a key in Optional AI / Cloud APIs.")
-        elif not embedding_task_id:
-            st.session_state[embedding_task_key] = submit_embedding_build(DB_FILE, selected_emb_model, emb_api_key, years=selected_scope_years, scope_key=scope_key)
-            embedding_task_id = st.session_state[embedding_task_key]
-        if embedding_task_id:
-            task = render_task_status(
-                embedding_task_id,
-                f"Embedding build for {selected_emb_model} ({scope_text})",
-                success_message=lambda result: f"Embedding cache ready for {result.get('model_name', selected_emb_model)} on {scope_label(result.get('years', []))}.",
-                container=st.sidebar,
+        st.sidebar.markdown(
+            tr(
+                ui_language,
+                "Recommended strongest semantic model: **voyage-4-large**. Get an API key from [Voyage AI](https://dash.voyageai.com/).",
+                "推荐最强语义模型：**voyage-4-large**。可在 [Voyage AI](https://dash.voyageai.com/) 申请 API key。",
             )
-            if task is None:
-                st.session_state.pop(embedding_task_key, None)
-                st.cache_resource.clear()
-                embedding_ready = os.path.exists(cache_file)
-    elif embedding_task_id:
-        task = render_task_status(
-            embedding_task_id,
-            f"Embedding build for {selected_emb_model} ({scope_text})",
-            success_message=lambda result: f"Embedding cache ready for {result.get('model_name', selected_emb_model)} on {scope_label(result.get('years', []))}.",
-            container=st.sidebar,
         )
-        if task is None:
-            st.session_state.pop(embedding_task_key, None)
-            st.cache_resource.clear()
+        emb_api_key = st.sidebar.text_input(tr(ui_language, "Embedding API Key", "Embedding API Key"), value=app_config.get("emb_api_key", ""), type="password")
+    if app_config.get("embedding_model") != selected_emb_model or app_config.get("emb_api_key", "") != emb_api_key:
+        app_config.update({"embedding_model": selected_emb_model, "emb_api_key": emb_api_key})
+        save_json(CONFIG_FILE, app_config)
+
+    current_preset = app_config.get("provider_preset", "DeepSeek")
+    api_key = app_config.get("llm_api_key", "")
+    base_url, model_name = resolve_provider_defaults(current_preset, app_config)
+    embedding_api_ready = (not embedding_model_requires_api(selected_emb_model)) or bool(str(emb_api_key).strip())
+    selected_papers_panel = st.sidebar.container()
+    llm_tools_panel = st.sidebar.container()
+    scope_presets = semantic_scope_presets(library_years)
+    scope_status_map = {}
+    for preset in scope_presets:
+        preset_papers = filter_papers_by_years(all_papers_in_db, preset["years"]) if preset["years"] else list(all_papers_in_db)
+        preset_scope_key = build_scope_key(preset["years"])
+        scope_status_map[preset["id"]] = {
+            "scope_key": preset_scope_key,
+            "scope_text": scope_label(preset["years"]),
+            "years": preset["years"],
+            "total_papers": len(preset_papers),
+            "cache_status": describe_cache_status(DB_FILE, selected_emb_model, scope_key=preset_scope_key, papers_override=preset_papers) if preset_papers else {
+                "cache_file": "",
+                "meta_file": "",
+                "total_papers": 0,
+                "cached_papers": 0,
+                "has_cache": False,
+                "up_to_date": False,
+                "needs_build": False,
+                "append_only": False,
+                "new_papers": 0,
+            },
+        }
+
+    semantic_scope_candidates = ["full_library", "latest_three_years", "latest_year"]
+    active_scope_id = next(
+        (
+            scope_id
+            for scope_id in semantic_scope_candidates
+            if scope_status_map.get(scope_id, {}).get("cache_status", {}).get("up_to_date") and scope_status_map.get(scope_id, {}).get("total_papers", 0) > 0
+        ),
+        None,
+    )
+    active_scope_years = scope_status_map[active_scope_id]["years"] if active_scope_id else []
+    active_scope_key = scope_status_map[active_scope_id]["scope_key"] if active_scope_id else "all"
+    active_scope_text = scope_status_map[active_scope_id]["scope_text"] if active_scope_id else tr(ui_language, "No semantic cache ready", "还没有可用的语义缓存")
+
+    foreground_task_id = st.session_state.get("foreground_embedding_task_id")
+    foreground_task_scope_id = st.session_state.get("foreground_embedding_scope_id")
+    foreground_task_model = st.session_state.get("foreground_embedding_model")
+    foreground_task = get_task(foreground_task_id) if foreground_task_id and foreground_task_model == selected_emb_model else None
+    if foreground_task and foreground_task.get("status") == "completed":
+        st.session_state.pop("foreground_embedding_task_id", None)
+        st.session_state.pop("foreground_embedding_scope_id", None)
+        st.session_state.pop("foreground_embedding_model", None)
+        st.cache_resource.clear()
+        time.sleep(0.5)
+        st.rerun()
+    elif foreground_task and foreground_task.get("status") == "failed":
+        st.warning(f"Previous embedding build failed: {foreground_task.get('error', 'unknown error')}")
 
     searcher = (
-        get_searcher_engine(DB_FILE, selected_emb_model, emb_api_key, scope_key=scope_key, scope_years=tuple(selected_scope_years))
-        if embedding_ready and embedding_api_ready
+        get_searcher_engine(DB_FILE, selected_emb_model, emb_api_key, scope_key=active_scope_key, scope_years=tuple(active_scope_years))
+        if active_scope_id and embedding_api_ready
         else None
     )
 
-    with st.sidebar.expander("Background Coverage Builder", expanded=False):
-        st.caption("Queue other year ranges in the background so you can keep using the current scope immediately.")
-        for state_key, state_value in list(st.session_state.items()):
-            if not str(state_key).startswith(f"embedding_task::{selected_emb_model}::"):
-                continue
-            if state_key == embedding_task_key:
-                continue
-            task_scope_key = state_key.split("::", 2)[-1]
-            task = render_task_status(
-                state_value,
-                f"Background embedding build ({task_scope_key})",
-                success_message=lambda result: f"Background cache ready for {scope_label(result.get('years', []))}.",
-                container=st.sidebar,
-            )
-            if task is None:
-                st.session_state.pop(state_key, None)
-        background_choice = st.radio(
-            "Queue Build",
-            ["Latest Year", "Latest 3 Years", "Full Library", "Custom Years"],
-            key="background_scope_mode",
+    st.markdown("---")
+    st.markdown(f"### {tr(ui_language, 'Semantic Cache Builder', '语义缓存构建器')}")
+    st.caption(
+        tr(
+            ui_language,
+            "Build a small scope first for fast onboarding. Semantic search will automatically use the largest ready cache.",
+            "建议先构建一个较小范围快速上手。语义搜索会自动使用当前已就绪的最大缓存范围。",
         )
-        background_years = []
-        if background_choice == "Latest Year" and library_years:
-            background_years = [library_years[0]]
-        elif background_choice == "Latest 3 Years":
-            background_years = library_years[:3]
-        elif background_choice == "Custom Years":
-            background_years = st.multiselect("Background Years", options=library_years, default=library_years[:1] if library_years else [], key="background_years")
-        background_scope_key = build_scope_key(background_years)
-        background_cache_file, _ = get_cache_paths(DB_FILE, selected_emb_model, scope_key=background_scope_key)
-        if st.button("Queue Background Embedding Build", use_container_width=True):
-            if background_choice != "Full Library" and not background_years:
-                st.sidebar.warning("Select at least one year for background embedding.")
-            elif embedding_model_requires_api(selected_emb_model) and not embedding_api_ready:
-                st.sidebar.warning("Add the embedding API key first, or switch to MiniLM for local background builds.")
-            elif os.path.exists(background_cache_file):
-                st.sidebar.info("That background scope is already cached.")
-            else:
-                bg_task_key = f"embedding_task::{selected_emb_model}::{background_scope_key}"
-                st.session_state[bg_task_key] = submit_embedding_build(DB_FILE, selected_emb_model, emb_api_key, years=background_years, scope_key=background_scope_key)
-                st.sidebar.success(f"Queued background build for {scope_label(background_years)}.")
+    )
+    if active_scope_id:
+        active_scope_label = next(preset["label"] for preset in scope_presets if preset["id"] == active_scope_id)
+        st.info(
+            tr(
+                ui_language,
+                f"Current semantic search coverage: {active_scope_label} ({active_scope_text})",
+                f"当前语义搜索覆盖范围：{tr(ui_language, active_scope_label, {'Latest Year': '最新一年', 'Latest 3 Years': '最新三年', 'Full Library': '全库'}[active_scope_label])}（{active_scope_text}）",
+            )
+        )
+    else:
+        st.warning(tr(ui_language, "No semantic cache is ready yet. Build one of the ranges below first.", "目前还没有可用的语义缓存，请先构建下面的任一范围。"))
 
-    st.sidebar.markdown("---")
-    st.sidebar.header("DB Maintenance")
-    papers_to_purge = compute_papers_to_purge(all_papers_in_db, db_stats, analyze_venue)
-    if "purge_mode" not in st.session_state:
-        st.session_state.purge_mode = False
-    if st.sidebar.button("Scan & Purge Low-Volume Papers", use_container_width=True):
-        st.session_state.purge_mode = not st.session_state.purge_mode
-    if st.session_state.purge_mode:
-        if not papers_to_purge:
-            st.sidebar.success("No low-volume papers found.")
-            st.session_state.purge_mode = False
-        else:
-            with st.sidebar.form("purge_form"):
-                options = [f"{paper['title']} [{paper.get('venue', 'Other')}]" for paper in papers_to_purge]
-                selected_options = st.multiselect("Select papers to permanently delete:", options=options, default=[])
-                if st.form_submit_button("Confirm Delete from CSV & JSON", use_container_width=True):
-                    if selected_options:
-                        selected_papers = [papers_to_purge[options.index(option)] for option in selected_options]
-                        purge_result = purge_papers_from_sources(selected_papers, source_csv_files, BACKUP_ROOT_DIR, CACHE_DIR, build_paper_from_row, paper_identity_key)
-                        if purge_result["backup_dir"]:
-                            st.sidebar.info(f"Backup saved to {purge_result['backup_dir']}")
-                        st.session_state.purge_mode = False
-                        st.session_state["csv_state"] = ()
-                        st.rerun()
-                    else:
-                        st.warning("No papers selected.")
-
-    st.sidebar.markdown("---")
-    with st.sidebar.expander("Nature Grabber"):
-        ng_query = st.text_input("Search Query", key="ng_query", placeholder="e.g. cryogenic CMOS qubit readout")
-        ng_journal = st.selectbox("Journal Filter", ["", "nature", "nature-electronics"], format_func=lambda value: {"": "All Nature journals", "nature": "Nature", "nature-electronics": "Nature Electronics"}.get(value, value), key="ng_journal")
-        ng_year_from = st.number_input("Start Year", min_value=1990, max_value=CURRENT_YEAR, value=2015, step=1, key="ng_year_from")
-        ng_max_pages = st.number_input("Max Pages", min_value=1, max_value=50, value=5, step=1, key="ng_max_pages")
-        ng_sleep = st.number_input("Request Delay (s)", min_value=0.0, max_value=10.0, value=1.0, step=0.5, key="ng_sleep")
-        ng_output = st.text_input("Output CSV", value=f"{slugify_filename(ng_query or 'nature_search')}.csv", key="ng_output")
-        if st.button("Run Nature Grabber", use_container_width=True):
-            if not ng_query.strip():
-                st.sidebar.warning("Nature search query is required.")
-            else:
-                from Nature_Grabber import grab_nature
-
-                output_name = ng_output if ng_output.lower().endswith(".csv") else f"{ng_output}.csv"
-                output_file = output_name if os.path.isabs(output_name) else os.path.join(SOURCE_CSV_DIR, "manual", output_name)
-                with st.spinner("Fetching Nature metadata..."):
-                    grab_nature(query=ng_query, output_file=output_file, journal=ng_journal, year_from=int(ng_year_from), max_pages=int(ng_max_pages), sleep_seconds=float(ng_sleep))
-                st.session_state["csv_state"] = ()
-                st.sidebar.success(f"Saved to {output_file}")
+    preset_cols = st.columns(3)
+    for col, preset in zip(preset_cols, scope_presets):
+        scope_info = scope_status_map[preset["id"]]
+        cache_status = scope_info["cache_status"]
+        with col:
+            st.markdown(semantic_scope_summary(ui_language, preset["label"], scope_info["total_papers"], cache_status))
+            button_label = tr(
+                ui_language,
+                f"Build {preset['label']}",
+                {
+                    "Latest Year": "构建最新一年",
+                    "Latest 3 Years": "构建最新三年",
+                    "Full Library": "构建全库",
+                }[preset["label"]],
+            )
+            disabled = (
+                scope_info["total_papers"] == 0
+                or cache_status.get("up_to_date", False)
+                or (foreground_task and foreground_task.get("status") in {"queued", "running"})
+                or (embedding_model_requires_api(selected_emb_model) and not embedding_api_ready)
+            )
+            if st.button(button_label, key=f"build_scope_{preset['id']}", use_container_width=True, disabled=disabled):
+                st.session_state["foreground_embedding_task_id"] = submit_embedding_build(
+                    DB_FILE,
+                    selected_emb_model,
+                    emb_api_key,
+                    years=scope_info["years"],
+                    scope_key=scope_info["scope_key"],
+                )
+                st.session_state["foreground_embedding_scope_id"] = preset["id"]
+                st.session_state["foreground_embedding_model"] = selected_emb_model
                 st.rerun()
 
+    if embedding_model_requires_api(selected_emb_model) and not embedding_api_ready:
+        st.warning(
+            tr(
+                ui_language,
+                "Selected embedding model needs an API key. Use MiniLM for zero-config local search, or add a Voyage/OpenAI-compatible key first.",
+                "当前 embedding 模型需要 API key。你可以先用 MiniLM 零配置本地搜索，或者先填写 Voyage / OpenAI 兼容的 key。",
+            )
+        )
+
+    if foreground_task_id and foreground_task_scope_id and foreground_task_model == selected_emb_model:
+        foreground_scope_text = scope_status_map.get(foreground_task_scope_id, {}).get("scope_text", foreground_task_scope_id)
+        foreground_task = render_foreground_task_console(
+            foreground_task_id,
+            f"Embedding build for {selected_emb_model} ({foreground_scope_text})",
+            success_message=lambda result: f"Embedding cache ready for {result.get('model_name', selected_emb_model)} on {scope_label(result.get('years', []))}.",
+        )
+
     st.markdown("---")
-    st.markdown("### Keyword Generator")
-    user_idea = st.text_input("Describe your topic in any language (press Enter to generate keywords)...", key="user_idea_input")
+    st.markdown(f"### {tr(ui_language, 'Keyword Generator', '关键词生成器')}")
+    st.caption(tr(ui_language, "Use this optional helper to expand your topic into better search keywords.", "这是一个可选辅助工具，可以把你的研究想法扩展成更好的检索关键词。"))
+    user_idea = st.text_input(
+        tr(ui_language, "Describe your topic in any language (press Enter to generate keywords)...", "用任意语言描述你的主题（回车生成关键词）..."),
+        key="user_idea_input",
+    )
     if user_idea and user_idea != st.session_state.get("last_idea"):
         if not api_key:
             st.error("Please configure the LLM API key first.")
@@ -912,33 +1105,52 @@ def run():
                 st.session_state.kw_result = generate_search_keywords(user_idea, api_key, base_url, model_name)
                 st.session_state.last_idea = user_idea
     if st.session_state.get("kw_result"):
-        st.info(f"Suggested Keywords: `{st.session_state.kw_result}`")
+        st.info(f"{tr(ui_language, 'Suggested Keywords', '推荐关键词')}: `{st.session_state.kw_result}`")
 
     st.markdown("---")
-    st.markdown("### Hybrid Search Engine")
-    st.caption(f"Semantic search currently uses embedding coverage: {scope_text}")
-    with st.expander("Metadata Pre-Filters", expanded=False):
+    st.markdown(f"### {tr(ui_language, 'Hybrid Search Engine', '混合搜索引擎')}")
+    st.caption(
+        tr(
+            ui_language,
+            "1. Semantic Query does meaning-based retrieval over the current semantic cache. 2. Exact Match hard-filters titles and abstracts inside the semantic result set. Exact Match is case-insensitive. Space means OR. Comma `,` or `&` means AND.",
+            "1. Semantic Query 用当前语义缓存做“按意思搜索”。2. Exact Match 会在语义结果里的标题和摘要中继续做硬关键词过滤。Exact Match 不区分大小写。空格表示 OR，逗号 `,` 或 `&` 表示 AND。",
+        )
+    )
+    st.caption(
+        tr(
+            ui_language,
+            f"Current semantic search coverage: {active_scope_text}",
+            f"当前语义搜索覆盖范围：{active_scope_text}",
+        )
+    )
+    with st.expander(tr(ui_language, "Metadata Pre-Filters", "元数据预过滤"), expanded=False):
         filter_col1, filter_col2 = st.columns(2)
         with filter_col1:
             unique_venues = sorted({analyze_venue(paper.get("venue", ""))["n"] for paper in all_papers_in_db if paper.get("venue")})
             unique_venues = [venue for venue in unique_venues if venue != "Other"]
-            selected_ui_venues = st.multiselect("Filter by Unified Venue", unique_venues)
+            selected_ui_venues = st.multiselect(tr(ui_language, "Filter by Unified Venue", "按统一 Venue 过滤"), unique_venues)
         with filter_col2:
             if active_years:
                 min_year, max_year = min(active_years), max(active_years)
                 if min_year == max_year:
                     min_year -= 1
-                selected_years = st.slider("Filter by Year", min_year, max_year, (min_year, max_year))
+                selected_years = st.slider(tr(ui_language, "Filter by Year", "按年份过滤"), min_year, max_year, (min_year, max_year))
             else:
                 selected_years = (2000, CURRENT_YEAR)
 
     col_s1, col_s2, col_s3 = st.columns([3, 2, 1])
     with col_s1:
-        search_query = st.text_input("1. Semantic Query (Optional)", placeholder="Leave blank for pure keyword/filter search")
+        search_query = st.text_input(
+            tr(ui_language, "1. Semantic Query (Optional)", "1. 语义搜索（可选）"),
+            placeholder=tr(ui_language, "Leave blank for pure keyword/filter search", "留空则只用关键词/过滤条件搜索"),
+        )
     with col_s2:
-        must_have = st.text_input("2. Exact Match (AND/OR logic)", help="Space = OR. Comma or & = AND.")
+        must_have = st.text_input(
+            tr(ui_language, "2. Exact Match (AND/OR logic)", "2. Exact Match（AND / OR 逻辑）"),
+            help=tr(ui_language, "Case-insensitive. Space = OR. Comma or & = AND.", "不区分大小写。空格 = OR。逗号或 & = AND。"),
+        )
     with col_s3:
-        top_k_val = st.number_input("3. Search Depth", min_value=50, max_value=2000, value=50, step=50)
+        top_k_val = st.number_input(tr(ui_language, "3. Search Depth", "3. 搜索深度"), min_value=50, max_value=2000, value=50, step=50)
 
     trigger_search = bool(search_query or selected_ui_venues or must_have)
     if trigger_search:
@@ -949,9 +1161,9 @@ def run():
             with st.spinner("Scanning library..."):
                 if search_query and not searcher:
                     if embedding_model_requires_api(selected_emb_model) and not embedding_api_ready:
-                        st.warning("Semantic query search is disabled because the selected embedding model requires an API key. Switch to MiniLM or add a key in Optional AI / Cloud APIs.")
+                        st.warning(tr(ui_language, "Semantic query search is disabled because the selected embedding model requires an API key. Switch to MiniLM or add a key first.", "语义搜索当前不可用，因为所选 embedding 模型需要 API key。你可以先切回 MiniLM，或者先填写 key。"))
                     else:
-                        st.warning("Embedding cache is still building in the background. You can use metadata filters now and run semantic search after the task completes.")
+                        st.warning(tr(ui_language, "Current semantic cache is not ready. Build one of the ranges above first, or keep using metadata filters for now.", "当前语义缓存还没准备好。请先构建上面的任一范围，或者暂时只使用元数据过滤。"))
                     raw_hits = []
                 else:
                     raw_hits = searcher.search(query=search_query, top_k=top_k_val) if search_query else [{"similarity": 1.0, "paper": paper} for paper in all_papers_in_db]
@@ -987,27 +1199,27 @@ def run():
     st.markdown("---")
     col_sort, col_batch, col_cite = st.columns([1.5, 2.5, 1])
     with col_sort:
-        st.markdown("### 🔀 Sort By")
+        st.markdown(f"### {tr(ui_language, 'Sort By', '排序方式')}")
         sort_option = st.radio(
             "Dimension",
-            ["⚡ Relevance", "📅 Year (Newest)", "🏆 Comprehensive Score"],
+            ["Relevance", "Year (Newest)", "Comprehensive Score"],
             horizontal=True,
             label_visibility="collapsed",
         )
     with col_cite:
-        st.markdown("### 🔄 Citations")
+        st.markdown(f"### {tr(ui_language, 'Citations', '引用数')}")
         default_fetch_num = sum(1 for item in results if item["similarity"] >= 0.40 or not search_query)
         if default_fetch_num == 0 and results:
             default_fetch_num = min(10, len(results))
         fetch_limit = st.number_input(
-            "Fetch Count (Top-N)",
+            tr(ui_language, "Fetch Count (Top-N)", "抓取数量（Top-N）"),
             min_value=0,
             max_value=max(1, len(results)),
             value=min(default_fetch_num, len(results)),
             step=10,
             label_visibility="collapsed",
         )
-        if st.button("Fetch & Update Scores", use_container_width=True):
+        if st.button(tr(ui_language, "Fetch & Update Scores", "抓取并更新分数"), use_container_width=True):
             with st.spinner(f"Batch fetching citations for top {fetch_limit} papers..."):
                 dois_to_fetch = [result["paper"].get("doi") for result in results if result["paper"].get("doi")][:fetch_limit]
                 st.session_state.citations_map = get_batch_citations(dois_to_fetch)
@@ -1019,8 +1231,8 @@ def run():
     high_value_papers_for_report = []
 
     with col_batch:
-        st.markdown("### 🛠️ Batch Select")
-        rel_threshold = st.slider("Select Relevance >=", 0.0, 1.0, 0.40, 0.05)
+        st.markdown(f"### {tr(ui_language, 'Batch Select', '批量选择')}")
+        rel_threshold = st.slider(tr(ui_language, "Select Relevance >=", "选择相似度阈值 >="), 0.0, 1.0, 0.40, 0.05)
         b1, b2, b3, b4, b5 = st.columns(5)
 
         def do_batch_select(mode, val=None):
@@ -1045,20 +1257,20 @@ def run():
                     st.session_state[chk_key] = False
                     count += 1
             if mode == "deselect":
-                st.toast("🧹 Cleared all selections.")
+                st.toast(tr(ui_language, "Cleared all selections.", "已清空所有选择。"))
             else:
-                st.toast(f"✅ Successfully selected {count} papers!")
+                st.toast(tr(ui_language, f"Selected {count} papers.", f"已选择 {count} 篇论文。"))
 
         with b1:
-            st.button(f"≥ {rel_threshold:.2f}", on_click=do_batch_select, args=("threshold", rel_threshold), use_container_width=True)
+            st.button(f">= {rel_threshold:.2f}", on_click=do_batch_select, args=("threshold", rel_threshold), use_container_width=True)
         with b2:
-            st.button("💎 Rare", on_click=do_batch_select, args=("rare",), use_container_width=True)
+            st.button("Rare", on_click=do_batch_select, args=("rare",), use_container_width=True)
         with b3:
-            st.button("🎯 Perfect", on_click=do_batch_select, args=("perfect",), use_container_width=True)
+            st.button("Perfect", on_click=do_batch_select, args=("perfect",), use_container_width=True)
         with b4:
-            st.button("⭐ Valuable", on_click=do_batch_select, args=("valuable",), use_container_width=True)
+            st.button("Valuable", on_click=do_batch_select, args=("valuable",), use_container_width=True)
         with b5:
-            st.button("❌ Clear All", on_click=do_batch_select, args=("deselect",), use_container_width=True)
+            st.button(tr(ui_language, "Clear", "清空"), on_click=do_batch_select, args=("deselect",), use_container_width=True)
 
     for idx, item in enumerate(results):
         paper = item["paper"]
@@ -1078,15 +1290,15 @@ def run():
         year_value = extract_year(year)
         year_bonus = max(0, 10 - (CURRENT_YEAR - year_value)) if year_value > 1900 and (CURRENT_YEAR - year_value) < 10 else (10 if year_value > 1900 and (CURRENT_YEAR - year_value) <= 0 else 0)
         if similarity >= 0.60 or not search_query:
-            color, badge = "#9C27B0", "💎 Rare Match"
+            color, badge = "#9C27B0", tr(ui_language, "Rare Match", "高稀有匹配")
         elif similarity >= 0.40:
-            color, badge = "#00C853", "🎯 Perfect Match"
+            color, badge = "#00C853", tr(ui_language, "Perfect Match", "完美匹配")
         elif similarity >= 0.25:
-            color, badge = "#2196F3", "⭐ Highly Valuable"
+            color, badge = "#2196F3", tr(ui_language, "Highly Valuable", "高价值")
         elif similarity >= 0.15:
-            color, badge = "#FF9800", "💡 Relevant"
+            color, badge = "#FF9800", tr(ui_language, "Relevant", "相关")
         else:
-            color, badge = "#9E9E9E", "🗑️ Noise"
+            color, badge = "#9E9E9E", tr(ui_language, "Noise", "噪声")
         if similarity >= 0.25 or not search_query:
             high_value_papers_for_report.append(paper)
         highlighted_title = highlight_text(title, required_words_hl)
@@ -1105,7 +1317,7 @@ def run():
                     <span style="background-color: {color}; color: white; padding: 2px 8px; border-radius: 12px; margin-left: 10px; font-size: 0.8em; display: inline-block;">{badge}</span>
                 </div>
                 <div style="flex: 0 1 auto; text-align: right; font-size: 1.05em; font-weight: bold; color: #D84315;">
-                    🏆 Score: {final_score:.1f} <span style="font-size:0.7em; color:#757575;">(Base {base_score} + Yr {year_bonus} + Cites {citation_bonus:.1f})</span>
+                    Score: {final_score:.1f} <span style="font-size:0.7em; color:#757575;">(Base {base_score} + Yr {year_bonus} + Cites {citation_bonus:.1f})</span>
                 </div>
             </div>
             """,
@@ -1113,43 +1325,43 @@ def run():
         )
         c1, c2, c3 = st.columns([6, 2, 2])
         with c1:
-            cc1, cc2 = st.columns([0.5, 9.5])
+            cc1, cc2 = st.columns([0.2, 9.8], gap="small")
             with cc1:
-                checked = st.checkbox(" ", key=chk_key, label_visibility="collapsed")
+                checked = st.checkbox("", key=chk_key, label_visibility="collapsed")
             with cc2:
                 st.markdown(f"<span style='font-size:1.1em; font-weight:bold;'>{highlighted_title}</span>", unsafe_allow_html=True)
-            st.markdown(f"**👨‍🔬 Authors:** {highlighted_author}", unsafe_allow_html=True)
+            st.markdown(f"**{tr(ui_language, 'Authors', '作者')}:** {highlighted_author}", unsafe_allow_html=True)
             st.markdown(
-                f"**🏛️ Venue:** <span style='color:{domain_color}; font-weight:bold;'>{highlighted_venue}</span> ({year}) &nbsp;&nbsp;|&nbsp;&nbsp; **Tier:** <span style='background-color:{tier_color}; color:white; padding:2px 6px; border-radius:4px; font-size:0.85em; font-weight:bold;'>{venue_data['t']}</span>",
+                f"**{tr(ui_language, 'Venue', '期刊/会议')}:** <span style='color:{domain_color}; font-weight:bold;'>{highlighted_venue}</span> ({year}) &nbsp;&nbsp;|&nbsp;&nbsp; **Tier:** <span style='background-color:{tier_color}; color:white; padding:2px 6px; border-radius:4px; font-size:0.85em; font-weight:bold;'>{venue_data['t']}</span>",
                 unsafe_allow_html=True,
             )
             if user_data["matched_queries"]:
-                st.markdown("**💡 Matched:** " + " ".join([f"`🎯 {query}`" for query in user_data["matched_queries"]]))
+                st.markdown(f"**{tr(ui_language, 'Matched', '命中关键词')}:** " + " ".join([f"`{query}`" for query in user_data["matched_queries"]]))
         with c2:
-            st.markdown(f"**👀 Reads:** `{user_data['open_count']}`")
+            st.markdown(f"**{tr(ui_language, 'Reads', '阅读次数')}:** `{user_data['open_count']}`")
             if st.session_state.citations_fetched:
-                st.markdown(f"**🔥 Cites:** `{citations}` `✅ Fetched`")
+                st.markdown(f"**{tr(ui_language, 'Cites', '引用数')}:** `{citations}` `{tr(ui_language, 'Fetched', '已抓取')}`")
             else:
-                st.markdown("**🔥 Cites:** `⏳ Pending (Manual Fetch)`")
+                st.markdown(f"**{tr(ui_language, 'Cites', '引用数')}:** `{tr(ui_language, 'Pending (Manual Fetch)', '待抓取（手动）')}`")
         with c3:
             rating_options = [
                 "Unrated",
-                "🌟🌟🌟🌟🌟 Masterpiece",
-                "⭐⭐⭐⭐ Solid",
-                "⭐⭐⭐ Average",
-                "⭐⭐ Marginal",
-                "💩 Poor",
+                "Masterpiece",
+                "Solid",
+                "Average",
+                "Marginal",
+                "Poor",
             ]
             rating_alias = {
-                "Masterpiece": "🌟🌟🌟🌟🌟 Masterpiece",
-                "Solid": "⭐⭐⭐⭐ Solid",
-                "Average": "⭐⭐⭐ Average",
-                "Marginal": "⭐⭐ Marginal",
-                "Poor": "💩 Poor",
+                "Masterpiece": "Masterpiece",
+                "Solid": "Solid",
+                "Average": "Average",
+                "Marginal": "Marginal",
+                "Poor": "Poor",
             }
             current_rating = rating_alias.get(user_data["rating"], user_data["rating"] if user_data["rating"] in rating_options else "Unrated")
             new_rating = st.selectbox(
-                "Rating",
+                tr(ui_language, "Rating", "评分"),
                 rating_options,
                 index=rating_options.index(current_rating),
                 key=f"rate_{chk_key}",
@@ -1157,18 +1369,18 @@ def run():
             )
             if new_rating != user_data["rating"]:
                 update_user_data(title, "rating", new_rating)
-            new_comments = st.text_input("Notes", value=user_data["comments"], key=f"comment_{chk_key}", placeholder="Take notes...")
+            new_comments = st.text_input(tr(ui_language, "Notes", "笔记"), value=user_data["comments"], key=f"comment_{chk_key}", placeholder=tr(ui_language, "Take notes...", "写点笔记..."))
             if new_comments != user_data["comments"]:
                 update_user_data(title, "comments", new_comments)
         if checked:
             selected_papers.append(paper)
-        with st.expander("📖 Read Abstract"):
+        with st.expander(tr(ui_language, "Read Abstract", "查看摘要")):
             st.markdown(highlighted_abstract, unsafe_allow_html=True)
         if similarity >= 0.25 or not search_query:
-            with st.expander("🤖 AI Deep Dive"):
-                if st.button("🚀 Analyze with LLM", key=f"ai_btn_{chk_key}"):
+            with st.expander(tr(ui_language, "LLM Deep Dive", "LLM 深度分析")):
+                if st.button(tr(ui_language, "Analyze with LLM", "用 LLM 分析"), key=f"ai_btn_{chk_key}"):
                     if not api_key:
-                        st.error("API key missing.")
+                        st.error(tr(ui_language, "LLM API key is missing.", "缺少 LLM API key。"))
                     else:
                         with st.spinner("Analyzing..."):
                             try:
@@ -1177,21 +1389,39 @@ def run():
                                 st.error(str(exc))
         st.markdown("---")
 
-    st.sidebar.markdown("---")
-    st.sidebar.header("🧠 Global Insights")
-    if high_value_papers_for_report and st.sidebar.button("📊 Generate State-of-the-Art Review", type="primary", use_container_width=True):
+    llm_tools_panel.markdown("---")
+    llm_tools_panel.header(tr(ui_language, "LLM Review & Analysis (Optional)", "LLM 分析（可选）"))
+    llm_tools_panel.caption(tr(ui_language, "Not required for core search. Configure an LLM API only if you want summaries and review generation.", "核心搜索不需要这个。只有在你想生成总结或综述时才需要配置 LLM API。"))
+    with llm_tools_panel.expander(tr(ui_language, "Configure LLM API", "配置 LLM API"), expanded=False):
+        preset_options = ["DeepSeek", "SiliconFlow", "Kimi", "Custom OpenAI"]
+        current_preset = st.selectbox(
+            tr(ui_language, "Provider Preset", "服务商预设"),
+            preset_options,
+            index=preset_options.index(app_config.get("provider_preset", "DeepSeek")) if app_config.get("provider_preset") in preset_options else 0,
+            key="llm_provider_preset",
+        )
+        default_base, default_model = resolve_provider_defaults(current_preset, app_config)
+        api_key = st.text_input(tr(ui_language, "LLM API Key", "LLM API Key"), value=app_config.get("llm_api_key", ""), type="password", key="llm_api_key_input")
+        base_url = st.text_input(tr(ui_language, "Base URL", "Base URL"), value=default_base, key="llm_base_url_input")
+        model_name = st.text_input(tr(ui_language, "Model ID", "模型 ID"), value=default_model, key="llm_model_input")
+        if st.button(tr(ui_language, "Save LLM Settings", "保存 LLM 设置"), use_container_width=True, key="save_llm_settings"):
+            app_config.update({"provider_preset": current_preset, "llm_api_key": api_key, "llm_base_url": base_url, "llm_model": model_name})
+            save_json(CONFIG_FILE, app_config)
+            llm_tools_panel.success(tr(ui_language, "LLM settings saved.", "LLM 设置已保存。"))
+    if high_value_papers_for_report and llm_tools_panel.button(tr(ui_language, "Generate State-of-the-Art Review", "生成综述报告"), type="primary", use_container_width=True):
         if not api_key:
-            st.sidebar.error("API key missing.")
+            llm_tools_panel.error(tr(ui_language, "LLM API key is missing.", "缺少 LLM API key。"))
         else:
             with st.spinner("LLM is reading top papers..."):
                 st.session_state.mega_report = generate_global_report_with_llm(high_value_papers_for_report, search_query or "General Review", api_key, base_url, model_name)
     if "mega_report" in st.session_state:
-        st.markdown("## 📊 AI Global Review Report")
+        st.markdown(f"## {tr(ui_language, 'LLM Review Report', 'LLM 综述报告')}")
         st.markdown(st.session_state.mega_report)
 
-    st.sidebar.markdown("---")
-    st.sidebar.header(f"🛒 Selected Papers ({len(selected_papers)})")
-    if st.sidebar.button("📄 Open Selected PDFs", use_container_width=True):
+    selected_papers_panel.markdown("---")
+    selected_papers_panel.header(tr(ui_language, f"Selected Papers ({len(selected_papers)})", f"已选论文 ({len(selected_papers)})"))
+    selected_papers_panel.caption(tr(ui_language, "This is the core working set for opening, downloading, and exporting.", "这是打开、下载和导出的核心论文集合。"))
+    if selected_papers_panel.button(tr(ui_language, "Open Selected PDFs", "打开已选 PDF"), use_container_width=True):
         success_count = 0
         for paper in selected_papers:
             title = paper.get("title")
@@ -1201,33 +1431,45 @@ def run():
             if url:
                 webbrowser.open_new_tab(url)
                 success_count += 1
-        st.sidebar.info(f"Opened {success_count} tabs.")
+        selected_papers_panel.info(tr(ui_language, f"Opened {success_count} tabs.", f"已打开 {success_count} 个标签页。"))
 
-    st.sidebar.markdown("---")
-    save_dir = st.sidebar.text_input("📁 Local Save Folder", value=DOWNLOAD_DIR, help="The local directory where PDFs will be saved.")
+    save_dir = selected_papers_panel.text_input(
+        tr(ui_language, "Batch Downloaded PDF Folder", "批量下载 PDF 文件夹"),
+        value=DOWNLOAD_DIR,
+        help=tr(ui_language, "The local directory where PDFs will be saved.", "下载 PDF 的本地保存目录。"),
+    )
     pdf_task_key = "pdf_download_task"
     pdf_task_id = st.session_state.get(pdf_task_key)
     task = render_task_status(
         pdf_task_id,
-        "PDF download queue",
-        success_message=lambda result: f"PDF download finished. Success: {result.get('success', 0)}, Failed: {result.get('failed', 0)}",
-        container=st.sidebar,
+        tr(ui_language, "PDF download queue", "PDF 下载队列"),
+        success_message=lambda result: tr(
+            ui_language,
+            f"PDF download finished. Success: {result.get('success', 0)}, Failed: {result.get('failed', 0)}",
+            f"PDF 下载完成。成功：{result.get('success', 0)}，失败：{result.get('failed', 0)}",
+        ),
+        container=selected_papers_panel,
     )
     if task is None and pdf_task_id:
         st.session_state.pop(pdf_task_key, None)
-    if st.sidebar.button("⬇️ Batch Download Selected PDFs", type="primary", use_container_width=True):
+    if selected_papers_panel.button(tr(ui_language, "Batch Download Selected PDFs", "批量下载已选 PDF"), type="primary", use_container_width=True):
         if not selected_papers:
-            st.sidebar.warning("No papers selected.")
+            selected_papers_panel.warning(tr(ui_language, "No papers selected.", "还没有选择论文。"))
         else:
             st.session_state[pdf_task_key] = submit_pdf_download(selected_papers, save_dir)
-            st.sidebar.success("PDF download task queued in the background.")
+            selected_papers_panel.success(tr(ui_language, "PDF download task started.", "PDF 下载任务已开始。"))
 
-    if st.sidebar.button("📝 Export to NotebookLM", type="primary", use_container_width=True):
+    if selected_papers_panel.button(tr(ui_language, "Export to NotebookLM", "导出到 NotebookLM"), type="primary", use_container_width=True):
         export_content = build_notebooklm_export(selected_papers, search_query or "Filtered Subset", get_user_data)
         write_text_file(NOTEBOOKLM_EXPORT_FILE, export_content)
-        st.sidebar.success(f"Markdown generated: {NOTEBOOKLM_EXPORT_FILE}")
+        selected_papers_panel.success(f"Markdown generated: {NOTEBOOKLM_EXPORT_FILE}")
 
     if selected_papers:
-        st.sidebar.markdown(generate_csv_link(build_csv_rows(selected_papers)), unsafe_allow_html=True)
-        st.sidebar.markdown("<br>", unsafe_allow_html=True)
-        st.sidebar.download_button(label="Export IEEE BibTeX", data=build_bibtex(selected_papers), file_name="references.bib", mime="text/plain", use_container_width=True)
+        selected_papers_panel.markdown(generate_csv_link(build_csv_rows(selected_papers)), unsafe_allow_html=True)
+        selected_papers_panel.download_button(
+            label=tr(ui_language, "Export IEEE BibTeX", "导出 IEEE BibTeX"),
+            data=build_bibtex(selected_papers),
+            file_name="references.bib",
+            mime="text/plain",
+            use_container_width=True,
+        )

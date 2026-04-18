@@ -74,3 +74,39 @@ def test_detect_conflicts_finds_title_year_and_doi_abstract(tmp_path):
 
     assert "same_title_different_year" in conflict_kinds
     assert "same_doi_different_abstract" in conflict_kinds
+
+
+def test_detect_conflicts_ignores_book_chapters_sharing_same_doi(tmp_path):
+    source_file = tmp_path / "book.csv"
+    write_csv(
+        source_file,
+        [
+            {
+                "Document Title": "Chapter 1 - Operational Amplifiers",
+                "Abstract": "A" * 120,
+                "Authors": "Behzad Razavi",
+                "Author Keywords": "",
+                "Publication Year": "2006",
+                "Publication Title": "Textbook",
+                "DOI": "10.1000/book",
+                "PDF Link": "",
+            },
+            {
+                "Document Title": "Chapter 2 - Current Mirrors",
+                "Abstract": "B" * 120,
+                "Authors": "Behzad Razavi",
+                "Author Keywords": "",
+                "Publication Year": "2006",
+                "Publication Title": "Textbook",
+                "DOI": "10.1000/book",
+                "PDF Link": "",
+            },
+        ],
+    )
+
+    records = collect_source_records([str(source_file)])
+    conflicts = detect_conflicts(records)
+    conflict_kinds = {conflict["kind"] for conflict in conflicts}
+
+    assert "same_doi_different_abstract" not in conflict_kinds
+    assert "same_doi_different_title" not in conflict_kinds

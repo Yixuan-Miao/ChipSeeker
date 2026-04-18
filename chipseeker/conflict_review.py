@@ -47,6 +47,15 @@ def _source_item(record):
     }
 
 
+def _is_book_like_record(record):
+    paper = record["paper"]
+    venue = normalize_text(paper.get("venue", "")).lower()
+    title = normalize_text(paper.get("title", "")).lower()
+    book_tokens = ("textbook", "book", "chapter", "appendix", "handbook", "monograph", "lecture notes")
+    chapter_prefixes = ("chapter ", "appendix ", "part ", "section ")
+    return any(token in venue for token in book_tokens) or any(token in title for token in book_tokens) or title.startswith(chapter_prefixes)
+
+
 def detect_conflicts(records):
     conflicts = []
 
@@ -87,6 +96,8 @@ def detect_conflicts(records):
     for doi_key, group in by_doi.items():
         abstract_hashes = sorted({item["abstract_hash"] for item in group})
         titles = sorted({normalize_text(item["paper"].get("title", "")) for item in group if normalize_text(item["paper"].get("title", ""))})
+        if len(group) > 1 and all(_is_book_like_record(item) for item in group):
+            continue
         if len(abstract_hashes) > 1:
             conflicts.append(
                 {

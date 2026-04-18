@@ -39,18 +39,74 @@ def get_cache_paths(db_file, model_name, scope_key="all"):
     return cache_file, meta_file
 
 
+def _paper_text(paper):
+    return f"{paper.get('title', '')} {paper.get('abstract', '')}".strip()
+
+
+def _dataset_fingerprints(papers):
+    return [hashlib.sha1(_paper_text(paper).encode('utf-8')).hexdigest() for paper in papers]
+
+
+def describe_cache_status(db_file, model_name, scope_key="all", papers_override=None):
+    papers = papers_override
+    if papers is None:
+        with open(db_file, 'r', encoding='utf-8') as f:
+            papers = json.load(f)
+    cache_file, meta_file = get_cache_paths(db_file, model_name, scope_key)
+    fingerprints = _dataset_fingerprints(papers)
+    status = {
+        "cache_file": cache_file,
+        "meta_file": meta_file,
+        "total_papers": len(papers),
+        "cached_papers": 0,
+        "has_cache": os.path.exists(cache_file),
+        "up_to_date": False,
+        "needs_build": True,
+        "append_only": False,
+        "new_papers": len(papers),
+    }
+    if not status["has_cache"]:
+        return status
+    try:
+        embeddings = np.load(cache_file)
+        old_fingerprints = []
+        if os.path.exists(meta_file):
+            with open(meta_file, 'r', encoding='utf-8') as f:
+                meta = json.load(f)
+            old_fingerprints = meta.get("fingerprints", []) if isinstance(meta, dict) else []
+        status["cached_papers"] = int(embeddings.shape[0])
+        if embeddings.shape[0] == len(fingerprints) and old_fingerprints == fingerprints:
+            status["up_to_date"] = True
+            status["needs_build"] = False
+            status["new_papers"] = 0
+            return status
+        if (
+            embeddings.shape[0] == len(old_fingerprints)
+            and len(old_fingerprints) < len(fingerprints)
+            and fingerprints[:len(old_fingerprints)] == old_fingerprints
+        ):
+            status["append_only"] = True
+            status["cached_papers"] = len(old_fingerprints)
+            status["new_papers"] = max(0, len(fingerprints) - len(old_fingerprints))
+            return status
+    except Exception:
+        pass
+    return status
+
+
 class PaperSearcher:
-    def __init__(self, db_file, model_name='BAAI/bge-large-en-v1.5', api_key="", papers_override=None, scope_key="all", progress_callback=None):
+    def __init__(self, db_file, model_name='BAAI/bge-large-en-v1.5', api_key="", papers_override=None, scope_key="all", progress_callback=None, log_callback=None):
         self.jp = db_file
         self.mn = model_name
         self.ak = api_key
         self.scope_key = scope_key or "all"
         self.progress_callback = progress_callback
+        self.log_callback = log_callback
         self.mt = 'v' if 'voyage' in self.mn else ('o' if 'text-embedding' in self.mn else 'l')
         self.dt = papers_override if papers_override is not None else self._load_db()
         self.cf, self.mf = get_cache_paths(self.jp, self.mn, self.scope_key)
 
-        _log(f"init model={self.mn} mode={self.mt} scope={self.scope_key} cache={self.cf}")
+        self._log(f"init model={self.mn} mode={self.mt} scope={self.scope_key} cache={self.cf}")
         self.md = self._init_model()
         self.eb = self._load_cache()
 
@@ -68,13 +124,10 @@ class PaperSearcher:
             return json.load(f)
 
     def _paper_text(self, paper):
-        return f"{paper.get('title', '')} {paper.get('abstract', '')}".strip()
+        return _paper_text(paper)
 
     def _dataset_fingerprints(self):
-        return [
-            hashlib.sha1(self._paper_text(paper).encode('utf-8')).hexdigest()
-            for paper in self.dt
-        ]
+        return _dataset_fingerprints(self.dt)
 
     def _load_meta(self):
         if not os.path.exists(self.mf):
@@ -83,7 +136,7 @@ class PaperSearcher:
             with open(self.mf, 'r', encoding='utf-8') as f:
                 return json.load(f)
         except Exception as exc:
-            _log(f"failed to load meta {self.mf}: {exc}")
+            self._log(f"failed to load meta {self.mf}: {exc}")
             return None
 
     def _save_meta(self, fingerprints):
@@ -99,12 +152,17 @@ class PaperSearcher:
         if self.progress_callback:
             self.progress_callback(done, total, message)
 
+    def _log(self, message):
+        _log(message)
+        if self.log_callback:
+            self.log_callback(message)
+
     def _remote_embed_batch(self, batch, batch_index, total_batches, stage_message, start_idx, total):
         batch_label = f"batch {batch_index}/{total_batches}"
         batch_range = f"{start_idx + 1}-{start_idx + len(batch)}/{total}"
         for attempt in range(1, 4):
             batch_start = time.perf_counter()
-            _log(f"{stage_message}: starting {batch_label} items {batch_range} attempt {attempt}")
+            self._log(f"{stage_message}: starting {batch_label} items {batch_range} attempt {attempt}")
             try:
                 if self.mt == 'v':
                     result = self.md.embed(batch, model=self.mn).embeddings
@@ -112,22 +170,22 @@ class PaperSearcher:
                     result = [x.embedding for x in self.md.embeddings.create(input=batch, model=self.mn).data]
             except Exception as exc:
                 elapsed = time.perf_counter() - batch_start
-                _log(f"{stage_message}: failed {batch_label} attempt {attempt} after {elapsed:.1f}s error={exc}")
+                self._log(f"{stage_message}: failed {batch_label} attempt {attempt} after {elapsed:.1f}s error={exc}")
                 if attempt >= 3:
                     raise
                 sleep_s = min(6.0, 1.5 * attempt)
-                _log(f"{stage_message}: retrying {batch_label} after {sleep_s:.1f}s")
+                self._log(f"{stage_message}: retrying {batch_label} after {sleep_s:.1f}s")
                 time.sleep(sleep_s)
                 continue
             elapsed = time.perf_counter() - batch_start
-            _log(f"{stage_message}: finished {batch_label} items {batch_range} in {elapsed:.1f}s")
+            self._log(f"{stage_message}: finished {batch_label} items {batch_range} in {elapsed:.1f}s")
             return result
         raise RuntimeError(f"Unreachable retry state for {batch_label}")
 
     def _embed(self, texts, stage_message="Embedding papers"):
         total = max(1, len(texts))
         overall_start = time.perf_counter()
-        _log(f"{stage_message}: total_items={len(texts)} scope={self.scope_key} model={self.mn}")
+        self._log(f"{stage_message}: total_items={len(texts)} scope={self.scope_key} model={self.mn}")
         if self.mt == 'l':
             rows = []
             batch_size = 64
@@ -135,7 +193,7 @@ class PaperSearcher:
             for batch_index, i in enumerate(range(0, len(texts), batch_size), start=1):
                 batch = texts[i:i + batch_size]
                 batch_start = time.perf_counter()
-                _log(f"{stage_message}: starting batch {batch_index}/{total_batches} items {i + 1}-{i + len(batch)}/{total}")
+                self._log(f"{stage_message}: starting batch {batch_index}/{total_batches} items {i + 1}-{i + len(batch)}/{total}")
                 result = self.md.encode(batch, convert_to_numpy=True, show_progress_bar=False)
                 rows.extend(result)
                 done = min(i + len(batch), total)
@@ -143,9 +201,9 @@ class PaperSearcher:
                 total_elapsed = time.perf_counter() - overall_start
                 eta_seconds = (total_elapsed / done) * max(0, total - done) if done else 0.0
                 eta_text = _format_eta(eta_seconds)
-                _log(f"{stage_message}: finished batch {batch_index}/{total_batches} in {elapsed:.1f}s cumulative={done}/{total} elapsed={total_elapsed:.1f}s eta={eta_text}")
+                self._log(f"{stage_message}: finished batch {batch_index}/{total_batches} in {elapsed:.1f}s cumulative={done}/{total} elapsed={total_elapsed:.1f}s eta={eta_text}")
                 self._emit_progress(done, total, f"{stage_message}: batch {batch_index}/{total_batches} ({done}/{total}) elapsed {total_elapsed:.1f}s | ETA {eta_text}")
-            _log(f"{stage_message}: completed {total}/{total} in {time.perf_counter() - overall_start:.1f}s")
+            self._log(f"{stage_message}: completed {total}/{total} in {time.perf_counter() - overall_start:.1f}s")
             return np.array(rows, dtype=np.float32)
 
         rows = []
@@ -159,10 +217,10 @@ class PaperSearcher:
             total_elapsed = time.perf_counter() - overall_start
             eta_seconds = (total_elapsed / done) * max(0, total - done) if done else 0.0
             eta_text = _format_eta(eta_seconds)
-            _log(f"{stage_message}: progress batch {batch_index}/{total_batches} cumulative={done}/{total} elapsed={total_elapsed:.1f}s eta={eta_text}")
+            self._log(f"{stage_message}: progress batch {batch_index}/{total_batches} cumulative={done}/{total} elapsed={total_elapsed:.1f}s eta={eta_text}")
             self._emit_progress(done, total, f"{stage_message}: batch {batch_index}/{total_batches} ({done}/{total}) elapsed {total_elapsed:.1f}s | ETA {eta_text}")
             time.sleep(0.6)
-        _log(f"{stage_message}: completed {total}/{total} in {time.perf_counter() - overall_start:.1f}s")
+        self._log(f"{stage_message}: completed {total}/{total} in {time.perf_counter() - overall_start:.1f}s")
         return np.array(rows, dtype=np.float32)
 
     def _load_cache(self):
@@ -176,7 +234,7 @@ class PaperSearcher:
                 old_fingerprints = meta.get("fingerprints", [])
 
                 if embeddings.shape[0] == len(current_fingerprints) and old_fingerprints == current_fingerprints:
-                    _log(f"cache hit {self.cf}")
+                    self._log(f"cache hit {self.cf}")
                     return embeddings
 
                 if (
@@ -184,16 +242,16 @@ class PaperSearcher:
                     and len(old_fingerprints) < len(current_fingerprints)
                     and current_fingerprints[:len(old_fingerprints)] == old_fingerprints
                 ):
-                    _log(f"append-only update {len(old_fingerprints)} -> {len(current_fingerprints)}")
+                    self._log(f"append-only update {len(old_fingerprints)} -> {len(current_fingerprints)}")
                     new_embeddings = self._embed(texts[len(old_fingerprints):], stage_message="Appending embeddings")
                     embeddings = np.vstack((embeddings, new_embeddings))
                     np.save(self.cf, embeddings)
                     self._save_meta(current_fingerprints)
                     return embeddings
 
-                _log("cache invalidated because paper order/content changed")
+                self._log("cache invalidated because paper order/content changed")
             except Exception as exc:
-                _log(f"failed to load cache {self.cf}: {exc}")
+                self._log(f"failed to load cache {self.cf}: {exc}")
 
         embeddings = self._embed(texts)
         np.save(self.cf, embeddings)

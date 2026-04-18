@@ -33,7 +33,7 @@ CONFIG_FILE = os.path.join(BASE_DIR, "config.local.json")
 LEGACY_CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
 EXAMPLE_CONFIG_FILE = os.path.join(BASE_DIR, "config.example.json")
 BUNDLED_DEMO_CSV = os.path.join(DEMO_DATA_DIR, "export2026.03.04-08.56.26.csv")
-CURRENT_LOCAL_DATA_VERSION = 5
+CURRENT_LOCAL_DATA_VERSION = 6
 
 
 def ensure_runtime_dirs():

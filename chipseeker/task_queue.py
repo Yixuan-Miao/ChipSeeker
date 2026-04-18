@@ -16,6 +16,26 @@ from search_runtime import PaperSearcher
 _EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="chipseeker")
 _TASKS = {}
 _LOCK = threading.Lock()
+_MAX_HISTORY = 200
+
+
+def _log(message):
+    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{timestamp}] [task-queue] {message}", flush=True)
+
+
+def _summarize_payload(payload):
+    summary = {}
+    for key, value in payload.items():
+        if key in {"api_key"}:
+            summary[key] = "***"
+        elif key == "papers":
+            summary[key] = f"{len(value)} papers"
+        elif key == "source_ids":
+            summary[key] = list(value)
+        else:
+            summary[key] = value
+    return summary
 
 
 def _set_task(task_id, **updates):
@@ -24,13 +44,30 @@ def _set_task(task_id, **updates):
         task.update(updates)
 
 
+def append_history(task_id, message, level="info"):
+    timestamp = time.strftime("%H:%M:%S")
+    entry = {"timestamp": timestamp, "level": level, "message": str(message)}
+    with _LOCK:
+        task = _TASKS.setdefault(task_id, {})
+        history = task.setdefault("history", [])
+        history.append(entry)
+        if len(history) > _MAX_HISTORY:
+            del history[:-_MAX_HISTORY]
+
+
 def _run_task(task_id, fn, payload):
     _set_task(task_id, status="running", started_at=time.time())
+    _log(f"{task_id} started payload={_summarize_payload(payload)}")
+    append_history(task_id, f"Task started: {_summarize_payload(payload)}")
     try:
         result = fn(task_id, payload)
     except Exception as exc:
+        _log(f"{task_id} failed error={exc}")
+        append_history(task_id, f"Task failed: {exc}", level="error")
         _set_task(task_id, status="failed", error=str(exc), finished_at=time.time())
     else:
+        _log(f"{task_id} completed result={result}")
+        append_history(task_id, f"Task completed: {result}", level="success")
         _set_task(task_id, status="completed", result=result, finished_at=time.time())
 
 
@@ -44,9 +81,11 @@ def submit_task(kind, payload, fn):
         "message": "Queued",
         "payload": payload,
         "created_at": time.time(),
+        "history": [{"timestamp": time.strftime("%H:%M:%S"), "level": "info", "message": f"Queued task {kind}"}],
     }
     with _LOCK:
         _TASKS[task_id] = task
+    _log(f"{task_id} queued kind={kind}")
     _EXECUTOR.submit(_run_task, task_id, fn, payload)
     return task_id
 
@@ -65,6 +104,13 @@ def update_progress(task_id, progress=None, message=None):
         updates["message"] = message
     if updates:
         _set_task(task_id, **updates)
+        if message is not None:
+            percent = updates.get("progress")
+            if percent is None:
+                current = get_task(task_id)
+                percent = current.get("progress", 0.0) if current else 0.0
+            _log(f"{task_id} progress={percent * 100:.1f}% message={message}")
+            append_history(task_id, f"{percent * 100:.1f}% | {message}")
 
 
 def cleanup_task(task_id):
@@ -81,6 +127,10 @@ def _build_embeddings(task_id, payload):
     def progress(done, total, message):
         update_progress(task_id, done / max(1, total), message)
 
+    def log_callback(message):
+        append_history(task_id, message)
+
+    _log(f"{task_id} embedding setup model={payload['model_name']} scope={scope_key} papers={len(scoped_papers)} db={payload['db_file']}")
     update_progress(task_id, 0.01, f"Loading library for scope {scope_key}")
     PaperSearcher(
         payload["db_file"],
@@ -89,6 +139,7 @@ def _build_embeddings(task_id, payload):
         papers_override=scoped_papers,
         scope_key=scope_key,
         progress_callback=progress,
+        log_callback=log_callback,
     )
     update_progress(task_id, 1.0, "Embedding cache is ready")
     return {"model_name": payload["model_name"], "scope_key": scope_key, "paper_count": len(scoped_papers), "years": years}

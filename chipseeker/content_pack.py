@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 
 from chipseeker.paths import CONTENT_PACK_EXPORT_DIR
 from chipseeker.utils import load_json
+from chipseeker.version import APP_VERSION
 from search_runtime import get_cache_paths
 
 
@@ -54,6 +55,7 @@ def detect_content_pack_status(data_dir, db_file, cache_dir, manifest_path, sche
 def _pack_manifest(content_status):
     return {
         "pack_version": 1,
+        "app_version": APP_VERSION,
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
         "paper_count": content_status.get("paper_count", 0),
         "source_count": content_status.get("source_count", 0),

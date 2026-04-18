@@ -101,6 +101,20 @@ def _migrate_to_v5(state):
     _record_state(state, 5, "Expanded default update sources and initialized product-pack state.")
 
 
+def _migrate_to_v6(state):
+    registry = load_json(SOURCE_REGISTRY_FILE, {"sources": [], "pending_ieee_batch": None})
+    template = load_json(SOURCE_REGISTRY_TEMPLATE_FILE, {"sources": [], "pending_ieee_batch": None})
+    if not isinstance(registry, dict):
+        registry = {"sources": [], "pending_ieee_batch": None}
+    registry.setdefault("sources", [])
+    existing_ids = {source.get("id") for source in registry["sources"]}
+    for template_source in template.get("sources", []):
+        if template_source.get("id") not in existing_ids:
+            registry["sources"].append(template_source)
+    save_json(SOURCE_REGISTRY_FILE, registry)
+    _record_state(state, 6, "Expanded Nature-family source templates and refreshed registry defaults.")
+
+
 def migrate_local_data():
     state = load_json(LOCAL_DATA_STATE_FILE, _default_state())
     if not isinstance(state, dict):
@@ -122,6 +136,9 @@ def migrate_local_data():
     if version < 5:
         _migrate_to_v5(state)
         version = 5
+    if version < 6:
+        _migrate_to_v6(state)
+        version = 6
 
     if version != CURRENT_LOCAL_DATA_VERSION:
         state["schema_version"] = CURRENT_LOCAL_DATA_VERSION
