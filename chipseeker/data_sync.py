@@ -1,9 +1,10 @@
 import csv
+import hashlib
+import json
 import os
 import shutil
 from datetime import datetime, timezone
 
-from chipseeker.maintenance import clear_embedding_cache
 from chipseeker.paths import CURRENT_LOCAL_DATA_VERSION, SOURCE_CSV_DIR, SOURCE_MANIFEST_FILE
 from chipseeker.utils import load_json, normalize_doi, normalize_text, normalize_title, save_json
 
@@ -114,6 +115,33 @@ def list_source_csv_files(source_root=SOURCE_CSV_DIR, manifest_path=SOURCE_MANIF
 
 def build_source_state(csv_files):
     return tuple((path, os.path.getmtime(path), os.path.getsize(path)) for path in csv_files) if csv_files else ()
+
+
+def build_source_snapshot(csv_files, source_root=SOURCE_CSV_DIR):
+    files = []
+    for path in csv_files:
+        stat = os.stat(path)
+        files.append(
+            {
+                "relative_path": os.path.relpath(path, source_root).replace("\\", "/"),
+                "mtime_ns": int(stat.st_mtime_ns),
+                "size_bytes": int(stat.st_size),
+            }
+        )
+    payload = {"files": sorted(files, key=lambda item: item["relative_path"])}
+    payload_json = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    payload["token"] = hashlib.sha1(payload_json.encode("utf-8")).hexdigest()
+    return payload
+
+
+def library_sync_required(state_payload, source_snapshot, db_file):
+    if not os.path.exists(db_file):
+        return True
+    library_sync = state_payload.get("library_sync", {}) if isinstance(state_payload, dict) else {}
+    return (
+        library_sync.get("db_file") != os.path.abspath(db_file)
+        or library_sync.get("source_token") != source_snapshot.get("token")
+    )
 
 
 def build_paper_from_row(row):
@@ -252,7 +280,6 @@ def scan_and_import_csvs(db_file, cache_dir, source_root=SOURCE_CSV_DIR, manifes
 
     if added_count > 0 or updated_count > 0 or removed_count > 0:
         save_json(db_file, final_papers)
-        clear_embedding_cache(cache_dir, logger=logger)
 
     file_summaries = [f"{path} (+{count} added)" for path, count in new_files_info.items()]
     file_summaries.extend([f"{path} ({count} updated)" for path, count in updated_files_info.items()])
