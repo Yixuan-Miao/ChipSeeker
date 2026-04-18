@@ -8,13 +8,29 @@ Windows:
 powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1
 ```
 
+Or just double-click:
+
+```bat
+Install_ChipSeeker.bat
+```
+
 macOS / Linux:
 
 ```bash
 bash ./scripts/setup.sh
 ```
 
-Quick launch on Windows after setup:
+What Quick Install now does:
+
+- creates `.venv`
+- upgrades `pip / setuptools / wheel`
+- installs `requirements.txt`
+- installs `requirements-optional.txt`
+- installs `playwright` Chromium
+- creates `config.local.json` if missing
+- initializes the runtime folders under `local_data`
+
+Quick launch on Windows after install:
 
 - Double-click `Start_ChipSeeker.bat`
 - Or create a desktop shortcut pointing to `Start_ChipSeeker.bat`
@@ -42,21 +58,24 @@ cc "Open this repo, run scripts/setup.ps1 on Windows or scripts/setup.sh on macO
 ## Manual Install
 
 ```bash
-pip install -r requirements.txt
-playwright install chromium
+python -m venv .venv
+.\.venv\Scripts\python -m pip install --upgrade pip setuptools wheel
+.\.venv\Scripts\python -m pip install -r requirements.txt
+.\.venv\Scripts\python -m pip install -r requirements-optional.txt
+.\.venv\Scripts\python -m playwright install chromium
 ```
 
-Optional extras:
+Windows one-click install / start:
 
-```bash
-pip install -r requirements-dev.txt
-pip install -r requirements-optional.txt
+```bat
+Install_ChipSeeker.bat
+Start_ChipSeeker.bat
 ```
 
-Or with project extras:
+Optional dev extras:
 
 ```bash
-pip install .[dev]
+.\.venv\Scripts\python -m pip install -r requirements-dev.txt
 ```
 
 ## Config
@@ -81,6 +100,39 @@ Windows double-click launch:
 ```bat
 Start_ChipSeeker.bat
 ```
+
+## Paid Database Delivery
+
+Recommended delivery format:
+
+- Do not zip the whole repo for buyers
+- In the app sidebar, use `Content Pack -> Build Content Pack ZIP`
+- Send the generated ZIP from `local_data/exports/content_packs/`
+
+Why this is the best option:
+
+- it includes the database JSON, source CSVs, cache files, registry, and state files
+- it avoids shipping your whole code workspace
+- the buyer can import it directly from `Quick Start` or the sidebar `Content Pack` panel
+
+What to send if you build it manually:
+
+- zip the `local_data/` folder only
+- do not include `config.local.json`
+- do not include any private API keys
+
+Recommended update flow for buyers:
+
+1. You rebuild a new content pack ZIP after updating your library
+2. Name it with a clear version or date, for example `ChipSeeker_ContentPack_2026-04-18.zip`
+3. Send the new ZIP to the buyer
+4. The buyer opens ChipSeeker and imports the new ZIP from `Quick Start` or `Content Pack`
+
+Short-term best practice:
+
+- always send a full replacement content pack ZIP
+- do not try to send patch files or partial folder replacements yet
+- this is the safest and simplest workflow for non-technical users
 
 ## Nature Grabber
 
@@ -110,6 +162,7 @@ If `--output` is a relative path, the CSV is written to `local_data/sources/manu
 ## Repo Layout
 
 - `app.py`: main Streamlit entry
+- `Install_ChipSeeker.bat`: Windows double-click installer
 - `Start_ChipSeeker.bat`: Windows double-click launcher
 - `chipseeker/app_main.py`: Streamlit UI entry implementation
 - `chipseeker/content_pack.py`: content pack build/install helpers plus bundled demo CSV install
