@@ -1,6 +1,12 @@
-# ChipSeeker V2
+# ChipSeeker V2.0.2
 
 ## Quick Install / 快速安装
+
+**Claude Code / Codex one-line install**
+
+```bash
+git clone https://github.com/Yixuan-Miao/ChipSeeker.git && cd ChipSeeker && powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1
+```
 
 **Windows**
 
