@@ -7,30 +7,50 @@ function Write-Step([string]$message) {
     Write-Host "[setup] $message"
 }
 
+function New-BootstrapCandidate([string]$name, [string]$command, [string[]]$arguments) {
+    return [PSCustomObject]@{
+        Name      = $name
+        Command   = $command
+        Arguments = $arguments
+    }
+}
+
+function Get-CommonPythonExecutablePaths {
+    $patterns = @()
+    if ($env:LocalAppData) {
+        $patterns += (Join-Path $env:LocalAppData "Programs\Python\Python*\python.exe")
+    }
+    if ($env:ProgramFiles) {
+        $patterns += (Join-Path $env:ProgramFiles "Python*\python.exe")
+        $patterns += (Join-Path $env:ProgramFiles "Python Software Foundation\Python*\python.exe")
+    }
+    if ($env:ProgramFiles -and ${env:ProgramFiles(x86)}) {
+        $patterns += (Join-Path ${env:ProgramFiles(x86)} "Python*\python.exe")
+    }
+
+    $paths = @()
+    foreach ($pattern in $patterns) {
+        $paths += Get-ChildItem -Path $pattern -File -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName
+    }
+    return $paths | Where-Object { $_ -and ($_ -notmatch '\\WindowsApps\\') } | Sort-Object -Unique
+}
+
 function Get-BootstrapPythonCandidates {
-    $candidates = @()
+    $candidates = New-Object System.Collections.Generic.List[object]
     if (Get-Command py -ErrorAction SilentlyContinue) {
-        $candidates += [PSCustomObject]@{
-            Name      = "py -3"
-            Command   = "py"
-            Arguments = @("-3")
-        }
+        $candidates.Add((New-BootstrapCandidate "py -3" "py" @("-3")))
     }
     if (Get-Command python -ErrorAction SilentlyContinue) {
-        $candidates += [PSCustomObject]@{
-            Name      = "python"
-            Command   = "python"
-            Arguments = @()
-        }
+        $candidates.Add((New-BootstrapCandidate "python" "python" @()))
     }
     if (Get-Command python3 -ErrorAction SilentlyContinue) {
-        $candidates += [PSCustomObject]@{
-            Name      = "python3"
-            Command   = "python3"
-            Arguments = @()
-        }
+        $candidates.Add((New-BootstrapCandidate "python3" "python3" @()))
     }
-    if (-not $candidates) {
+    foreach ($pythonPath in Get-CommonPythonExecutablePaths) {
+        $candidateName = "python.exe ($pythonPath)"
+        $candidates.Add((New-BootstrapCandidate $candidateName $pythonPath @()))
+    }
+    if ($candidates.Count -eq 0) {
         throw "Python 3.10+ was not found. Install Python first, then rerun Install_ChipSeeker.bat."
     }
     return $candidates
@@ -55,13 +75,72 @@ function Resolve-VenvPythonPath([string]$projectRoot) {
     return $windowsPath
 }
 
+function Test-BootstrapCandidate($candidate) {
+    try {
+        Invoke-ExternalCommand $candidate.Command ($candidate.Arguments + @("--version")) "Failed to query Python version with $($candidate.Name)"
+        return $true
+    } catch {
+        Write-Warning "[setup] bootstrap candidate failed: $($candidate.Name) :: $($_.Exception.Message)"
+        return $false
+    }
+}
+
+function Install-PythonWithWinget {
+    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+        Write-Warning "[setup] winget was not found, so Python cannot be auto-installed."
+        return $false
+    }
+
+    Write-Step "no usable Python launcher found; attempting to install Python 3.11 via winget"
+    try {
+        Invoke-ExternalCommand "winget" @(
+            "install",
+            "--id", "Python.Python.3.11",
+            "-e",
+            "--accept-package-agreements",
+            "--accept-source-agreements"
+        ) "Failed to install Python with winget"
+        return $true
+    } catch {
+        Write-Warning "[setup] automatic Python installation failed :: $($_.Exception.Message)"
+        return $false
+    }
+}
+
+function Get-WorkingBootstrapPythonCandidates {
+    $working = New-Object System.Collections.Generic.List[object]
+    foreach ($candidate in Get-BootstrapPythonCandidates) {
+        if (Test-BootstrapCandidate $candidate) {
+            $working.Add($candidate)
+        }
+    }
+
+    if ($working.Count -gt 0) {
+        return $working
+    }
+
+    if (Install-PythonWithWinget) {
+        foreach ($candidate in Get-BootstrapPythonCandidates) {
+            if (Test-BootstrapCandidate $candidate) {
+                $working.Add($candidate)
+            }
+        }
+    }
+
+    return $working
+}
+
 function New-ProjectVenv([string]$projectRoot) {
     $venvPath = Join-Path $projectRoot ".venv"
     $lastError = $null
-    foreach ($candidate in Get-BootstrapPythonCandidates) {
+    $workingCandidates = Get-WorkingBootstrapPythonCandidates
+    if ($workingCandidates.Count -eq 0) {
+        throw "Virtual environment creation failed because no usable Python 3 launcher was found. Install Python 3.10+ manually, then rerun Install_ChipSeeker.bat."
+    }
+
+    foreach ($candidate in $workingCandidates) {
         Write-Step "trying bootstrap python: $($candidate.Name)"
         try {
-            Invoke-ExternalCommand $candidate.Command ($candidate.Arguments + @("--version")) "Failed to query Python version with $($candidate.Name)"
             Invoke-ExternalCommand $candidate.Command ($candidate.Arguments + @("-m", "venv", $venvPath)) "Failed to create virtual environment with $($candidate.Name)"
             $resolvedPython = Resolve-VenvPythonPath $projectRoot
             if (Test-Path -LiteralPath $resolvedPython) {
@@ -71,7 +150,7 @@ function New-ProjectVenv([string]$projectRoot) {
             throw "Virtual environment command finished but Python executable was not created at $resolvedPython"
         } catch {
             $lastError = $_
-            Write-Warning "[setup] bootstrap candidate failed: $($candidate.Name) :: $($_.Exception.Message)"
+            Write-Warning "[setup] venv creation failed: $($candidate.Name) :: $($_.Exception.Message)"
         }
     }
     throw "Virtual environment creation failed after trying all detected Python launchers. Last error: $($lastError.Exception.Message)"
