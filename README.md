@@ -93,7 +93,7 @@ Open the web page, configure your DeepSeek or OpenAI API Key in the left sidebar
 3. Wait for the library sync to finish.
 4. If the pack already contains precomputed `.npy` cache files, semantic search can be used directly without rebuilding them.
 
-## Unnstall
+## Uninstall
 
 ```bat
 Uninstall_ChipSeeker.bat
@@ -171,7 +171,7 @@ streamlit run app.py
 3. 等待文库同步完成。
 4. 如果这个包已经包含跑好的 `.npy` 缓存，那么导入后可以直接使用语义搜索，不需要重新构建。
 
-## Unnstall / 卸载
+## Uninstall / 卸载
 
 ```bat
 Uninstall_ChipSeeker.bat
