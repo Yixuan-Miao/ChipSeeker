@@ -13,7 +13,6 @@ git clone https://github.com/Yixuan-Miao/ChipSeeker.git && cd ChipSeeker && powe
 ```bat
 Install_ChipSeeker.bat
 Start_ChipSeeker.bat
-Uninstall_ChipSeeker.bat
 ```
 
 或命令行：
@@ -94,6 +93,12 @@ Open the web page, configure your DeepSeek or OpenAI API Key in the left sidebar
 3. Wait for the library sync to finish.
 4. If the pack already contains precomputed `.npy` cache files, semantic search can be used directly without rebuilding them.
 
+## Unnstall
+
+```bat
+Uninstall_ChipSeeker.bat
+```
+
 **Contact:**
 
 * **Email:** guangeofaisa@gmail.com
@@ -165,6 +170,12 @@ streamlit run app.py
 2. 在 `Quick Start` 或侧边栏 `Content Pack` 面板中导入你收到的 ZIP。
 3. 等待文库同步完成。
 4. 如果这个包已经包含跑好的 `.npy` 缓存，那么导入后可以直接使用语义搜索，不需要重新构建。
+
+## Unnstall / 卸载
+
+```bat
+Uninstall_ChipSeeker.bat
+```
 
 **获取方式 (Contact):**
 
