@@ -1,3 +1,5 @@
+import errno
+import io
 import json
 import os
 import shutil
@@ -24,6 +26,10 @@ PACK_FILES = [
     "source_registry.json",
 ]
 PACK_DIRS = ["sources", "cache"]
+
+
+class ContentPackInstallError(RuntimeError):
+    pass
 
 
 def detect_content_pack_status(data_dir, db_file, cache_dir, manifest_path, schema_state=None):
@@ -109,6 +115,31 @@ def _validate_zip_members(member_names):
             raise ValueError(f"Unsafe content pack path: {member}")
 
 
+def _format_bytes(size):
+    value = float(size)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if value < 1024 or unit == "TB":
+            return f"{value:.1f} {unit}" if unit != "B" else f"{int(value)} B"
+        value /= 1024
+
+
+def _archive_uncompressed_size(archive):
+    return sum(info.file_size for info in archive.infolist() if not info.is_dir())
+
+
+def _ensure_install_space(target_parent, required_bytes):
+    os.makedirs(target_parent, exist_ok=True)
+    free_bytes = shutil.disk_usage(target_parent).free
+    required_with_margin = max(int(required_bytes * 1.25), required_bytes + 512 * 1024 * 1024)
+    if free_bytes < required_with_margin:
+        raise ContentPackInstallError(
+            "Not enough disk space to install this content pack. "
+            f"Required: {_format_bytes(required_with_margin)} free, available: {_format_bytes(free_bytes)}. "
+            "Please free space on the ChipSeeker install drive or move ChipSeeker to a larger drive, then retry. "
+            "磁盘空间不足，无法安装内容包。请清理 ChipSeeker 所在磁盘，或把 ChipSeeker 移到更大的磁盘后重试。"
+        )
+
+
 def _locate_pack_root(extract_root):
     candidate = os.path.join(extract_root, PACK_ROOT_NAME)
     if os.path.isdir(candidate):
@@ -142,28 +173,41 @@ def _uploaded_bytes(uploaded_file):
 
 def install_content_pack(uploaded_file, data_dir):
     payload = _uploaded_bytes(uploaded_file)
-    with tempfile.TemporaryDirectory() as temp_dir:
-        zip_path = os.path.join(temp_dir, "content_pack.zip")
-        with open(zip_path, "wb") as f:
-            f.write(payload)
-        with zipfile.ZipFile(zip_path, "r") as archive:
-            _validate_zip_members(archive.namelist())
-            archive.extractall(temp_dir)
-        pack_root = _locate_pack_root(temp_dir)
-        os.makedirs(data_dir, exist_ok=True)
-        _clear_existing_targets(data_dir)
+    data_dir = os.path.abspath(data_dir)
+    staging_parent = os.path.dirname(data_dir)
+    os.makedirs(staging_parent, exist_ok=True)
+    try:
+        with tempfile.TemporaryDirectory(prefix="chipseeker_content_pack_", dir=staging_parent) as temp_dir:
+            with zipfile.ZipFile(io.BytesIO(payload), "r") as archive:
+                member_names = archive.namelist()
+                _validate_zip_members(member_names)
+                _ensure_install_space(staging_parent, _archive_uncompressed_size(archive))
+                archive.extractall(temp_dir)
+            pack_root = _locate_pack_root(temp_dir)
+            os.makedirs(data_dir, exist_ok=True)
+            _clear_existing_targets(data_dir)
 
-        copied_files = 0
-        for relative_name in PACK_FILES:
-            source_file = os.path.join(pack_root, relative_name)
-            if os.path.exists(source_file):
-                shutil.copy2(source_file, os.path.join(data_dir, relative_name))
-                copied_files += 1
-        for relative_dir in PACK_DIRS:
-            source_dir = os.path.join(pack_root, relative_dir)
-            if os.path.isdir(source_dir):
-                shutil.copytree(source_dir, os.path.join(data_dir, relative_dir), dirs_exist_ok=True)
-                copied_files += sum(len(files) for _, _, files in os.walk(source_dir))
+            copied_files = 0
+            for relative_name in PACK_FILES:
+                source_file = os.path.join(pack_root, relative_name)
+                if os.path.exists(source_file):
+                    shutil.move(source_file, os.path.join(data_dir, relative_name))
+                    copied_files += 1
+            for relative_dir in PACK_DIRS:
+                source_dir = os.path.join(pack_root, relative_dir)
+                if os.path.isdir(source_dir):
+                    copied_files += sum(len(files) for _, _, files in os.walk(source_dir))
+                    shutil.move(source_dir, os.path.join(data_dir, relative_dir))
+    except OSError as exc:
+        if exc.errno == errno.ENOSPC:
+            free_bytes = shutil.disk_usage(staging_parent).free
+            raise ContentPackInstallError(
+                "Disk became full while installing the content pack. "
+                f"Available now: {_format_bytes(free_bytes)}. "
+                "Please free more space on the ChipSeeker install drive and retry. "
+                "安装内容包时磁盘已满，请清理 ChipSeeker 所在磁盘后重试。"
+            ) from exc
+        raise
 
     return {"copied_entries": copied_files, "data_dir": data_dir}
 

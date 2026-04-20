@@ -9,7 +9,7 @@ from datetime import date, datetime, timezone
 import streamlit as st
 
 from chipseeker.config_store import UserDataStore, load_app_config
-from chipseeker.content_pack import build_content_pack, detect_content_pack_status, install_bundled_demo_csv, install_content_pack
+from chipseeker.content_pack import ContentPackInstallError, build_content_pack, detect_content_pack_status, install_bundled_demo_csv, install_content_pack
 from chipseeker.conflict_review import collect_source_records, detect_conflicts, dismiss_conflict, load_conflict_resolutions, restore_conflicts
 from chipseeker.data_sync import (
     build_source_snapshot,
@@ -325,7 +325,11 @@ def resolve_provider_defaults(current_preset, app_config):
 
 
 def install_uploaded_content_pack(uploaded_pack):
-    result = install_content_pack(uploaded_pack, DATA_DIR)
+    try:
+        result = install_content_pack(uploaded_pack, DATA_DIR)
+    except ContentPackInstallError as exc:
+        st.error(str(exc))
+        return
     st.cache_resource.clear()
     st.session_state["csv_state"] = ()
     st.success(f"Installed content pack into `{result['data_dir']}` with {result['copied_entries']} copied entries.")
