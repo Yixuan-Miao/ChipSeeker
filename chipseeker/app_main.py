@@ -10,7 +10,7 @@ import streamlit as st
 
 from chipseeker.config_store import UserDataStore, load_app_config
 from chipseeker.cloud_access import build_cloud_token, cloud_access_configured
-from chipseeker.content_pack import ContentPackInstallError, build_content_pack, detect_content_pack_status, install_bundled_demo_csv, install_content_pack
+from chipseeker.content_pack import ContentPackInstallError, build_content_pack, detect_content_pack_status, install_bundled_demo_csv, install_content_pack, install_content_update_pack
 from chipseeker.conflict_review import collect_source_records, detect_conflicts, dismiss_conflict, load_conflict_resolutions, restore_conflicts
 from chipseeker.data_sync import (
     build_source_snapshot,
@@ -390,7 +390,7 @@ def resolve_provider_defaults(current_preset, app_config):
 
 
 def cloud_access_ready(app_config):
-    return bool(app_config.get("cloud_access_enabled")) and cloud_access_configured(
+    return cloud_access_configured(
         app_config.get("cloud_access_email", ""),
         app_config.get("cloud_access_code", ""),
     )
@@ -433,6 +433,19 @@ def install_uploaded_content_pack(uploaded_pack):
     st.rerun()
 
 
+def install_uploaded_update_pack(uploaded_pack):
+    try:
+        result = install_content_update_pack(uploaded_pack, DATA_DIR)
+    except ContentPackInstallError as exc:
+        st.error(str(exc))
+        return
+    st.cache_resource.clear()
+    st.session_state["csv_state"] = ()
+    st.success(f"Installed update pack into `{result['data_dir']}` with {result['copied_entries']} merged entries. Existing library and caches were preserved.")
+    time.sleep(1.0)
+    st.rerun()
+
+
 def install_bundled_demo_library():
     target_path = install_bundled_demo_csv(BUNDLED_DEMO_CSV, SOURCE_CSV_DIR)
     st.cache_resource.clear()
@@ -466,6 +479,10 @@ def render_content_pack_sidebar(content_status, ui_language):
         uploaded_pack = st.file_uploader(tr(ui_language, "Install Content Pack ZIP", "安装内容包 ZIP"), type=["zip"], key="sidebar_content_pack_upload")
         if uploaded_pack is not None and st.button(tr(ui_language, "Install Uploaded Pack", "安装上传内容包"), use_container_width=True):
             install_uploaded_content_pack(uploaded_pack)
+        uploaded_update_pack = st.file_uploader(tr(ui_language, "Install Incremental Update ZIP", "安装增量更新 ZIP"), type=["zip"], key="sidebar_update_pack_upload")
+        if uploaded_update_pack is not None and st.button(tr(ui_language, "Install Update Pack", "安装增量更新包"), use_container_width=True):
+            install_uploaded_update_pack(uploaded_update_pack)
+        st.caption(tr(ui_language, "Update ZIPs merge new sources/cache files into the existing library instead of replacing the full 30k+ database.", "增量更新 ZIP 会合并新的 sources/cache 文件，不会替换已有 3 万+ 全库。"))
         if os.path.exists(BUNDLED_DEMO_CSV) and st.button(tr(ui_language, "Install Bundled TMTT 2026 Demo", "安装内置 TMTT 2026 演示库"), use_container_width=True):
             install_bundled_demo_library()
 
@@ -514,16 +531,16 @@ def render_quick_start(app_config, content_status, ui_language):
             llm_api_key = st.text_input("LLM API Key", value=app_config.get("llm_api_key", ""), type="password")
             llm_base_url = st.text_input("LLM Base URL", value=default_base)
             llm_model = st.text_input("LLM Model", value=default_model)
-        with st.expander(tr(ui_language, "ChipSeeker Cloud Access", "ChipSeeker 云端访问"), expanded=False):
+        with st.expander(tr(ui_language, "Paid API Access: Voyage + DeepSeek", "付费 API Access：Voyage + DeepSeek"), expanded=False):
             st.caption(tr(
                 ui_language,
-                "Optional manual monthly access. If you do not want to configure Voyage/DeepSeek keys, contact the author after payment to receive an email + access code. You can still use your own API keys at any time.",
-                "可选的手动月度访问。如果不想配置 Voyage/DeepSeek key，付款后联系作者获取邮箱 + 访问码。你仍然可以随时使用自己的 API key。",
+                "If you do not want to configure Voyage/DeepSeek keys, follow the ChipSeeker WeChat/Official Account after payment and enter the email + key issued by the author.",
+                "如果不想自己配置 Voyage/DeepSeek key，付款后关注 ChipSeeker 公众号/联系作者，并输入作者发给你的 Email + Key。",
             ))
-            cloud_enabled = st.checkbox(tr(ui_language, "Use ChipSeeker Cloud Access", "使用 ChipSeeker 云端访问"), value=bool(app_config.get("cloud_access_enabled", False)))
             cloud_base_url = st.text_input("Cloud Access URL", value=app_config.get("cloud_access_base_url", "https://chipseeker.online"))
-            cloud_email = st.text_input("Access Email", value=app_config.get("cloud_access_email", ""))
-            cloud_code = st.text_input("Access Code", value=app_config.get("cloud_access_code", ""), type="password")
+            cloud_email = st.text_input("Paid Access Email", value=app_config.get("cloud_access_email", ""))
+            cloud_code = st.text_input("Paid Access Key", value=app_config.get("cloud_access_code", ""), type="password")
+            cloud_enabled = cloud_access_configured(cloud_email, cloud_code)
 
         start_now = st.form_submit_button(tr(ui_language, "Save and Start Exploring", "保存并开始使用"), type="primary", use_container_width=True)
 
@@ -1069,15 +1086,14 @@ def run():
         )
         emb_api_key = st.sidebar.text_input(tr(ui_language, "Embedding API Key", "Embedding API Key"), value=app_config.get("emb_api_key", ""), type="password")
         st.sidebar.caption(tr(ui_language, "No key? Use your own Voyage key, or use paid ChipSeeker API Access below.", "没有 key？可以用自己的 Voyage key，也可以使用下面的付费 ChipSeeker API Access。"))
-    if st.sidebar.button(
-        tr(ui_language, "Use Paid API Access", "使用付费 API Access"),
-        use_container_width=True,
-        type="primary",
-        key="open_paid_api_access",
-    ):
-        st.session_state["show_paid_api_access"] = True
-    paid_api_expanded = st.session_state.get("show_paid_api_access", False) or bool(app_config.get("cloud_access_enabled", False))
-    with st.sidebar.expander(tr(ui_language, "Paid API Access: Voyage + DeepSeek", "付费 API Access：Voyage + DeepSeek"), expanded=paid_api_expanded):
+    st.sidebar.markdown(
+        tr(
+            ui_language,
+            "**Paid API Access**: follow the ChipSeeker WeChat/Official Account after payment, then enter the email + key issued by the author below.",
+            "**付费 API Access**：付款后关注 ChipSeeker 公众号/联系作者，然后在下面输入作者发给你的 Email + Key。",
+        )
+    )
+    with st.sidebar.expander(tr(ui_language, "Paid API Access: Voyage + DeepSeek", "付费 API Access：Voyage + DeepSeek"), expanded=cloud_access_configured(app_config.get("cloud_access_email", ""), app_config.get("cloud_access_code", ""))):
         st.caption(tr(
             ui_language,
             "For users who do not want to configure Voyage or DeepSeek keys. After payment, enter the email and access key issued by the author. The key can expire weekly or monthly depending on your plan.",
@@ -1088,10 +1104,11 @@ def run():
             "This access proxies both Voyage embedding and DeepSeek LLM calls through ChipSeeker. You can still use your own LLM API key or your own official Voyage key at any time.",
             "这个入口会通过 ChipSeeker 代理 Voyage embedding 和 DeepSeek LLM。你仍然可以随时使用自己的 LLM API key，或去 Voyage 官网申请自己的 key。",
         ))
-        cloud_enabled = st.checkbox(tr(ui_language, "Enable paid API Access when direct keys are empty", "直接 key 为空时启用付费 API Access"), value=bool(app_config.get("cloud_access_enabled", False) or st.session_state.get("show_paid_api_access", False)), key="cloud_access_enabled_input")
+        cloud_enabled = cloud_access_configured(app_config.get("cloud_access_email", ""), app_config.get("cloud_access_code", ""))
         cloud_base_url = st.text_input("Cloud Access URL", value=app_config.get("cloud_access_base_url", "https://chipseeker.online"), key="cloud_access_url_input")
         cloud_email = st.text_input("Paid Access Email", value=app_config.get("cloud_access_email", ""), key="cloud_access_email_input")
         cloud_code = st.text_input("Paid Access Key", value=app_config.get("cloud_access_code", ""), type="password", key="cloud_access_code_input")
+        cloud_enabled = cloud_access_configured(cloud_email, cloud_code)
     config_updates = {
         "embedding_model": selected_emb_model,
         "emb_api_key": emb_api_key,

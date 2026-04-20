@@ -212,6 +212,52 @@ def install_content_pack(uploaded_file, data_dir):
     return {"copied_entries": copied_files, "data_dir": data_dir}
 
 
+def _merge_tree(source_dir, target_dir):
+    copied_files = 0
+    os.makedirs(target_dir, exist_ok=True)
+    for root, _, files in os.walk(source_dir):
+        relative_root = os.path.relpath(root, source_dir)
+        target_root = target_dir if relative_root == "." else os.path.join(target_dir, relative_root)
+        os.makedirs(target_root, exist_ok=True)
+        for file_name in files:
+            shutil.move(os.path.join(root, file_name), os.path.join(target_root, file_name))
+            copied_files += 1
+    return copied_files
+
+
+def install_content_update_pack(uploaded_file, data_dir):
+    payload = _uploaded_bytes(uploaded_file)
+    data_dir = os.path.abspath(data_dir)
+    staging_parent = os.path.dirname(data_dir)
+    os.makedirs(staging_parent, exist_ok=True)
+    try:
+        with tempfile.TemporaryDirectory(prefix="chipseeker_update_pack_", dir=staging_parent) as temp_dir:
+            with zipfile.ZipFile(io.BytesIO(payload), "r") as archive:
+                member_names = archive.namelist()
+                _validate_zip_members(member_names)
+                _ensure_install_space(staging_parent, _archive_uncompressed_size(archive))
+                archive.extractall(temp_dir)
+            pack_root = _locate_pack_root(temp_dir)
+            os.makedirs(data_dir, exist_ok=True)
+
+            copied_files = 0
+            for relative_dir in PACK_DIRS:
+                source_dir = os.path.join(pack_root, relative_dir)
+                if os.path.isdir(source_dir):
+                    copied_files += _merge_tree(source_dir, os.path.join(data_dir, relative_dir))
+    except OSError as exc:
+        if exc.errno == errno.ENOSPC:
+            free_bytes = shutil.disk_usage(staging_parent).free
+            raise ContentPackInstallError(
+                "Disk became full while installing the update pack. "
+                f"Available now: {_format_bytes(free_bytes)}. "
+                "Please free more space on the ChipSeeker install drive and retry."
+            ) from exc
+        raise
+
+    return {"copied_entries": copied_files, "data_dir": data_dir}
+
+
 def install_bundled_demo_csv(demo_csv_path, source_root):
     if not os.path.exists(demo_csv_path):
         raise FileNotFoundError(f"Bundled demo CSV not found: {demo_csv_path}")
