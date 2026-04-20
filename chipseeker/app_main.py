@@ -9,6 +9,7 @@ from datetime import date, datetime, timezone
 import streamlit as st
 
 from chipseeker.config_store import UserDataStore, load_app_config
+from chipseeker.cloud_access import build_cloud_token, cloud_access_configured
 from chipseeker.content_pack import ContentPackInstallError, build_content_pack, detect_content_pack_status, install_bundled_demo_csv, install_content_pack
 from chipseeker.conflict_review import collect_source_records, detect_conflicts, dismiss_conflict, load_conflict_resolutions, restore_conflicts
 from chipseeker.data_sync import (
@@ -324,6 +325,37 @@ def resolve_provider_defaults(current_preset, app_config):
     return app_config.get("llm_base_url", ""), app_config.get("llm_model", "")
 
 
+def cloud_access_ready(app_config):
+    return bool(app_config.get("cloud_access_enabled")) and cloud_access_configured(
+        app_config.get("cloud_access_email", ""),
+        app_config.get("cloud_access_code", ""),
+    )
+
+
+def cloud_access_token(app_config):
+    return build_cloud_token(
+        app_config.get("cloud_access_base_url", "https://chipseeker.online"),
+        app_config.get("cloud_access_email", ""),
+        app_config.get("cloud_access_code", ""),
+    )
+
+
+def runtime_embedding_key(app_config, direct_key):
+    if str(direct_key or "").strip():
+        return direct_key
+    if cloud_access_ready(app_config):
+        return cloud_access_token(app_config)
+    return ""
+
+
+def runtime_llm_key(app_config, direct_key):
+    if str(direct_key or "").strip():
+        return direct_key
+    if cloud_access_ready(app_config):
+        return cloud_access_token(app_config)
+    return ""
+
+
 def install_uploaded_content_pack(uploaded_pack):
     try:
         result = install_content_pack(uploaded_pack, DATA_DIR)
@@ -418,6 +450,16 @@ def render_quick_start(app_config, content_status, ui_language):
             llm_api_key = st.text_input("LLM API Key", value=app_config.get("llm_api_key", ""), type="password")
             llm_base_url = st.text_input("LLM Base URL", value=default_base)
             llm_model = st.text_input("LLM Model", value=default_model)
+        with st.expander(tr(ui_language, "ChipSeeker Cloud Access", "ChipSeeker 云端访问"), expanded=False):
+            st.caption(tr(
+                ui_language,
+                "Optional manual monthly access. If you do not want to configure Voyage/DeepSeek keys, contact the author after payment to receive an email + access code. You can still use your own API keys at any time.",
+                "可选的手动月度访问。如果不想配置 Voyage/DeepSeek key，付款后联系作者获取邮箱 + 访问码。你仍然可以随时使用自己的 API key。",
+            ))
+            cloud_enabled = st.checkbox(tr(ui_language, "Use ChipSeeker Cloud Access", "使用 ChipSeeker 云端访问"), value=bool(app_config.get("cloud_access_enabled", False)))
+            cloud_base_url = st.text_input("Cloud Access URL", value=app_config.get("cloud_access_base_url", "https://chipseeker.online"))
+            cloud_email = st.text_input("Access Email", value=app_config.get("cloud_access_email", ""))
+            cloud_code = st.text_input("Access Code", value=app_config.get("cloud_access_code", ""), type="password")
 
         start_now = st.form_submit_button(tr(ui_language, "Save and Start Exploring", "保存并开始使用"), type="primary", use_container_width=True)
 
@@ -430,6 +472,10 @@ def render_quick_start(app_config, content_status, ui_language):
                 "llm_api_key": llm_api_key,
                 "llm_base_url": llm_base_url,
                 "llm_model": llm_model,
+                "cloud_access_enabled": cloud_enabled,
+                "cloud_access_base_url": cloud_base_url,
+                "cloud_access_email": cloud_email,
+                "cloud_access_code": cloud_code,
                 "onboarding_completed": True,
             }
         )
@@ -958,14 +1004,39 @@ def run():
             )
         )
         emb_api_key = st.sidebar.text_input(tr(ui_language, "Embedding API Key", "Embedding API Key"), value=app_config.get("emb_api_key", ""), type="password")
-    if app_config.get("embedding_model") != selected_emb_model or app_config.get("emb_api_key", "") != emb_api_key:
-        app_config.update({"embedding_model": selected_emb_model, "emb_api_key": emb_api_key})
+    with st.sidebar.expander(tr(ui_language, "ChipSeeker Cloud Access", "ChipSeeker 云端访问"), expanded=False):
+        st.caption(tr(
+            ui_language,
+            "Manual monthly access for users who do not want to configure Voyage/DeepSeek API keys. Payment is handled manually by the author; this only stores the email + access code.",
+            "给不想配置 Voyage/DeepSeek API key 的用户使用的手动月度访问。付款由作者手动处理，这里只保存邮箱 + 访问码。",
+        ))
+        st.info(tr(
+            ui_language,
+            "Boundary: you can always use your own LLM API key, and you can apply for your own Voyage key from the official website.",
+            "边界说明：你随时可以使用自己的 LLM API key，也可以去 Voyage 官网申请自己的 key。",
+        ))
+        cloud_enabled = st.checkbox(tr(ui_language, "Use Cloud Access when direct API key is empty", "直接 API key 为空时使用云端访问"), value=bool(app_config.get("cloud_access_enabled", False)), key="cloud_access_enabled_input")
+        cloud_base_url = st.text_input("Cloud Access URL", value=app_config.get("cloud_access_base_url", "https://chipseeker.online"), key="cloud_access_url_input")
+        cloud_email = st.text_input("Access Email", value=app_config.get("cloud_access_email", ""), key="cloud_access_email_input")
+        cloud_code = st.text_input("Access Code", value=app_config.get("cloud_access_code", ""), type="password", key="cloud_access_code_input")
+    config_updates = {
+        "embedding_model": selected_emb_model,
+        "emb_api_key": emb_api_key,
+        "cloud_access_enabled": cloud_enabled,
+        "cloud_access_base_url": cloud_base_url,
+        "cloud_access_email": cloud_email,
+        "cloud_access_code": cloud_code,
+    }
+    if any(app_config.get(key) != value for key, value in config_updates.items()):
+        app_config.update(config_updates)
         save_json(CONFIG_FILE, app_config)
 
     current_preset = app_config.get("provider_preset", "DeepSeek")
     api_key = app_config.get("llm_api_key", "")
     base_url, model_name = resolve_provider_defaults(current_preset, app_config)
-    embedding_api_ready = (not embedding_model_requires_api(selected_emb_model)) or bool(str(emb_api_key).strip())
+    emb_runtime_key = runtime_embedding_key(app_config, emb_api_key) if embedding_model_requires_api(selected_emb_model) else ""
+    llm_runtime_key = runtime_llm_key(app_config, api_key)
+    embedding_api_ready = (not embedding_model_requires_api(selected_emb_model)) or bool(str(emb_runtime_key).strip())
     selected_papers_panel = st.sidebar.container()
     llm_tools_panel = st.sidebar.container()
     scope_presets = semantic_scope_presets(library_years)
@@ -1019,7 +1090,7 @@ def run():
         st.warning(f"Previous embedding build failed: {foreground_task.get('error', 'unknown error')}")
 
     searcher = (
-        get_searcher_engine(DB_FILE, selected_emb_model, emb_api_key, scope_key=active_scope_key, scope_years=tuple(active_scope_years))
+        get_searcher_engine(DB_FILE, selected_emb_model, emb_runtime_key, scope_key=active_scope_key, scope_years=tuple(active_scope_years))
         if active_scope_id and embedding_api_ready
         else None
     )
@@ -1070,7 +1141,7 @@ def run():
                 st.session_state["foreground_embedding_task_id"] = submit_embedding_build(
                     DB_FILE,
                     selected_emb_model,
-                    emb_api_key,
+                    emb_runtime_key,
                     years=scope_info["years"],
                     scope_key=scope_info["scope_key"],
                 )
@@ -1082,8 +1153,8 @@ def run():
         st.warning(
             tr(
                 ui_language,
-                "Selected embedding model needs an API key. Use MiniLM for zero-config local search, or add a Voyage/OpenAI-compatible key first.",
-                "当前 embedding 模型需要 API key。你可以先用 MiniLM 零配置本地搜索，或者先填写 Voyage / OpenAI 兼容的 key。",
+                "Selected embedding model needs a direct API key or ChipSeeker Cloud Access. Use MiniLM for zero-config local search, add your own Voyage/OpenAI-compatible key, or enter a monthly access code.",
+                "当前 embedding 模型需要直接 API key 或 ChipSeeker 云端访问。你可以先用 MiniLM，填写自己的 Voyage/OpenAI 兼容 key，或输入月度访问码。",
             )
         )
 
@@ -1103,11 +1174,11 @@ def run():
         key="user_idea_input",
     )
     if user_idea and user_idea != st.session_state.get("last_idea"):
-        if not api_key:
-            st.error("Please configure the LLM API key first.")
+        if not llm_runtime_key:
+            st.error(tr(ui_language, "Please configure an LLM API key or ChipSeeker Cloud Access first.", "请先配置 LLM API key 或 ChipSeeker 云端访问。"))
         else:
             with st.spinner("Generating..."):
-                st.session_state.kw_result = generate_search_keywords(user_idea, api_key, base_url, model_name)
+                st.session_state.kw_result = generate_search_keywords(user_idea, llm_runtime_key, base_url, model_name)
                 st.session_state.last_idea = user_idea
     if st.session_state.get("kw_result"):
         st.info(f"{tr(ui_language, 'Suggested Keywords', '推荐关键词')}: `{st.session_state.kw_result}`")
@@ -1415,12 +1486,12 @@ def run():
         if similarity >= 0.25 or not search_query:
             with st.expander(tr(ui_language, "LLM Deep Dive", "LLM 深度分析")):
                 if st.button(tr(ui_language, "Analyze with LLM", "用 LLM 分析"), key=f"ai_btn_{chk_key}"):
-                    if not api_key:
-                        st.error(tr(ui_language, "LLM API key is missing.", "缺少 LLM API key。"))
+                    if not llm_runtime_key:
+                        st.error(tr(ui_language, "LLM API key or Cloud Access is missing.", "缺少 LLM API key 或云端访问。"))
                     else:
                         with st.spinner("Analyzing..."):
                             try:
-                                st.markdown(analyze_with_llm(title, abstract, search_query or "Summarize", api_key, base_url, model_name))
+                                st.markdown(analyze_with_llm(title, abstract, search_query or "Summarize", llm_runtime_key, base_url, model_name))
                             except Exception as exc:
                                 st.error(str(exc))
         st.markdown("---")
@@ -1444,12 +1515,13 @@ def run():
             app_config.update({"provider_preset": current_preset, "llm_api_key": api_key, "llm_base_url": base_url, "llm_model": model_name})
             save_json(CONFIG_FILE, app_config)
             llm_tools_panel.success(tr(ui_language, "LLM settings saved.", "LLM 设置已保存。"))
+    llm_runtime_key = runtime_llm_key(app_config, api_key)
     if high_value_papers_for_report and llm_tools_panel.button(tr(ui_language, "Generate State-of-the-Art Review", "生成综述报告"), type="primary", use_container_width=True):
-        if not api_key:
-            llm_tools_panel.error(tr(ui_language, "LLM API key is missing.", "缺少 LLM API key。"))
+        if not llm_runtime_key:
+            llm_tools_panel.error(tr(ui_language, "LLM API key or Cloud Access is missing.", "缺少 LLM API key 或云端访问。"))
         else:
             with st.spinner("LLM is reading top papers..."):
-                st.session_state.mega_report = generate_global_report_with_llm(high_value_papers_for_report, search_query or "General Review", api_key, base_url, model_name)
+                st.session_state.mega_report = generate_global_report_with_llm(high_value_papers_for_report, search_query or "General Review", llm_runtime_key, base_url, model_name)
     if "mega_report" in st.session_state:
         st.markdown(f"## {tr(ui_language, 'LLM Review Report', 'LLM 综述报告')}")
         st.markdown(st.session_state.mega_report)

@@ -8,6 +8,10 @@ DEFAULT_CONFIG = {
     "provider_preset": "DeepSeek",
     "embedding_model": "all-MiniLM-L6-v2",
     "emb_api_key": "",
+    "cloud_access_base_url": "https://chipseeker.online",
+    "cloud_access_email": "",
+    "cloud_access_code": "",
+    "cloud_access_enabled": False,
     "onboarding_completed": False,
 }
 

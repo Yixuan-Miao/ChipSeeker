@@ -7,6 +7,7 @@ import time
 
 import numpy as np
 from sentence_transformers import SentenceTransformer, util
+from chipseeker.cloud_access import cloud_embed, is_cloud_token
 
 
 def _log(message):
@@ -160,7 +161,7 @@ class PaperSearcher:
         self.scope_key = scope_key or "all"
         self.progress_callback = progress_callback
         self.log_callback = log_callback
-        self.mt = 'v' if 'voyage' in self.mn else ('o' if 'text-embedding' in self.mn else 'l')
+        self.mt = 'c' if is_cloud_token(self.ak) else ('v' if 'voyage' in self.mn else ('o' if 'text-embedding' in self.mn else 'l'))
         self.dt = papers_override if papers_override is not None else self._load_db()
         self.cf, self.mf = get_cache_paths(self.jp, self.mn, self.scope_key)
 
@@ -169,6 +170,8 @@ class PaperSearcher:
         self.eb = self._load_cache()
 
     def _init_model(self):
+        if self.mt == 'c':
+            return {"cloud_access": True}
         if self.mt == 'v':
             import voyageai
             return voyageai.Client(api_key=self.ak)
@@ -224,7 +227,9 @@ class PaperSearcher:
             batch_start = time.perf_counter()
             self._log(f"{stage_message}: starting {batch_label} items {batch_range} attempt {attempt}")
             try:
-                if self.mt == 'v':
+                if self.mt == 'c':
+                    result = cloud_embed(self.ak, self.mn, batch)
+                elif self.mt == 'v':
                     result = self.md.embed(batch, model=self.mn).embeddings
                 else:
                     result = [x.embedding for x in self.md.embeddings.create(input=batch, model=self.mn).data]

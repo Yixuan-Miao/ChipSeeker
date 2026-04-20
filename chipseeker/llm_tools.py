@@ -1,5 +1,7 @@
 import requests
 
+from chipseeker.cloud_access import cloud_chat, is_cloud_token
+
 
 def get_batch_citations(dois, logger=None):
     valid_dois = [doi for doi in dois if doi]
@@ -25,6 +27,9 @@ def get_batch_citations(dois, logger=None):
 
 
 def call_llm_api(prompt, api_key, base_url, model_name, temp=0.3):
+    if is_cloud_token(api_key):
+        return cloud_chat(api_key, prompt, model_name=model_name or "deepseek-chat", temperature=temp)
+
     from openai import OpenAI
 
     client = OpenAI(api_key=api_key, base_url=base_url)
