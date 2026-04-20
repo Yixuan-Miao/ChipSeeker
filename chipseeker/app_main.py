@@ -1068,21 +1068,30 @@ def run():
             )
         )
         emb_api_key = st.sidebar.text_input(tr(ui_language, "Embedding API Key", "Embedding API Key"), value=app_config.get("emb_api_key", ""), type="password")
-    with st.sidebar.expander(tr(ui_language, "ChipSeeker Cloud Access", "ChipSeeker 云端访问"), expanded=False):
+        st.sidebar.caption(tr(ui_language, "No key? Use your own Voyage key, or use paid ChipSeeker API Access below.", "没有 key？可以用自己的 Voyage key，也可以使用下面的付费 ChipSeeker API Access。"))
+    if st.sidebar.button(
+        tr(ui_language, "Use Paid API Access", "使用付费 API Access"),
+        use_container_width=True,
+        type="primary",
+        key="open_paid_api_access",
+    ):
+        st.session_state["show_paid_api_access"] = True
+    paid_api_expanded = st.session_state.get("show_paid_api_access", False) or bool(app_config.get("cloud_access_enabled", False))
+    with st.sidebar.expander(tr(ui_language, "Paid API Access: Voyage + DeepSeek", "付费 API Access：Voyage + DeepSeek"), expanded=paid_api_expanded):
         st.caption(tr(
             ui_language,
-            "Manual monthly access for users who do not want to configure Voyage/DeepSeek API keys. Payment is handled manually by the author; this only stores the email + access code.",
-            "给不想配置 Voyage/DeepSeek API key 的用户使用的手动月度访问。付款由作者手动处理，这里只保存邮箱 + 访问码。",
+            "For users who do not want to configure Voyage or DeepSeek keys. After payment, enter the email and access key issued by the author. The key can expire weekly or monthly depending on your plan.",
+            "给不想自己配置 Voyage 或 DeepSeek key 的用户。付款后输入作者发给你的 Email 和 Access Key；有效期按你的套餐可以是一周或一个月。",
         ))
         st.info(tr(
             ui_language,
-            "Boundary: you can always use your own LLM API key, and you can apply for your own Voyage key from the official website.",
-            "边界说明：你随时可以使用自己的 LLM API key，也可以去 Voyage 官网申请自己的 key。",
+            "This access proxies both Voyage embedding and DeepSeek LLM calls through ChipSeeker. You can still use your own LLM API key or your own official Voyage key at any time.",
+            "这个入口会通过 ChipSeeker 代理 Voyage embedding 和 DeepSeek LLM。你仍然可以随时使用自己的 LLM API key，或去 Voyage 官网申请自己的 key。",
         ))
-        cloud_enabled = st.checkbox(tr(ui_language, "Use Cloud Access when direct API key is empty", "直接 API key 为空时使用云端访问"), value=bool(app_config.get("cloud_access_enabled", False)), key="cloud_access_enabled_input")
+        cloud_enabled = st.checkbox(tr(ui_language, "Enable paid API Access when direct keys are empty", "直接 key 为空时启用付费 API Access"), value=bool(app_config.get("cloud_access_enabled", False) or st.session_state.get("show_paid_api_access", False)), key="cloud_access_enabled_input")
         cloud_base_url = st.text_input("Cloud Access URL", value=app_config.get("cloud_access_base_url", "https://chipseeker.online"), key="cloud_access_url_input")
-        cloud_email = st.text_input("Access Email", value=app_config.get("cloud_access_email", ""), key="cloud_access_email_input")
-        cloud_code = st.text_input("Access Code", value=app_config.get("cloud_access_code", ""), type="password", key="cloud_access_code_input")
+        cloud_email = st.text_input("Paid Access Email", value=app_config.get("cloud_access_email", ""), key="cloud_access_email_input")
+        cloud_code = st.text_input("Paid Access Key", value=app_config.get("cloud_access_code", ""), type="password", key="cloud_access_code_input")
     config_updates = {
         "embedding_model": selected_emb_model,
         "emb_api_key": emb_api_key,
