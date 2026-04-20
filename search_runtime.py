@@ -2,6 +2,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import time
 
 import numpy as np
@@ -29,14 +30,83 @@ def _format_eta(seconds):
 def get_cache_paths(db_file, model_name, scope_key="all"):
     db_name = os.path.splitext(os.path.basename(db_file))[0]
     db_safe = re.sub(r'[^A-Za-z0-9._-]+', '_', db_name)
-    db_hash = hashlib.sha1(os.path.abspath(db_file).encode('utf-8')).hexdigest()[:8]
     model_safe = re.sub(r'[^A-Za-z0-9._-]+', '_', model_name)
     scope_safe = re.sub(r'[^A-Za-z0-9._-]+', '_', scope_key or "all")
     cache_dir = os.path.join(os.path.dirname(os.path.abspath(db_file)), "cache")
     os.makedirs(cache_dir, exist_ok=True)
-    cache_file = os.path.join(cache_dir, f"cache_{db_safe}_{db_hash}_{model_safe}_{scope_safe}.npy")
-    meta_file = os.path.join(cache_dir, f"cache_{db_safe}_{db_hash}_{model_safe}_{scope_safe}.meta.json")
+    cache_file = os.path.join(cache_dir, f"cache_{db_safe}_{model_safe}_{scope_safe}.npy")
+    meta_file = os.path.join(cache_dir, f"cache_{db_safe}_{model_safe}_{scope_safe}.meta.json")
     return cache_file, meta_file
+
+
+def _legacy_cache_candidates(db_file, model_name, scope_key="all"):
+    db_name = os.path.splitext(os.path.basename(db_file))[0]
+    db_safe = re.sub(r'[^A-Za-z0-9._-]+', '_', db_name)
+    model_safe = re.sub(r'[^A-Za-z0-9._-]+', '_', model_name)
+    scope_safe = re.sub(r'[^A-Za-z0-9._-]+', '_', scope_key or "all")
+    cache_dir = os.path.join(os.path.dirname(os.path.abspath(db_file)), "cache")
+    if not os.path.isdir(cache_dir):
+        return []
+    prefix = f"cache_{db_safe}_"
+    suffix = f"_{model_safe}_{scope_safe}.npy"
+    candidates = []
+    for name in os.listdir(cache_dir):
+        if not name.startswith(prefix) or not name.endswith(suffix):
+            continue
+        middle = name[len(prefix):-len(suffix)]
+        if re.fullmatch(r"[0-9a-f]{8}", middle):
+            cache_file = os.path.join(cache_dir, name)
+            meta_file = cache_file[:-4] + ".meta.json"
+            candidates.append((cache_file, meta_file))
+    return sorted(candidates)
+
+
+def _load_meta_file(meta_file):
+    if not os.path.exists(meta_file):
+        return {}
+    with open(meta_file, 'r', encoding='utf-8') as f:
+        payload = json.load(f)
+    return payload if isinstance(payload, dict) else {}
+
+
+def _cache_matches_fingerprints(cache_file, meta_file, fingerprints):
+    try:
+        embeddings = np.load(cache_file, mmap_mode="r")
+        meta = _load_meta_file(meta_file)
+        old_fingerprints = meta.get("fingerprints", [])
+        if embeddings.shape[0] == len(fingerprints) and old_fingerprints == fingerprints:
+            return "exact", embeddings.shape[0]
+        if (
+            embeddings.shape[0] == len(old_fingerprints)
+            and len(old_fingerprints) < len(fingerprints)
+            and fingerprints[:len(old_fingerprints)] == old_fingerprints
+        ):
+            return "append_only", len(old_fingerprints)
+    except Exception:
+        return "", 0
+    return "", 0
+
+
+def _migrate_cache_if_needed(source_cache, source_meta, target_cache, target_meta):
+    if os.path.abspath(source_cache) == os.path.abspath(target_cache):
+        return source_cache, source_meta
+    shutil.copy2(source_cache, target_cache)
+    if os.path.exists(source_meta):
+        shutil.copy2(source_meta, target_meta)
+    return target_cache, target_meta
+
+
+def resolve_portable_cache(db_file, model_name, scope_key, fingerprints):
+    primary_cache, primary_meta = get_cache_paths(db_file, model_name, scope_key)
+    state, cached_count = _cache_matches_fingerprints(primary_cache, primary_meta, fingerprints) if os.path.exists(primary_cache) else ("", 0)
+    if state:
+        return primary_cache, primary_meta, state, cached_count
+    for candidate_cache, candidate_meta in _legacy_cache_candidates(db_file, model_name, scope_key):
+        state, cached_count = _cache_matches_fingerprints(candidate_cache, candidate_meta, fingerprints)
+        if state:
+            cache_file, meta_file = _migrate_cache_if_needed(candidate_cache, candidate_meta, primary_cache, primary_meta)
+            return cache_file, meta_file, state, cached_count
+    return primary_cache, primary_meta, "", 0
 
 
 def _paper_text(paper):
@@ -54,43 +124,31 @@ def describe_cache_status(db_file, model_name, scope_key="all", papers_override=
             papers = json.load(f)
     cache_file, meta_file = get_cache_paths(db_file, model_name, scope_key)
     fingerprints = _dataset_fingerprints(papers)
+    resolved_cache, resolved_meta, cache_state, cached_count = resolve_portable_cache(
+        db_file, model_name, scope_key, fingerprints
+    )
     status = {
-        "cache_file": cache_file,
-        "meta_file": meta_file,
+        "cache_file": resolved_cache or cache_file,
+        "meta_file": resolved_meta or meta_file,
         "total_papers": len(papers),
         "cached_papers": 0,
-        "has_cache": os.path.exists(cache_file),
+        "has_cache": bool(cache_state),
         "up_to_date": False,
-        "needs_build": True,
+        "needs_build": not bool(cache_state),
         "append_only": False,
         "new_papers": len(papers),
     }
-    if not status["has_cache"]:
+    if cache_state == "exact":
+        status["cached_papers"] = cached_count
+        status["up_to_date"] = True
+        status["needs_build"] = False
+        status["new_papers"] = 0
         return status
-    try:
-        embeddings = np.load(cache_file)
-        old_fingerprints = []
-        if os.path.exists(meta_file):
-            with open(meta_file, 'r', encoding='utf-8') as f:
-                meta = json.load(f)
-            old_fingerprints = meta.get("fingerprints", []) if isinstance(meta, dict) else []
-        status["cached_papers"] = int(embeddings.shape[0])
-        if embeddings.shape[0] == len(fingerprints) and old_fingerprints == fingerprints:
-            status["up_to_date"] = True
-            status["needs_build"] = False
-            status["new_papers"] = 0
-            return status
-        if (
-            embeddings.shape[0] == len(old_fingerprints)
-            and len(old_fingerprints) < len(fingerprints)
-            and fingerprints[:len(old_fingerprints)] == old_fingerprints
-        ):
-            status["append_only"] = True
-            status["cached_papers"] = len(old_fingerprints)
-            status["new_papers"] = max(0, len(fingerprints) - len(old_fingerprints))
-            return status
-    except Exception:
-        pass
+    if cache_state == "append_only":
+        status["append_only"] = True
+        status["cached_papers"] = cached_count
+        status["new_papers"] = max(0, len(fingerprints) - cached_count)
+        return status
     return status
 
 
@@ -141,8 +199,10 @@ class PaperSearcher:
 
     def _save_meta(self, fingerprints):
         payload = {
-            "db_file": os.path.abspath(self.jp),
+            "cache_schema": 2,
+            "db_name": os.path.basename(self.jp),
             "model_name": self.mn,
+            "scope_key": self.scope_key,
             "fingerprints": fingerprints,
         }
         with open(self.mf, 'w', encoding='utf-8') as f:
@@ -226,32 +286,30 @@ class PaperSearcher:
     def _load_cache(self):
         current_fingerprints = self._dataset_fingerprints()
         texts = [self._paper_text(paper) for paper in self.dt]
+        resolved_cache, resolved_meta, cache_state, cached_count = resolve_portable_cache(
+            self.jp, self.mn, self.scope_key, current_fingerprints
+        )
+        self.cf, self.mf = resolved_cache, resolved_meta
 
-        if os.path.exists(self.cf):
+        if cache_state:
             try:
                 embeddings = np.load(self.cf)
-                meta = self._load_meta() or {}
-                old_fingerprints = meta.get("fingerprints", [])
 
-                if embeddings.shape[0] == len(current_fingerprints) and old_fingerprints == current_fingerprints:
+                if cache_state == "exact":
                     self._log(f"cache hit {self.cf}")
                     return embeddings
 
-                if (
-                    embeddings.shape[0] == len(old_fingerprints)
-                    and len(old_fingerprints) < len(current_fingerprints)
-                    and current_fingerprints[:len(old_fingerprints)] == old_fingerprints
-                ):
-                    self._log(f"append-only update {len(old_fingerprints)} -> {len(current_fingerprints)}")
-                    new_embeddings = self._embed(texts[len(old_fingerprints):], stage_message="Appending embeddings")
+                if cache_state == "append_only":
+                    self._log(f"append-only update {cached_count} -> {len(current_fingerprints)}")
+                    new_embeddings = self._embed(texts[cached_count:], stage_message="Appending embeddings")
                     embeddings = np.vstack((embeddings, new_embeddings))
                     np.save(self.cf, embeddings)
                     self._save_meta(current_fingerprints)
                     return embeddings
-
-                self._log("cache invalidated because paper order/content changed")
             except Exception as exc:
                 self._log(f"failed to load cache {self.cf}: {exc}")
+        elif os.path.exists(self.cf):
+            self._log("cache invalidated because paper order/content changed")
 
         embeddings = self._embed(texts)
         np.save(self.cf, embeddings)

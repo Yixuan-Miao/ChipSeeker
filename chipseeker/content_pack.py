@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from chipseeker.paths import CONTENT_PACK_EXPORT_DIR
 from chipseeker.utils import load_json
 from chipseeker.version import APP_VERSION
-from search_runtime import get_cache_paths
+from search_runtime import describe_cache_status
 
 
 PACK_ROOT_NAME = "local_data"
@@ -35,10 +35,10 @@ def detect_content_pack_status(data_dir, db_file, cache_dir, manifest_path, sche
         name for name in os.listdir(cache_dir)
         if os.path.isfile(os.path.join(cache_dir, name)) and name.endswith(".npy")
     ) if os.path.isdir(cache_dir) else []
-    minilm_cache_file, _ = get_cache_paths(db_file, "all-MiniLM-L6-v2", scope_key="all")
     paper_count = int(library_sync.get("db_record_count", 0) or 0)
     if paper_count == 0 and os.path.exists(db_file):
         paper_count = len(load_json(db_file, []))
+    minilm_cache_status = describe_cache_status(db_file, "all-MiniLM-L6-v2", scope_key="all") if os.path.exists(db_file) else {}
     return {
         "data_dir": data_dir,
         "pack_ready": os.path.exists(db_file) and paper_count > 0,
@@ -46,7 +46,7 @@ def detect_content_pack_status(data_dir, db_file, cache_dir, manifest_path, sche
         "paper_count": paper_count,
         "source_count": sum(1 for entry in entries if entry.get("valid_source")),
         "cache_count": len(cache_files),
-        "has_minilm_cache": os.path.exists(minilm_cache_file),
+        "has_minilm_cache": bool(minilm_cache_status.get("up_to_date")),
         "cache_files": cache_files,
         "last_synced_at_utc": library_sync.get("last_synced_at_utc", ""),
     }
