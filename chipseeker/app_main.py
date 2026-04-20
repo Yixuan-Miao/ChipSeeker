@@ -182,6 +182,70 @@ def semantic_scope_summary(ui_language, label, total_papers, cache_status):
     )
 
 
+def cached_embedding_models(cache_dir):
+    if not os.path.isdir(cache_dir):
+        return set()
+    models = set()
+    for file_name in os.listdir(cache_dir):
+        if not file_name.endswith(".meta.json"):
+            continue
+        meta = load_json(os.path.join(cache_dir, file_name), {})
+        model_name = str(meta.get("model_name", "")).strip() if isinstance(meta, dict) else ""
+        if model_name:
+            models.add(model_name)
+    return models
+
+
+def ready_cache_suggestions(db_file, cache_dir, model_names, selected_model, scope_presets, all_papers):
+    installed_models = cached_embedding_models(cache_dir)
+    if not installed_models:
+        return []
+
+    preset_by_id = {preset["id"]: preset for preset in scope_presets}
+    scope_priority = ["full_library", "latest_three_years", "latest_year"]
+    model_priority = {
+        "voyage-4-large": 0,
+        "voyage-4": 1,
+        "voyage-4-lite": 2,
+        "voyage-context-3": 3,
+        "text-embedding-3-large": 4,
+        "all-MiniLM-L6-v2": 5,
+    }
+    suggestions = []
+
+    for model_name in model_names:
+        if model_name == selected_model or model_name not in installed_models:
+            continue
+        for scope_id in scope_priority:
+            preset = preset_by_id.get(scope_id)
+            if not preset:
+                continue
+            preset_papers = filter_papers_by_years(all_papers, preset["years"]) if preset["years"] else list(all_papers)
+            if not preset_papers:
+                continue
+            status = describe_cache_status(
+                db_file,
+                model_name,
+                scope_key=build_scope_key(preset["years"]),
+                papers_override=preset_papers,
+            )
+            if status.get("up_to_date"):
+                suggestions.append(
+                    {
+                        "model": model_name,
+                        "scope_id": scope_id,
+                        "scope_label": preset["label"],
+                        "scope_text": scope_label(preset["years"]),
+                        "cached_papers": status.get("cached_papers", len(preset_papers)),
+                        "needs_api": embedding_model_requires_api(model_name),
+                    }
+                )
+                break
+
+    suggestions.sort(key=lambda item: (model_priority.get(item["model"], 99), scope_priority.index(item["scope_id"])))
+    return suggestions
+
+
 @st.cache_resource(show_spinner=False)
 def get_searcher_engine(db_file, model_name, api_key="", scope_key="all", scope_years=()):
     papers_override = None
@@ -1074,6 +1138,14 @@ def run():
     active_scope_years = scope_status_map[active_scope_id]["years"] if active_scope_id else []
     active_scope_key = scope_status_map[active_scope_id]["scope_key"] if active_scope_id else "all"
     active_scope_text = scope_status_map[active_scope_id]["scope_text"] if active_scope_id else tr(ui_language, "No semantic cache ready", "还没有可用的语义缓存")
+    other_ready_caches = ready_cache_suggestions(
+        DB_FILE,
+        CACHE_DIR,
+        emb_models,
+        selected_emb_model,
+        scope_presets,
+        all_papers_in_db,
+    )
 
     foreground_task_id = st.session_state.get("foreground_embedding_task_id")
     foreground_task_scope_id = st.session_state.get("foreground_embedding_scope_id")
@@ -1115,6 +1187,40 @@ def run():
         )
     else:
         st.warning(tr(ui_language, "No semantic cache is ready yet. Build one of the ranges below first.", "目前还没有可用的语义缓存，请先构建下面的任一范围。"))
+
+    if other_ready_caches and (not active_scope_id or (embedding_model_requires_api(selected_emb_model) and not embedding_api_ready)):
+        st.info(
+            tr(
+                ui_language,
+                f"Ready caches were found for other models. Content-pack .npy files are model-specific: a voyage-4-large cache cannot be used by the currently selected {selected_emb_model}.",
+                f"检测到其他模型已有可用缓存。内容包里的 .npy 按模型区分：voyage-4-large 的缓存不能被当前选择的 {selected_emb_model} 直接使用。",
+            )
+        )
+        st.caption(
+            tr(
+                ui_language,
+                "If you use Voyage/OpenAI models, the paper cache can be prebuilt, but each new search query still needs a direct API key or ChipSeeker Cloud Access. MiniLM works locally without an API key.",
+                "如果使用 Voyage/OpenAI 模型，论文向量缓存可以预先打包，但每次新搜索的 query 仍然需要直接 API key 或 ChipSeeker 云端访问。MiniLM 可以完全本地运行。",
+            )
+        )
+        suggestion_cols = st.columns(min(3, len(other_ready_caches)))
+        for col, suggestion in zip(suggestion_cols, other_ready_caches[:3]):
+            with col:
+                needs_api_label = tr(ui_language, "needs API/Cloud", "需要 API/云端") if suggestion["needs_api"] else tr(ui_language, "local, no API", "本地无需 API")
+                st.markdown(
+                    f"**{suggestion['model']}**  \n"
+                    f"{suggestion['scope_label']} · `{suggestion['cached_papers']}` papers  \n"
+                    f"`{needs_api_label}`"
+                )
+                if st.button(
+                    tr(ui_language, f"Switch to {suggestion['model']}", f"切换到 {suggestion['model']}"),
+                    key=f"switch_ready_cache_{suggestion['model']}_{suggestion['scope_id']}",
+                    use_container_width=True,
+                ):
+                    app_config["embedding_model"] = suggestion["model"]
+                    save_json(CONFIG_FILE, app_config)
+                    st.cache_resource.clear()
+                    st.rerun()
 
     preset_cols = st.columns(3)
     for col, preset in zip(preset_cols, scope_presets):
@@ -1167,29 +1273,12 @@ def run():
         )
 
     st.markdown("---")
-    st.markdown(f"### {tr(ui_language, 'Keyword Generator', '关键词生成器')}")
-    st.caption(tr(ui_language, "Use this optional helper to expand your topic into better search keywords.", "这是一个可选辅助工具，可以把你的研究想法扩展成更好的检索关键词。"))
-    user_idea = st.text_input(
-        tr(ui_language, "Describe your topic in any language (press Enter to generate keywords)...", "用任意语言描述你的主题（回车生成关键词）..."),
-        key="user_idea_input",
-    )
-    if user_idea and user_idea != st.session_state.get("last_idea"):
-        if not llm_runtime_key:
-            st.error(tr(ui_language, "Please configure an LLM API key or ChipSeeker Cloud Access first.", "请先配置 LLM API key 或 ChipSeeker 云端访问。"))
-        else:
-            with st.spinner("Generating..."):
-                st.session_state.kw_result = generate_search_keywords(user_idea, llm_runtime_key, base_url, model_name)
-                st.session_state.last_idea = user_idea
-    if st.session_state.get("kw_result"):
-        st.info(f"{tr(ui_language, 'Suggested Keywords', '推荐关键词')}: `{st.session_state.kw_result}`")
-
-    st.markdown("---")
-    st.markdown(f"### {tr(ui_language, 'Hybrid Search Engine', '混合搜索引擎')}")
+    st.markdown(f"### {tr(ui_language, 'Search Papers', '搜索论文')}")
     st.caption(
         tr(
             ui_language,
-            "1. Semantic Query does meaning-based retrieval over the current semantic cache. 2. Exact Match hard-filters titles and abstracts inside the semantic result set. Exact Match is case-insensitive. Space means OR. Comma `,` or `&` means AND.",
-            "1. Semantic Query 用当前语义缓存做“按意思搜索”。2. Exact Match 会在语义结果里的标题和摘要中继续做硬关键词过滤。Exact Match 不区分大小写。空格表示 OR，逗号 `,` 或 `&` 表示 AND。",
+            "Main workflow: describe the paper direction first, then optionally filter those results with exact keywords.",
+            "主流程：先描述你想找的论文方向，再按需用精确关键词过滤这些结果。",
         )
     )
     st.caption(
@@ -1199,7 +1288,57 @@ def run():
             f"当前语义搜索覆盖范围：{active_scope_text}",
         )
     )
-    with st.expander(tr(ui_language, "Metadata Pre-Filters", "元数据预过滤"), expanded=False):
+
+    search_query = st.text_area(
+        tr(ui_language, "Step 1. Describe your topic", "步骤 1：描述你想搜索的论文方向"),
+        placeholder=tr(
+            ui_language,
+            "Describe your topic, circuit type, application, method, or problem. Full sentences are OK.",
+            "描述论文方向、电路类型、应用、方法或问题。不需要只写关键词，句子也可以。",
+        ),
+        height=86,
+        key="semantic_query_input",
+    )
+
+    col_s2, col_s3 = st.columns([3, 1])
+    with col_s2:
+        must_have = st.text_input(
+            tr(
+                ui_language,
+                "Step 2. Optional keyword search inside results",
+                "步骤 2：可选，在结果中做关键词过滤",
+            ),
+            placeholder=tr(ui_language, "Examples: ADC PLL means OR; ADC, PLL or ADC & PLL means AND", "例：ADC PLL 表示 OR；ADC, PLL 或 ADC & PLL 表示 AND"),
+            help=tr(
+                ui_language,
+                "Case-insensitive. Use spaces for OR: `ADC PLL` matches ADC or PLL. Use comma or &: `ADC, PLL` / `ADC & PLL` requires both words.",
+                "不区分大小写。空格表示 OR：`ADC PLL` 命中 ADC 或 PLL。逗号或 & 表示 AND：`ADC, PLL` / `ADC & PLL` 要求两个词都出现。",
+            ),
+        )
+    with col_s3:
+        top_k_val = st.number_input(tr(ui_language, "Search Depth", "搜索深度"), min_value=50, max_value=2000, value=50, step=50)
+
+    selected_ui_venues = []
+    selected_years = (2000, CURRENT_YEAR)
+    with st.expander(tr(ui_language, "Optional helpers and filters", "可选辅助工具和过滤器"), expanded=False):
+        st.caption(tr(ui_language, "These tools are optional. They are not the main search box.", "这些只是可选辅助功能，不是主搜索框。"))
+        st.markdown(f"##### {tr(ui_language, 'Keyword Generator', '关键词生成器')}")
+        st.caption(tr(ui_language, "Optional helper for generating better exact-match terms.", "可选：帮你生成更适合 Step 2 使用的关键词。"))
+        user_idea = st.text_input(
+            tr(ui_language, "Describe a topic to generate keywords", "描述一个主题来生成关键词"),
+            key="user_idea_input",
+        )
+        if user_idea and user_idea != st.session_state.get("last_idea"):
+            if not llm_runtime_key:
+                st.error(tr(ui_language, "Please configure an LLM API key or ChipSeeker Cloud Access first.", "请先配置 LLM API key 或 ChipSeeker 云端访问。"))
+            else:
+                with st.spinner("Generating..."):
+                    st.session_state.kw_result = generate_search_keywords(user_idea, llm_runtime_key, base_url, model_name)
+                    st.session_state.last_idea = user_idea
+        if st.session_state.get("kw_result"):
+            st.info(f"{tr(ui_language, 'Suggested Keywords', '推荐关键词')}: `{st.session_state.kw_result}`")
+
+        st.markdown(f"##### {tr(ui_language, 'Metadata Pre-Filters', '元数据预过滤')}")
         filter_col1, filter_col2 = st.columns(2)
         with filter_col1:
             unique_venues = sorted({analyze_venue(paper.get("venue", ""))["n"] for paper in all_papers_in_db if paper.get("venue")})
@@ -1213,20 +1352,6 @@ def run():
                 selected_years = st.slider(tr(ui_language, "Filter by Year", "按年份过滤"), min_year, max_year, (min_year, max_year))
             else:
                 selected_years = (2000, CURRENT_YEAR)
-
-    col_s1, col_s2, col_s3 = st.columns([3, 2, 1])
-    with col_s1:
-        search_query = st.text_input(
-            tr(ui_language, "1. Semantic Query (Optional)", "1. 语义搜索（可选）"),
-            placeholder=tr(ui_language, "Leave blank for pure keyword/filter search", "留空则只用关键词/过滤条件搜索"),
-        )
-    with col_s2:
-        must_have = st.text_input(
-            tr(ui_language, "2. Exact Match (AND/OR logic)", "2. Exact Match（AND / OR 逻辑）"),
-            help=tr(ui_language, "Case-insensitive. Space = OR. Comma or & = AND.", "不区分大小写。空格 = OR。逗号或 & = AND。"),
-        )
-    with col_s3:
-        top_k_val = st.number_input(tr(ui_language, "3. Search Depth", "3. 搜索深度"), min_value=50, max_value=2000, value=50, step=50)
 
     trigger_search = bool(search_query or selected_ui_venues or must_have)
     if trigger_search:
@@ -1269,7 +1394,7 @@ def run():
         st.success(f"Extracted {len(results)} matches. Rare/All: {bucket_counts['rare']} | Perfect: {bucket_counts['perfect']} | Valuable: {bucket_counts['valuable']} | Relevant: {bucket_counts['relevant']}")
         year_counts = collect_year_counts(results, extract_year)
         if year_counts:
-            with st.expander("Analytics: Publication Trend", expanded=False):
+            with st.expander(tr(ui_language, "Optional analytics: Publication Trend", "可选分析：发表年份趋势"), expanded=False):
                 st.bar_chart(year_counts)
 
     st.markdown("---")
