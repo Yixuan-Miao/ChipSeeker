@@ -6,13 +6,24 @@ import shutil
 import time
 
 import numpy as np
-from sentence_transformers import SentenceTransformer, util
 from chipseeker.cloud_access import cloud_embed, is_cloud_token
 
 
 def _log(message):
     timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
     print(f"[{timestamp}] [search] {message}", flush=True)
+
+
+def _load_sentence_transformer(model_name):
+    from sentence_transformers import SentenceTransformer
+
+    return SentenceTransformer(model_name)
+
+
+def _semantic_search(query_embedding, corpus_embeddings, top_k):
+    from sentence_transformers import util
+
+    return util.semantic_search(query_embedding, corpus_embeddings, top_k=top_k)[0]
 
 
 def _format_eta(seconds):
@@ -178,7 +189,7 @@ class PaperSearcher:
         if self.mt == 'o':
             from openai import OpenAI
             return OpenAI(api_key=self.ak)
-        return SentenceTransformer(self.mn)
+        return _load_sentence_transformer(self.mn)
 
     def _load_db(self):
         with open(self.jp, 'r', encoding='utf-8') as f:
@@ -325,5 +336,5 @@ class PaperSearcher:
         qe = self._embed([query], stage_message="Embedding query") if self.mt != 'l' else self.md.encode(query, convert_to_numpy=True)
         if self.mt != 'l':
             qe = np.array(qe).reshape(1, -1)
-        hits = util.semantic_search(qe, self.eb, top_k=top_k)[0]
+        hits = _semantic_search(qe, self.eb, top_k=top_k)
         return [{"similarity": x['score'], "paper": self.dt[x['corpus_id']]} for x in hits]

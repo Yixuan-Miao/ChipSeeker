@@ -1,4 +1,5 @@
 import errno
+import hashlib
 import io
 import json
 import os
@@ -7,8 +8,8 @@ import tempfile
 import zipfile
 from datetime import datetime, timezone
 
-from chipseeker.paths import CONTENT_PACK_EXPORT_DIR
-from chipseeker.utils import load_json
+from chipseeker.paths import CONTENT_PACK_EXPORT_DIR, CONTENT_PACK_STATE_FILE
+from chipseeker.utils import load_json, normalize_doi, normalize_text, normalize_title, save_json
 from chipseeker.version import APP_VERSION
 from search_runtime import describe_cache_status
 
@@ -30,6 +31,106 @@ PACK_DIRS = ["sources", "cache"]
 
 class ContentPackInstallError(RuntimeError):
     pass
+
+
+def _read_papers(db_file):
+    papers = load_json(db_file, [])
+    return papers if isinstance(papers, list) else []
+
+
+def _paper_identity_key(paper):
+    title = normalize_title((paper or {}).get("title", ""))
+    year = normalize_text((paper or {}).get("year", ""))
+    venue = normalize_text((paper or {}).get("venue", "")).lower()
+    doi = normalize_doi((paper or {}).get("doi", ""))
+    looks_like_textbook = "textbook" in venue or title.startswith("chapter ")
+    if doi and not looks_like_textbook:
+        return f"doi::{doi}"
+    if title and year:
+        return f"title_year::{title}::{year}"
+    return f"title::{title}" if title else ""
+
+
+def _paper_fingerprint(paper):
+    payload = json.dumps(paper or {}, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha1(payload.encode("utf-8")).hexdigest()
+
+
+def _sha1_file(path):
+    digest = hashlib.sha1()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _source_state(data_dir):
+    source_root = os.path.join(data_dir, "sources")
+    files = {}
+    if not os.path.isdir(source_root):
+        return files
+    for root, _, names in os.walk(source_root):
+        for name in names:
+            path = os.path.join(root, name)
+            relative = os.path.relpath(path, data_dir).replace("\\", "/")
+            stat = os.stat(path)
+            files[relative] = {
+                "sha1": _sha1_file(path),
+                "size_bytes": int(stat.st_size),
+            }
+    return files
+
+
+def _cache_state(cache_dir):
+    files = {}
+    if not os.path.isdir(cache_dir):
+        return files
+    for name in sorted(os.listdir(cache_dir)):
+        if not name.endswith(".npy"):
+            continue
+        cache_path = os.path.join(cache_dir, name)
+        meta_name = name[:-4] + ".meta.json"
+        meta_path = os.path.join(cache_dir, meta_name)
+        meta = load_json(meta_path, {}) if os.path.exists(meta_path) else {}
+        files[name] = {
+            "sha1": _sha1_file(cache_path),
+            "size_bytes": int(os.path.getsize(cache_path)),
+            "meta_name": meta_name,
+            "fingerprints": meta.get("fingerprints", []) if isinstance(meta, dict) else [],
+        }
+    return files
+
+
+def _content_pack_state(data_dir, db_file, cache_dir):
+    papers = _read_papers(db_file)
+    paper_entries = {}
+    ordered_papers = []
+    for paper in papers:
+        key = _paper_identity_key(paper)
+        if not key:
+            continue
+        fingerprint = _paper_fingerprint(paper)
+        paper_entries[key] = fingerprint
+        ordered_papers.append({"key": key, "fingerprint": fingerprint})
+    return {
+        "state_version": 1,
+        "app_version": APP_VERSION,
+        "created_at_utc": datetime.now(timezone.utc).isoformat(),
+        "db_file": os.path.abspath(db_file),
+        "paper_count": len(papers),
+        "papers": paper_entries,
+        "paper_order": ordered_papers,
+        "sources": _source_state(data_dir),
+        "caches": _cache_state(cache_dir),
+    }
+
+
+def _save_pack_state(state, state_path=CONTENT_PACK_STATE_FILE):
+    save_json(state_path, state)
+
+
+def _default_state_path(data_dir, state_path=None):
+    return state_path or os.path.join(data_dir, "content_pack_state.json")
 
 
 def detect_content_pack_status(data_dir, db_file, cache_dir, manifest_path, schema_state=None):
@@ -58,19 +159,21 @@ def detect_content_pack_status(data_dir, db_file, cache_dir, manifest_path, sche
     }
 
 
-def _pack_manifest(content_status):
+def _pack_manifest(content_status, pack_kind="full", paper_delta_count=0):
     return {
         "pack_version": 1,
+        "pack_kind": pack_kind,
         "app_version": APP_VERSION,
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
         "paper_count": content_status.get("paper_count", 0),
+        "paper_delta_count": int(paper_delta_count or 0),
         "source_count": content_status.get("source_count", 0),
         "cache_count": content_status.get("cache_count", 0),
         "has_minilm_cache": bool(content_status.get("has_minilm_cache")),
     }
 
 
-def build_content_pack(data_dir, db_file, cache_dir, manifest_path, schema_state=None, output_dir=CONTENT_PACK_EXPORT_DIR, pack_name=None):
+def build_content_pack(data_dir, db_file, cache_dir, manifest_path, schema_state=None, output_dir=CONTENT_PACK_EXPORT_DIR, pack_name=None, state_path=None):
     os.makedirs(output_dir, exist_ok=True)
     content_status = detect_content_pack_status(data_dir, db_file, cache_dir, manifest_path, schema_state=schema_state)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -97,13 +200,129 @@ def build_content_pack(data_dir, db_file, cache_dir, manifest_path, schema_state
                     arcname = os.path.join(PACK_ROOT_NAME, os.path.relpath(source_path, data_dir)).replace("\\", "/")
                     archive.write(source_path, arcname=arcname)
                     included_files.append(arcname)
-        archive.writestr("content_pack_manifest.json", json.dumps(_pack_manifest(content_status), indent=2, ensure_ascii=False))
+        archive.writestr("content_pack_manifest.json", json.dumps(_pack_manifest(content_status, pack_kind="full"), indent=2, ensure_ascii=False))
+
+    _save_pack_state(_content_pack_state(data_dir, db_file, cache_dir), state_path=_default_state_path(data_dir, state_path))
 
     return {
         "zip_path": zip_path,
         "paper_count": content_status["paper_count"],
         "source_count": content_status["source_count"],
         "cache_count": content_status["cache_count"],
+        "included_count": len(included_files),
+    }
+
+
+def build_content_update_pack(
+    data_dir,
+    db_file,
+    cache_dir,
+    manifest_path,
+    schema_state=None,
+    output_dir=CONTENT_PACK_EXPORT_DIR,
+    pack_name=None,
+    state_path=None,
+):
+    state_path = _default_state_path(data_dir, state_path)
+    baseline = load_json(state_path, {})
+    if not isinstance(baseline, dict) or not baseline.get("papers"):
+        raise ContentPackInstallError("No previous content-pack baseline was found. Build one full Content Pack ZIP first.")
+
+    os.makedirs(output_dir, exist_ok=True)
+    content_status = detect_content_pack_status(data_dir, db_file, cache_dir, manifest_path, schema_state=schema_state)
+    current_state = _content_pack_state(data_dir, db_file, cache_dir)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = pack_name or f"ChipSeeker_ContentUpdate_{timestamp}.zip"
+    if not filename.lower().endswith(".zip"):
+        filename = f"{filename}.zip"
+    zip_path = os.path.join(output_dir, filename)
+
+    baseline_papers = baseline.get("papers", {}) if isinstance(baseline.get("papers"), dict) else {}
+    delta_papers = []
+    for paper in _read_papers(db_file):
+        key = _paper_identity_key(paper)
+        if key and baseline_papers.get(key) != _paper_fingerprint(paper):
+            delta_papers.append(paper)
+
+    baseline_sources = baseline.get("sources", {}) if isinstance(baseline.get("sources"), dict) else {}
+    current_sources = current_state.get("sources", {})
+    changed_sources = [
+        relative_path
+        for relative_path, info in current_sources.items()
+        if baseline_sources.get(relative_path, {}).get("sha1") != info.get("sha1")
+    ]
+
+    baseline_caches = baseline.get("caches", {}) if isinstance(baseline.get("caches"), dict) else {}
+    included_files = []
+    cache_delta_count = 0
+    with tempfile.TemporaryDirectory(prefix="chipseeker_update_build_") as temp_dir:
+        with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr(
+                f"{PACK_ROOT_NAME}/isscc_papers.delta.json",
+                json.dumps(delta_papers, indent=2, ensure_ascii=False),
+            )
+            included_files.append("isscc_papers.delta.json")
+
+            for relative_path in changed_sources:
+                source_path = os.path.join(data_dir, relative_path.replace("/", os.sep))
+                if os.path.exists(source_path):
+                    archive.write(source_path, arcname=f"{PACK_ROOT_NAME}/{relative_path}")
+                    included_files.append(relative_path)
+
+            for cache_name, cache_info in current_state.get("caches", {}).items():
+                source_cache = os.path.join(cache_dir, cache_name)
+                source_meta = os.path.join(cache_dir, cache_info.get("meta_name", cache_name[:-4] + ".meta.json"))
+                baseline_cache = baseline_caches.get(cache_name) or {}
+                old_fingerprints = baseline_cache.get("fingerprints", [])
+                new_fingerprints = cache_info.get("fingerprints", [])
+                if (
+                    old_fingerprints
+                    and new_fingerprints
+                    and len(new_fingerprints) > len(old_fingerprints)
+                    and new_fingerprints[:len(old_fingerprints)] == old_fingerprints
+                    and os.path.exists(source_cache)
+                ):
+                    import numpy as np
+
+                    embeddings = np.load(source_cache, mmap_mode="r")
+                    if embeddings.shape[0] == len(new_fingerprints):
+                        delta_array = embeddings[len(old_fingerprints):]
+                        delta_name = f"{cache_name}.delta.npy"
+                        delta_path = os.path.join(temp_dir, delta_name)
+                        np.save(delta_path, delta_array)
+                        archive.write(delta_path, arcname=f"{PACK_ROOT_NAME}/cache_delta/{delta_name}")
+                        archive.writestr(
+                            f"{PACK_ROOT_NAME}/cache_delta/{cache_name}.delta.meta.json",
+                            json.dumps(
+                                {
+                                    "target_cache": cache_name,
+                                    "target_meta": cache_info.get("meta_name", cache_name[:-4] + ".meta.json"),
+                                    "old_fingerprints": old_fingerprints,
+                                    "new_fingerprints": new_fingerprints,
+                                    "delta_count": len(new_fingerprints) - len(old_fingerprints),
+                                },
+                                indent=2,
+                                ensure_ascii=False,
+                            ),
+                        )
+                        cache_delta_count += len(new_fingerprints) - len(old_fingerprints)
+                        included_files.append(f"cache_delta/{delta_name}")
+                elif cache_name not in baseline_caches and os.path.exists(source_cache):
+                    archive.write(source_cache, arcname=f"{PACK_ROOT_NAME}/cache/{cache_name}")
+                    included_files.append(f"cache/{cache_name}")
+                    if os.path.exists(source_meta):
+                        archive.write(source_meta, arcname=f"{PACK_ROOT_NAME}/cache/{os.path.basename(source_meta)}")
+                        included_files.append(f"cache/{os.path.basename(source_meta)}")
+
+            archive.writestr("content_pack_manifest.json", json.dumps(_pack_manifest(content_status, pack_kind="update", paper_delta_count=len(delta_papers)), indent=2, ensure_ascii=False))
+
+    _save_pack_state(current_state, state_path=state_path)
+    return {
+        "zip_path": zip_path,
+        "paper_count": content_status["paper_count"],
+        "paper_delta_count": len(delta_papers),
+        "source_delta_count": len(changed_sources),
+        "cache_delta_count": cache_delta_count,
         "included_count": len(included_files),
     }
 
@@ -225,6 +444,92 @@ def _merge_tree(source_dir, target_dir):
     return copied_files
 
 
+def _merge_delta_papers(pack_root, data_dir):
+    delta_file = os.path.join(pack_root, "isscc_papers.delta.json")
+    if not os.path.exists(delta_file):
+        return {"added": 0, "updated": 0, "skipped": 0}
+    delta_papers = load_json(delta_file, [])
+    if not isinstance(delta_papers, list) or not delta_papers:
+        return {"added": 0, "updated": 0, "skipped": 0}
+
+    target_db = os.path.join(data_dir, "isscc_papers.json")
+    existing_papers = _read_papers(target_db)
+    key_to_index = {}
+    for index, paper in enumerate(existing_papers):
+        key = _paper_identity_key(paper)
+        if key and key not in key_to_index:
+            key_to_index[key] = index
+
+    added = 0
+    updated = 0
+    skipped = 0
+    for paper in delta_papers:
+        key = _paper_identity_key(paper)
+        if not key:
+            skipped += 1
+            continue
+        existing_index = key_to_index.get(key)
+        if existing_index is None:
+            key_to_index[key] = len(existing_papers)
+            existing_papers.append(paper)
+            added += 1
+            continue
+        if _paper_fingerprint(existing_papers[existing_index]) == _paper_fingerprint(paper):
+            skipped += 1
+            continue
+        existing_papers[existing_index] = paper
+        updated += 1
+
+    save_json(target_db, existing_papers)
+    return {"added": added, "updated": updated, "skipped": skipped}
+
+
+def _append_cache_deltas(pack_root, data_dir):
+    cache_delta_dir = os.path.join(pack_root, "cache_delta")
+    if not os.path.isdir(cache_delta_dir):
+        return {"appended": 0, "skipped": 0}
+    target_cache_dir = os.path.join(data_dir, "cache")
+    os.makedirs(target_cache_dir, exist_ok=True)
+    appended = 0
+    skipped = 0
+    for name in sorted(os.listdir(cache_delta_dir)):
+        if not name.endswith(".delta.meta.json"):
+            continue
+        delta_meta = load_json(os.path.join(cache_delta_dir, name), {})
+        target_cache_name = delta_meta.get("target_cache", "")
+        target_meta_name = delta_meta.get("target_meta", "")
+        if not target_cache_name or not target_meta_name:
+            skipped += 1
+            continue
+        delta_array_path = os.path.join(cache_delta_dir, f"{target_cache_name}.delta.npy")
+        target_cache_path = os.path.join(target_cache_dir, target_cache_name)
+        target_meta_path = os.path.join(target_cache_dir, target_meta_name)
+        if not (os.path.exists(delta_array_path) and os.path.exists(target_cache_path) and os.path.exists(target_meta_path)):
+            skipped += 1
+            continue
+        target_meta = load_json(target_meta_path, {})
+        old_fingerprints = delta_meta.get("old_fingerprints", [])
+        new_fingerprints = delta_meta.get("new_fingerprints", [])
+        if target_meta.get("fingerprints", []) != old_fingerprints:
+            skipped += 1
+            continue
+        import numpy as np
+
+        existing = np.load(target_cache_path)
+        delta = np.load(delta_array_path)
+        if existing.shape[0] != len(old_fingerprints) or delta.shape[0] != len(new_fingerprints) - len(old_fingerprints):
+            skipped += 1
+            continue
+        merged = np.vstack((existing, delta))
+        temp_cache_path = f"{target_cache_path}.tmp.npy"
+        np.save(temp_cache_path, merged)
+        os.replace(temp_cache_path, target_cache_path)
+        target_meta["fingerprints"] = new_fingerprints
+        save_json(target_meta_path, target_meta)
+        appended += int(delta.shape[0])
+    return {"appended": appended, "skipped": skipped}
+
+
 def install_content_update_pack(uploaded_file, data_dir):
     payload = _uploaded_bytes(uploaded_file)
     data_dir = os.path.abspath(data_dir)
@@ -241,10 +546,12 @@ def install_content_update_pack(uploaded_file, data_dir):
             os.makedirs(data_dir, exist_ok=True)
 
             copied_files = 0
+            paper_merge = _merge_delta_papers(pack_root, data_dir)
             for relative_dir in PACK_DIRS:
                 source_dir = os.path.join(pack_root, relative_dir)
                 if os.path.isdir(source_dir):
                     copied_files += _merge_tree(source_dir, os.path.join(data_dir, relative_dir))
+            cache_merge = _append_cache_deltas(pack_root, data_dir)
     except OSError as exc:
         if exc.errno == errno.ENOSPC:
             free_bytes = shutil.disk_usage(staging_parent).free
@@ -255,7 +562,15 @@ def install_content_update_pack(uploaded_file, data_dir):
             ) from exc
         raise
 
-    return {"copied_entries": copied_files, "data_dir": data_dir}
+    return {
+        "copied_entries": copied_files,
+        "data_dir": data_dir,
+        "paper_added": paper_merge.get("added", 0),
+        "paper_updated": paper_merge.get("updated", 0),
+        "paper_skipped": paper_merge.get("skipped", 0),
+        "cache_appended": cache_merge.get("appended", 0),
+        "cache_skipped": cache_merge.get("skipped", 0),
+    }
 
 
 def install_bundled_demo_csv(demo_csv_path, source_root):

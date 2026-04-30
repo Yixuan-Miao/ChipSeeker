@@ -10,7 +10,7 @@ import streamlit as st
 
 from chipseeker.config_store import UserDataStore, load_app_config
 from chipseeker.cloud_access import build_cloud_token, cloud_access_configured
-from chipseeker.content_pack import ContentPackInstallError, build_content_pack, detect_content_pack_status, install_bundled_demo_csv, install_content_pack, install_content_update_pack
+from chipseeker.content_pack import ContentPackInstallError, build_content_pack, build_content_update_pack, detect_content_pack_status, install_bundled_demo_csv, install_content_pack, install_content_update_pack
 from chipseeker.conflict_review import collect_source_records, detect_conflicts, dismiss_conflict, load_conflict_resolutions, restore_conflicts
 from chipseeker.data_sync import (
     build_source_snapshot,
@@ -441,7 +441,12 @@ def install_uploaded_update_pack(uploaded_pack):
         return
     st.cache_resource.clear()
     st.session_state["csv_state"] = ()
-    st.success(f"Installed update pack into `{result['data_dir']}` with {result['copied_entries']} merged entries. Existing library and caches were preserved.")
+    st.success(
+        "Installed update pack into "
+        f"`{result['data_dir']}`. Papers added: {result.get('paper_added', 0)}, "
+        f"updated: {result.get('paper_updated', 0)}, duplicate/skipped: {result.get('paper_skipped', 0)}, "
+        f"cache rows appended: {result.get('cache_appended', 0)}, files merged: {result['copied_entries']}."
+    )
     time.sleep(1.0)
     st.rerun()
 
@@ -475,6 +480,24 @@ def render_content_pack_sidebar(content_status, ui_language):
                 output_dir=CONTENT_PACK_EXPORT_DIR,
             )
             st.success(f"Created: {build_result['zip_path']}")
+        if st.button(tr(ui_language, "Build Incremental Update ZIP", "生成增量更新 ZIP"), use_container_width=True):
+            try:
+                update_result = build_content_update_pack(
+                    DATA_DIR,
+                    DB_FILE,
+                    CACHE_DIR,
+                    SOURCE_MANIFEST_FILE,
+                    schema_state=load_json(LOCAL_DATA_STATE_FILE, {}),
+                    output_dir=CONTENT_PACK_EXPORT_DIR,
+                )
+                st.success(
+                    f"Created: {update_result['zip_path']} | "
+                    f"papers: {update_result['paper_delta_count']} | "
+                    f"sources: {update_result['source_delta_count']} | "
+                    f"cache rows: {update_result['cache_delta_count']}"
+                )
+            except ContentPackInstallError as exc:
+                st.error(str(exc))
         st.caption(tr(ui_language, "Large ZIP files are supported locally.", "本地支持较大的 ZIP 内容包。"))
         uploaded_pack = st.file_uploader(tr(ui_language, "Install Content Pack ZIP", "安装内容包 ZIP"), type=["zip"], key="sidebar_content_pack_upload")
         if uploaded_pack is not None and st.button(tr(ui_language, "Install Uploaded Pack", "安装上传内容包"), use_container_width=True):

@@ -4,6 +4,7 @@ import os
 PACKAGE_DIR = os.path.dirname(os.path.abspath(__file__))
 BASE_DIR = os.path.dirname(PACKAGE_DIR)
 PACKAGE_DATA_DIR = os.path.join(PACKAGE_DIR, "data")
+PACKAGE_ASSET_DIR = os.path.join(PACKAGE_DIR, "assets")
 DEMO_DATA_DIR = os.path.join(BASE_DIR, "demo_data")
 DATA_DIR = os.path.join(BASE_DIR, "local_data")
 SOURCE_CSV_DIR = os.path.join(DATA_DIR, "sources")
@@ -26,9 +27,12 @@ SOURCE_MANIFEST_FILE = os.path.join(DATA_DIR, "source_manifest.json")
 LOCAL_DATA_STATE_FILE = os.path.join(DATA_DIR, "schema_state.json")
 CONFLICT_RESOLUTIONS_FILE = os.path.join(DATA_DIR, "conflict_resolutions.json")
 SOURCE_REGISTRY_FILE = os.path.join(DATA_DIR, "source_registry.json")
+CONTENT_PACK_STATE_FILE = os.path.join(DATA_DIR, "content_pack_state.json")
 NOTEBOOKLM_EXPORT_FILE = os.path.join(EXPORT_DIR, "NotebookLM_Sources.md")
 VENUE_RULES_FILE = os.path.join(PACKAGE_DATA_DIR, "venue_rules.json")
 SOURCE_REGISTRY_TEMPLATE_FILE = os.path.join(PACKAGE_DATA_DIR, "source_registry_template.json")
+APP_LOGO_FILE = os.path.join(PACKAGE_ASSET_DIR, "chipseeker_logo.svg")
+WECHAT_QR_FILE = os.path.join(PACKAGE_ASSET_DIR, "wechat_qr.jpg")
 CONFIG_FILE = os.path.join(BASE_DIR, "config.local.json")
 LEGACY_CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
 EXAMPLE_CONFIG_FILE = os.path.join(BASE_DIR, "config.example.json")
@@ -39,6 +43,7 @@ CURRENT_LOCAL_DATA_VERSION = 6
 def ensure_runtime_dirs():
     for path in (
         PACKAGE_DATA_DIR,
+        PACKAGE_ASSET_DIR,
         DATA_DIR,
         SOURCE_CSV_DIR,
         MANUAL_SOURCE_DIR,
