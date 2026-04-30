@@ -5,6 +5,7 @@ import os
 import shutil
 from datetime import datetime, timezone
 
+from chipseeker.maintenance import clear_embedding_cache
 from chipseeker.paths import CURRENT_LOCAL_DATA_VERSION, SOURCE_CSV_DIR, SOURCE_MANIFEST_FILE
 from chipseeker.utils import load_json, normalize_doi, normalize_text, normalize_title, save_json
 
@@ -280,6 +281,7 @@ def scan_and_import_csvs(db_file, cache_dir, source_root=SOURCE_CSV_DIR, manifes
 
     if added_count > 0 or updated_count > 0 or removed_count > 0:
         save_json(db_file, final_papers)
+        clear_embedding_cache(cache_dir, logger=logger)
 
     file_summaries = [f"{path} (+{count} added)" for path, count in new_files_info.items()]
     file_summaries.extend([f"{path} ({count} updated)" for path, count in updated_files_info.items()])
