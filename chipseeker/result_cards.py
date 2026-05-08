@@ -1,6 +1,7 @@
 import math
 from datetime import datetime
 
+from chipseeker.exports import paper_authors_display
 from chipseeker.search_ui import highlight_text, required_words_from_query
 from chipseeker.utils import extract_year
 from chipseeker.venue_data import TIER_COLORS, analyze_venue, get_venue_display_str
@@ -62,10 +63,7 @@ def build_result_cards(results, query_text="", exact_query="", user_states=None,
         citation_count = int(citations_map.get(doi, 0)) if doi else 0
         citation_bonus = min(15, math.log10(citation_count + 1) * 6) if citation_count > 0 else 0.0
         comp_score = float(base_score + year_bonus + citation_bonus)
-        authors = paper.get("authors") or [author for author in [paper.get("first_author", ""), paper.get("last_author", "")] if author]
-        if not authors:
-            authors = ["Unknown"]
-        author_display = f"{authors[0]} ... {authors[-1]}" if len(authors) > 1 else authors[0]
+        author_display = paper_authors_display(paper)
         state_key = paper_state_key(paper)
         user_state = dict(default_card_state(), **(user_states.get(state_key) or {}))
         cards.append(

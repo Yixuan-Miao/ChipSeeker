@@ -10,9 +10,93 @@ from datetime import datetime
 from chipseeker.utils import extract_year
 
 
+def _normalize_author_items(value):
+    if isinstance(value, (list, tuple)):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, str):
+        parts = re.split(r"\s*;\s*", value.strip())
+        return [part.strip() for part in parts if part.strip()]
+    return []
+
+
 def paper_authors(paper):
-    authors = paper.get("authors") or [author for author in [paper.get("first_author", ""), paper.get("last_author", "")] if author]
+    authors = _normalize_author_items(paper.get("authors"))
+    if not authors:
+        authors = [author for author in [paper.get("first_author", ""), paper.get("last_author", "")] if author]
     return authors or ["Unknown"]
+
+
+def paper_authors_display(paper):
+    return "; ".join(paper_authors(paper))
+
+
+def paper_bibtex_authors(paper):
+    return " and ".join(paper_authors(paper))
+
+
+def _normalize_keyword_items(value):
+    if isinstance(value, (list, tuple)):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, str):
+        return [item.strip() for item in value.split(";") if item.strip()]
+    return []
+
+
+def _bibtex_escape(value):
+    return str(value or "").replace("\n", " ").strip()
+
+
+def _bibtex_key(paper):
+    article_number = str(paper.get("article_number", "") or "").strip()
+    if article_number:
+        return re.sub(r"[^A-Za-z0-9:_-]", "", article_number)
+    doi = str(paper.get("doi", "") or "").strip()
+    doi_suffix = doi.rsplit("/", 1)[-1] if doi else ""
+    if doi_suffix and re.fullmatch(r"[A-Za-z0-9._:-]+", doi_suffix):
+        return doi_suffix
+    first_author = paper_authors(paper)[0]
+    last_name = first_author.split()[-1].replace("-", "") if first_author else "Anon"
+    year_str = str(extract_year(paper.get("year", "202X")))
+    title_words = re.sub(r"[^a-zA-Z0-9\s]", "", paper.get("title", "paper")).split()
+    first_word = title_words[0].capitalize() if title_words else "Paper"
+    return f"{last_name}{year_str}{first_word}"
+
+
+def _bibtex_entry_type(paper):
+    explicit = str(paper.get("bibtex_type", "") or "").strip().upper()
+    if explicit:
+        return explicit
+    document_identifier = str(paper.get("document_identifier", "") or "").lower()
+    venue = str(paper.get("venue", "") or "").lower()
+    if "conference" in document_identifier or "conference" in venue or "symposium" in venue:
+        return "INPROCEEDINGS"
+    return "ARTICLE"
+
+
+def _paper_pages(paper):
+    pages = str(paper.get("pages", "") or "").strip()
+    if pages:
+        return pages
+    start = str(paper.get("start_page", "") or "").strip()
+    end = str(paper.get("end_page", "") or "").strip()
+    if start and end:
+        return f"{start}-{end}"
+    return start or end
+
+
+def _paper_keywords_for_bibtex(paper):
+    # IEEE BibTeX exports put IEEE Terms before author keywords.
+    keywords = []
+    for item in _normalize_keyword_items(paper.get("ieee_terms")) + _normalize_keyword_items(paper.get("keywords")):
+        if item and item not in keywords:
+            keywords.append(item)
+    return ";".join(keywords)
+
+
+def _append_bibtex_field(fields, name, value):
+    value = _bibtex_escape(value)
+    if value:
+        fields.append((name, value))
 
 
 def build_notebooklm_export(selected_papers, query_label, get_user_data):
@@ -69,21 +153,23 @@ def generate_csv_link(rows, filename="ChipSeeker_Export.csv"):
 def build_bibtex(selected_papers):
     content = ""
     for paper in selected_papers:
-        last_name = paper.get("first_author", "Anon").split()[-1].replace("-", "")
-        year_str = str(extract_year(paper.get("year", "202X")))
-        title_words = re.sub(r"[^a-zA-Z0-9\s]", "", paper.get("title", "paper")).split()
-        first_word = title_words[0].capitalize() if title_words else "Paper"
-        bibkey = f"{last_name}{year_str}{first_word}"
-        author_str = " and ".join(paper_authors(paper))
-        content += (
-            f"@article{{{bibkey},\n"
-            f"  title={{{paper.get('title', '')}}},\n"
-            f"  author={{{author_str}}},\n"
-            f"  journal={{{paper.get('venue', '')}}},\n"
-            f"  year={{{paper.get('year', '')}}},\n"
-        )
-        if paper.get("doi"):
-            content += f"  doi={{{paper.get('doi')}}}\n"
+        entry_type = _bibtex_entry_type(paper)
+        venue_field = "booktitle" if entry_type == "INPROCEEDINGS" else "journal"
+        fields = []
+        _append_bibtex_field(fields, "author", paper_bibtex_authors(paper))
+        _append_bibtex_field(fields, venue_field, paper.get("venue", ""))
+        _append_bibtex_field(fields, "title", paper.get("title", ""))
+        _append_bibtex_field(fields, "year", paper.get("year", ""))
+        _append_bibtex_field(fields, "volume", paper.get("volume", ""))
+        _append_bibtex_field(fields, "number", paper.get("number", "") or paper.get("issue", ""))
+        _append_bibtex_field(fields, "pages", _paper_pages(paper))
+        _append_bibtex_field(fields, "keywords", _paper_keywords_for_bibtex(paper))
+        _append_bibtex_field(fields, "doi", paper.get("doi", ""))
+
+        content += f"@{entry_type}{{{_bibtex_key(paper)},\n"
+        for idx, (name, value) in enumerate(fields):
+            suffix = "," if idx < len(fields) - 1 else ""
+            content += f"  {name}={{{value}}}{suffix}\n"
         content += "}\n\n"
     return content
 
@@ -115,8 +201,7 @@ def build_search_results_html(results, search_query, current_year, analyze_venue
         year = paper.get("year", "N/A")
         doi = paper.get("doi", "")
         pdf_link = paper.get("pdf_link", "")
-        authors = paper_authors(paper)
-        author_str = f"{authors[0]} ... {authors[-1]}" if len(authors) > 1 else authors[0]
+        author_str = paper_authors_display(paper)
         user_data = get_user_data(title)
         venue_data = analyze_venue(venue)
         venue_display = venue_data.get("n", venue)

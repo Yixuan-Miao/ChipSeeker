@@ -20,7 +20,7 @@ from chipseeker.data_sync import (
     scan_and_import_csvs,
 )
 from chipseeker.embedding_scope import available_years, build_scope_key, filter_papers_by_years, scope_label
-from chipseeker.exports import build_bibtex, build_csv_rows, build_notebooklm_export, build_search_results_html, generate_csv_link, write_text_file
+from chipseeker.exports import build_bibtex, build_csv_rows, build_notebooklm_export, build_search_results_html, generate_csv_link, paper_authors_display, write_text_file
 from chipseeker.llm_tools import analyze_with_llm, generate_global_report_with_llm, generate_search_keywords, get_batch_citations
 from chipseeker.maintenance import generate_db_stats
 from chipseeker.migrations import migrate_local_data
@@ -1561,7 +1561,7 @@ def run():
         year = paper.get("year", "N/A")
         doi = paper.get("doi", "")
         abstract = paper.get("abstract", "No Abstract")
-        author_str = f"{paper.get('first_author', 'Unknown')} ... {paper.get('last_author', 'Unknown')}"
+        author_str = paper_authors_display(paper)
         chk_key = f"chk_{idx}_{get_paper_id(paper)}"
         user_data = get_user_data(title)
         venue_data = analyze_venue(venue)

@@ -115,6 +115,13 @@ def _migrate_to_v6(state):
     _record_state(state, 6, "Expanded Nature-family source templates and refreshed registry defaults.")
 
 
+def _migrate_to_v7(state):
+    # Force one library rescan so existing CSV sources can enrich stored papers
+    # with volume/issue/pages/IEEE terms used by BibTeX exports.
+    state["library_sync"] = {}
+    _record_state(state, 7, "Scheduled bibliographic metadata refresh for IEEE-style BibTeX exports.")
+
+
 def migrate_local_data():
     state = load_json(LOCAL_DATA_STATE_FILE, _default_state())
     if not isinstance(state, dict):
@@ -139,6 +146,9 @@ def migrate_local_data():
     if version < 6:
         _migrate_to_v6(state)
         version = 6
+    if version < 7:
+        _migrate_to_v7(state)
+        version = 7
 
     if version != CURRENT_LOCAL_DATA_VERSION:
         state["schema_version"] = CURRENT_LOCAL_DATA_VERSION

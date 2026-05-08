@@ -30,7 +30,8 @@ def test_migrate_local_data_wraps_manifest_and_moves_root_csv(tmp_path, monkeypa
 
     state = migrations.migrate_local_data()
 
-    assert state["schema_version"] == 6
+    assert state["schema_version"] == 7
+    assert state["library_sync"] == {}
     assert (manual_dir / "legacy.csv").exists()
     manifest = load_json(str(manifest_path), {})
     assert manifest["schema_version"] >= 1

@@ -2,6 +2,7 @@ import csv
 import hashlib
 import json
 import os
+import re
 import shutil
 from datetime import datetime, timezone
 
@@ -15,6 +16,16 @@ SOURCE_CSV_REQUIRED_FIELDS = {"Document Title", "Abstract"}
 
 def split_multi_value(value):
     return [item.strip() for item in normalize_text(value).split(";") if item.strip()]
+
+
+def extract_article_number(row):
+    for field in ("Article Number", "Document Number", "Accession Number"):
+        value = normalize_text(row.get(field, ""))
+        if value:
+            return value
+    pdf_link = normalize_text(row.get("PDF Link", ""))
+    match = re.search(r"(?:arnumber=|/document/)(\d+)", pdf_link)
+    return match.group(1) if match else ""
 
 
 def classify_source_file(path):
@@ -148,6 +159,9 @@ def library_sync_required(state_payload, source_snapshot, db_file):
 def build_paper_from_row(row):
     authors_list = split_multi_value(row.get("Authors", ""))
     keywords = split_multi_value(row.get("Author Keywords", ""))
+    ieee_terms = split_multi_value(row.get("IEEE Terms", ""))
+    start_page = normalize_text(row.get("Start Page", ""))
+    end_page = normalize_text(row.get("End Page", ""))
     return {
         "title": normalize_text(row.get("Document Title", "")),
         "abstract": normalize_text(row.get("Abstract", "")),
@@ -159,6 +173,20 @@ def build_paper_from_row(row):
         "first_author": authors_list[0] if authors_list else "Unknown",
         "last_author": authors_list[-1] if authors_list else "Unknown",
         "keywords": keywords,
+        "ieee_terms": ieee_terms,
+        "volume": normalize_text(row.get("Volume", "")),
+        "number": normalize_text(row.get("Issue", "")),
+        "issue": normalize_text(row.get("Issue", "")),
+        "start_page": start_page,
+        "end_page": end_page,
+        "pages": f"{start_page}-{end_page}" if start_page and end_page else (start_page or end_page),
+        "issn": normalize_text(row.get("ISSN", "")),
+        "isbn": normalize_text(row.get("ISBNs", "")),
+        "publisher": normalize_text(row.get("Publisher", "")),
+        "document_identifier": normalize_text(row.get("Document Identifier", "")),
+        "online_date": normalize_text(row.get("Online Date", "")),
+        "issue_date": normalize_text(row.get("Issue Date", "")),
+        "article_number": extract_article_number(row),
     }
 
 
@@ -174,6 +202,33 @@ def paper_identity_key(paper):
 
 
 def paper_signature(paper):
+    return (
+        normalize_text(paper.get("title", "")),
+        normalize_text(paper.get("abstract", "")),
+        normalize_text(paper.get("year", "")),
+        normalize_text(paper.get("venue", "")),
+        normalize_text(paper.get("doi", "")),
+        normalize_text(paper.get("pdf_link", "")),
+        tuple(paper.get("authors", [])),
+        tuple(paper.get("keywords", [])),
+        tuple(paper.get("ieee_terms", [])),
+        normalize_text(paper.get("volume", "")),
+        normalize_text(paper.get("number", "")),
+        normalize_text(paper.get("issue", "")),
+        normalize_text(paper.get("start_page", "")),
+        normalize_text(paper.get("end_page", "")),
+        normalize_text(paper.get("pages", "")),
+        normalize_text(paper.get("issn", "")),
+        normalize_text(paper.get("isbn", "")),
+        normalize_text(paper.get("publisher", "")),
+        normalize_text(paper.get("document_identifier", "")),
+        normalize_text(paper.get("online_date", "")),
+        normalize_text(paper.get("issue_date", "")),
+        normalize_text(paper.get("article_number", "")),
+    )
+
+
+def embedding_relevant_signature(paper):
     return (
         normalize_text(paper.get("title", "")),
         normalize_text(paper.get("abstract", "")),
@@ -224,6 +279,7 @@ def scan_and_import_csvs(db_file, cache_dir, source_root=SOURCE_CSV_DIR, manifes
     ordered_keys = []
     new_files_info = {}
     updated_files_info = {}
+    cache_invalidating_update_count = 0
 
     all_papers = load_json(db_file, [])
     existing_papers = {}
@@ -261,6 +317,8 @@ def scan_and_import_csvs(db_file, cache_dir, source_root=SOURCE_CSV_DIR, manifes
                         existing_papers[paper_key] = paper_obj
                         new_in_file += 1
                     elif paper_signature(existing_paper) != paper_signature(paper_obj):
+                        if embedding_relevant_signature(existing_paper) != embedding_relevant_signature(paper_obj):
+                            cache_invalidating_update_count += 1
                         merged_paper = existing_paper.copy()
                         merged_paper.update(paper_obj)
                         existing_papers[paper_key] = merged_paper
@@ -281,7 +339,8 @@ def scan_and_import_csvs(db_file, cache_dir, source_root=SOURCE_CSV_DIR, manifes
 
     if added_count > 0 or updated_count > 0 or removed_count > 0:
         save_json(db_file, final_papers)
-        clear_embedding_cache(cache_dir, logger=logger)
+        if added_count > 0 or removed_count > 0 or cache_invalidating_update_count > 0:
+            clear_embedding_cache(cache_dir, logger=logger)
 
     file_summaries = [f"{path} (+{count} added)" for path, count in new_files_info.items()]
     file_summaries.extend([f"{path} ({count} updated)" for path, count in updated_files_info.items()])
