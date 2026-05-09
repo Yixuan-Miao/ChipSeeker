@@ -1,6 +1,7 @@
 import csv
+import json
 
-from chipseeker.data_sync import list_source_csv_files, scan_and_import_csvs
+from chipseeker.data_sync import enrich_bibliographic_metadata, list_source_csv_files, scan_and_import_csvs
 
 
 def write_csv(path, rows):
@@ -175,3 +176,87 @@ def test_metadata_only_refresh_preserves_embedding_cache(tmp_path):
     assert '"volume": "73"' in db_text
     assert '"pages": "1-8"' in db_text
     assert '"article_number": "123456"' in db_text
+
+
+def test_enrich_bibliographic_metadata_repairs_existing_db_without_removal(tmp_path):
+    source_root = tmp_path / "sources"
+    source_root.mkdir()
+    db_file = tmp_path / "papers.json"
+    manifest_path = tmp_path / "source_manifest.json"
+
+    source_csv = source_root / "export2026.csv"
+    write_csv(
+        source_csv,
+        [
+            {
+                "Document Title": "Pulsed HEMT LNA Operation for Qubit Readout",
+                "Abstract": "A" * 160,
+                "Authors": "Y. Zeng; J. Grahn",
+                "Author Keywords": "Cryogenic;qubit readout",
+                "IEEE Terms": "Noise;Qubit;HEMTs",
+                "Publication Year": "2025",
+                "Publication Title": "IEEE Transactions on Microwave Theory and Techniques",
+                "Volume": "73",
+                "Issue": "9",
+                "Start Page": "6539",
+                "End Page": "6553",
+                "DOI": "10.1109/TMTT.2025.3556982",
+                "PDF Link": "https://ieeexplore.ieee.org/stamp/stamp.jsp?arnumber=10969553",
+                "Document Identifier": "IEEE Journals",
+            }
+        ],
+    )
+    db_file.write_text(
+        json.dumps(
+            [
+                {
+                    "title": "Pulsed HEMT LNA Operation for Qubit Readout",
+                    "abstract": "A" * 160,
+                    "year": "2025",
+                    "venue": "IEEE Transactions on Microwave Theory and Techniques",
+                    "doi": "10.1109/TMTT.2025.3556982",
+                    "pdf_link": "https://ieeexplore.ieee.org/stamp/stamp.jsp?arnumber=10969553",
+                    "authors": ["Y. Zeng", "J. Grahn"],
+                    "first_author": "Y. Zeng",
+                    "last_author": "J. Grahn",
+                    "keywords": ["Cryogenic"],
+                },
+                {
+                    "title": "Manual Textbook Chapter",
+                    "abstract": "B" * 160,
+                    "year": "2006",
+                    "venue": "Textbook",
+                    "doi": "",
+                },
+            ],
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = enrich_bibliographic_metadata(str(db_file), source_root=str(source_root), manifest_path=str(manifest_path))
+
+    assert result["updated_count"] == 1
+    papers = json.loads(db_file.read_text(encoding="utf-8"))
+    assert len(papers) == 2
+    repaired = papers[0]
+    assert repaired["volume"] == "73"
+    assert repaired["number"] == "9"
+    assert repaired["pages"] == "6539-6553"
+    assert repaired["article_number"] == "10969553"
+    assert repaired["ieee_terms"] == ["Noise", "Qubit", "HEMTs"]
+
+
+def test_source_manifest_records_skip_reasons_for_non_source_csv(tmp_path):
+    source_root = tmp_path / "sources"
+    source_root.mkdir()
+    manifest_path = tmp_path / "source_manifest.json"
+    non_source = source_root / "random.csv"
+    non_source.write_text("Document Title,Abstract\nOnly title,Only abstract\n", encoding="utf-8")
+
+    valid_files = list_source_csv_files(str(source_root), str(manifest_path))
+
+    assert valid_files == []
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["entries"][0]["valid_source"] is False
+    assert "missing paper metadata columns" in manifest["entries"][0]["skip_reason"]

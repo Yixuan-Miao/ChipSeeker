@@ -12,6 +12,40 @@ from chipseeker.utils import load_json, normalize_doi, normalize_text, normalize
 
 
 SOURCE_CSV_REQUIRED_FIELDS = {"Document Title", "Abstract"}
+IEEE_SOURCE_SIGNALS = {
+    "Date Added To Xplore",
+    "IEEE Terms",
+    "Article Citation Count",
+    "Patent Citation Count",
+    "Reference Count",
+    "Document Identifier",
+    "Publisher",
+}
+GENERIC_SOURCE_SIGNALS = {
+    "Authors",
+    "Publication Year",
+    "Publication Title",
+    "DOI",
+    "PDF Link",
+    "Source URL",
+}
+BIBLIOGRAPHIC_ENRICH_FIELDS = (
+    "volume",
+    "number",
+    "issue",
+    "start_page",
+    "end_page",
+    "pages",
+    "issn",
+    "isbn",
+    "publisher",
+    "document_identifier",
+    "online_date",
+    "issue_date",
+    "article_number",
+)
+LIST_ENRICH_FIELDS = ("keywords", "ieee_terms")
+FILL_IF_MISSING_FIELDS = ("doi", "pdf_link", "year", "venue")
 
 
 def split_multi_value(value):
@@ -53,6 +87,30 @@ def inspect_csv_headers(path, logger=None):
     return [normalize_text(header) for header in headers if normalize_text(header)]
 
 
+def classify_csv_source(headers):
+    header_set = set(headers or [])
+    missing = sorted(SOURCE_CSV_REQUIRED_FIELDS - header_set)
+    if missing:
+        return {
+            "valid_source": False,
+            "source_type": "unsupported",
+            "skip_reason": "missing required field(s): " + ", ".join(missing),
+        }
+    if header_set & IEEE_SOURCE_SIGNALS:
+        return {"valid_source": True, "source_type": "ieee_xplore", "skip_reason": ""}
+    if "Source URL" in header_set:
+        publication_title = " ".join(sorted(header_set)).lower()
+        if "arxiv" in publication_title or {"Publication Title", "Publication Year"} & header_set:
+            return {"valid_source": True, "source_type": "web_grabber", "skip_reason": ""}
+    if header_set & GENERIC_SOURCE_SIGNALS:
+        return {"valid_source": True, "source_type": "generic_paper_source", "skip_reason": ""}
+    return {
+        "valid_source": False,
+        "source_type": "unsupported",
+        "skip_reason": "missing paper metadata columns such as Authors, DOI, PDF Link, Publication Year, or Source URL",
+    }
+
+
 def load_source_manifest_entries(manifest_path=SOURCE_MANIFEST_FILE):
     payload = load_json(manifest_path, {"entries": []})
     if isinstance(payload, list):
@@ -70,6 +128,7 @@ def refresh_source_manifest(source_root=SOURCE_CSV_DIR, manifest_path=SOURCE_MAN
                 continue
             path = os.path.join(root, name)
             headers = inspect_csv_headers(path, logger=logger)
+            profile = classify_csv_source(headers)
             entries.append(
                 {
                     "relative_path": os.path.relpath(path, source_root).replace("\\", "/"),
@@ -79,7 +138,9 @@ def refresh_source_manifest(source_root=SOURCE_CSV_DIR, manifest_path=SOURCE_MAN
                         os.path.getmtime(path), tz=timezone.utc
                     ).isoformat(),
                     "headers": headers,
-                    "valid_source": SOURCE_CSV_REQUIRED_FIELDS.issubset(set(headers)),
+                    "valid_source": profile["valid_source"],
+                    "source_type": profile["source_type"],
+                    "skip_reason": profile["skip_reason"],
                 }
             )
     save_json(
@@ -121,7 +182,7 @@ def list_source_csv_files(source_root=SOURCE_CSV_DIR, manifest_path=SOURCE_MANIF
         if entry["valid_source"]:
             valid_files.append(os.path.join(source_root, entry["relative_path"].replace("/", os.sep)))
         elif logger:
-            logger.info("Skipping non-source CSV: %s", entry["relative_path"])
+            logger.info("Skipping non-source CSV: %s (%s)", entry["relative_path"], entry.get("skip_reason", "unsupported"))
     return valid_files
 
 
@@ -153,6 +214,17 @@ def library_sync_required(state_payload, source_snapshot, db_file):
     return (
         library_sync.get("db_file") != os.path.abspath(db_file)
         or library_sync.get("source_token") != source_snapshot.get("token")
+    )
+
+
+def bibliographic_metadata_enrich_required(state_payload, source_snapshot, db_file):
+    if not os.path.exists(db_file):
+        return False
+    metadata_state = state_payload.get("bibliographic_metadata_enrich", {}) if isinstance(state_payload, dict) else {}
+    return (
+        metadata_state.get("db_file") != os.path.abspath(db_file)
+        or metadata_state.get("source_token") != source_snapshot.get("token")
+        or int(metadata_state.get("schema_version", 0) or 0) < CURRENT_LOCAL_DATA_VERSION
     )
 
 
@@ -201,6 +273,20 @@ def paper_identity_key(paper):
     return f"title::{title}" if title else ""
 
 
+def paper_lookup_keys(paper):
+    doi = normalize_doi(paper.get("doi", ""))
+    title = normalize_title(paper.get("title", ""))
+    year = normalize_text(paper.get("year", ""))
+    keys = []
+    if doi:
+        keys.append(f"doi::{doi}")
+    if title and year:
+        keys.append(f"title_year::{title}::{year}")
+    if title:
+        keys.append(f"title::{title}")
+    return list(dict.fromkeys(keys))
+
+
 def paper_signature(paper):
     return (
         normalize_text(paper.get("title", "")),
@@ -232,13 +318,79 @@ def embedding_relevant_signature(paper):
     return (
         normalize_text(paper.get("title", "")),
         normalize_text(paper.get("abstract", "")),
-        normalize_text(paper.get("year", "")),
-        normalize_text(paper.get("venue", "")),
-        normalize_text(paper.get("doi", "")),
-        normalize_text(paper.get("pdf_link", "")),
-        tuple(paper.get("authors", [])),
-        tuple(paper.get("keywords", [])),
     )
+
+
+def _list_value(value):
+    if isinstance(value, (list, tuple)):
+        return [normalize_text(item) for item in value if normalize_text(item)]
+    if isinstance(value, str):
+        return split_multi_value(value)
+    return []
+
+
+def _merge_unique_values(existing, incoming):
+    merged = []
+    seen = set()
+    for item in _list_value(existing) + _list_value(incoming):
+        key = item.lower()
+        if key and key not in seen:
+            merged.append(item)
+            seen.add(key)
+    return merged
+
+
+def _author_richness(authors):
+    score = 0
+    for author in _list_value(authors):
+        score += len(author)
+        score += 8 * len(re.findall(r"[A-Za-zÀ-ž]{3,}", author))
+        score -= 4 * len(re.findall(r"\b[A-ZÀ-Ž]\.", author))
+    return score
+
+
+def _merge_paper_from_source(existing_paper, source_paper, allow_core_updates=True):
+    merged = dict(existing_paper or {})
+    before_embedding = embedding_relevant_signature(merged)
+    changed = False
+
+    core_fields = ("title", "abstract", "year", "venue", "doi", "pdf_link")
+    if allow_core_updates:
+        for field in core_fields:
+            incoming = source_paper.get(field, "")
+            if normalize_text(incoming) and merged.get(field) != incoming:
+                merged[field] = incoming
+                changed = True
+    else:
+        for field in FILL_IF_MISSING_FIELDS:
+            incoming = source_paper.get(field, "")
+            if normalize_text(incoming) and not normalize_text(merged.get(field, "")):
+                merged[field] = incoming
+                changed = True
+
+    incoming_authors = _list_value(source_paper.get("authors"))
+    if incoming_authors and (
+        not _list_value(merged.get("authors"))
+        or _author_richness(incoming_authors) > _author_richness(merged.get("authors"))
+    ):
+        merged["authors"] = incoming_authors
+        merged["first_author"] = incoming_authors[0]
+        merged["last_author"] = incoming_authors[-1]
+        changed = True
+
+    for field in LIST_ENRICH_FIELDS:
+        merged_list = _merge_unique_values(merged.get(field), source_paper.get(field))
+        if merged_list != _list_value(merged.get(field)):
+            merged[field] = merged_list
+            changed = True
+
+    for field in BIBLIOGRAPHIC_ENRICH_FIELDS:
+        incoming = source_paper.get(field, "")
+        if normalize_text(incoming) and merged.get(field) != incoming:
+            merged[field] = incoming
+            changed = True
+
+    return merged, changed, before_embedding != embedding_relevant_signature(merged)
 
 
 def is_junk_paper(title, abstract):
@@ -316,11 +468,16 @@ def scan_and_import_csvs(db_file, cache_dir, source_root=SOURCE_CSV_DIR, manifes
                     if existing_paper is None:
                         existing_papers[paper_key] = paper_obj
                         new_in_file += 1
-                    elif paper_signature(existing_paper) != paper_signature(paper_obj):
-                        if embedding_relevant_signature(existing_paper) != embedding_relevant_signature(paper_obj):
+                    else:
+                        merged_paper, changed, embedding_changed = _merge_paper_from_source(
+                            existing_paper,
+                            paper_obj,
+                            allow_core_updates=True,
+                        )
+                        if not changed:
+                            continue
+                        if embedding_changed:
                             cache_invalidating_update_count += 1
-                        merged_paper = existing_paper.copy()
-                        merged_paper.update(paper_obj)
                         existing_papers[paper_key] = merged_paper
                         updated_in_file += 1
 
@@ -346,3 +503,73 @@ def scan_and_import_csvs(db_file, cache_dir, source_root=SOURCE_CSV_DIR, manifes
     file_summaries.extend([f"{path} ({count} updated)" for path, count in updated_files_info.items()])
     refresh_source_manifest(source_root=source_root, manifest_path=manifest_path, logger=logger)
     return added_count, updated_count, removed_count, file_summaries
+
+
+def enrich_bibliographic_metadata(db_file, source_root=SOURCE_CSV_DIR, manifest_path=SOURCE_MANIFEST_FILE, logger=None):
+    csv_files = list_source_csv_files(source_root=source_root, manifest_path=manifest_path, logger=logger)
+    all_papers = load_json(db_file, [])
+    lookup = {}
+    ambiguous_keys = set()
+    for index, paper in enumerate(all_papers):
+        for key in paper_lookup_keys(paper):
+            if key in lookup and lookup[key] != index:
+                ambiguous_keys.add(key)
+            else:
+                lookup[key] = index
+    for key in ambiguous_keys:
+        lookup.pop(key, None)
+
+    matched_rows = 0
+    updated_papers = set()
+    updated_files_info = {}
+    skipped_ambiguous = 0
+
+    for file in csv_files:
+        updated_in_file = 0
+        try:
+            with open(file, mode="r", encoding="utf-8-sig", errors="ignore") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    title = normalize_text(row.get("Document Title", ""))
+                    abstract = normalize_text(row.get("Abstract", ""))
+                    if not title or not abstract or is_junk_paper(title, abstract):
+                        continue
+                    source_paper = build_paper_from_row(row)
+                    candidate_indexes = []
+                    for key in paper_lookup_keys(source_paper):
+                        if key in ambiguous_keys:
+                            skipped_ambiguous += 1
+                            continue
+                        if key in lookup:
+                            candidate_indexes.append(lookup[key])
+                    candidate_indexes = list(dict.fromkeys(candidate_indexes))
+                    if len(candidate_indexes) != 1:
+                        continue
+                    matched_rows += 1
+                    index = candidate_indexes[0]
+                    merged_paper, changed, _ = _merge_paper_from_source(
+                        all_papers[index],
+                        source_paper,
+                        allow_core_updates=False,
+                    )
+                    if changed:
+                        all_papers[index] = merged_paper
+                        updated_papers.add(index)
+                        updated_in_file += 1
+            if updated_in_file:
+                updated_files_info[os.path.relpath(file, source_root)] = updated_in_file
+        except Exception as exc:
+            if logger:
+                logger.warning("Error enriching metadata from CSV %s: %s", file, exc)
+
+    if updated_papers:
+        save_json(db_file, all_papers)
+
+    refresh_source_manifest(source_root=source_root, manifest_path=manifest_path, logger=logger)
+    return {
+        "matched_rows": matched_rows,
+        "updated_count": len(updated_papers),
+        "skipped_ambiguous": skipped_ambiguous,
+        "updated_files": updated_files_info,
+        "source_count": len(csv_files),
+    }

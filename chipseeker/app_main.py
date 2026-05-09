@@ -13,8 +13,10 @@ from chipseeker.cloud_access import build_cloud_token, cloud_access_configured
 from chipseeker.content_pack import ContentPackInstallError, build_content_pack, build_content_update_pack, detect_content_pack_status, install_bundled_demo_csv, install_content_pack, install_content_update_pack
 from chipseeker.conflict_review import collect_source_records, detect_conflicts, dismiss_conflict, load_conflict_resolutions, restore_conflicts
 from chipseeker.data_sync import (
+    bibliographic_metadata_enrich_required,
     build_source_snapshot,
     build_source_state,
+    enrich_bibliographic_metadata,
     library_sync_required,
     list_source_csv_files,
     scan_and_import_csvs,
@@ -1058,6 +1060,32 @@ def run():
                 st.rerun()
     else:
         st.session_state["csv_state"] = current_csv_state
+
+    if bibliographic_metadata_enrich_required(schema_state, current_source_snapshot, DB_FILE):
+        with st.spinner("Repairing bibliographic metadata from source CSVs..."):
+            enrich_result = enrich_bibliographic_metadata(
+                DB_FILE,
+                source_root=SOURCE_CSV_DIR,
+                manifest_path=SOURCE_MANIFEST_FILE,
+            )
+            schema_state["bibliographic_metadata_enrich"] = {
+                "db_file": os.path.abspath(DB_FILE),
+                "source_token": current_source_snapshot["token"],
+                "source_files": current_source_snapshot["files"],
+                "schema_version": schema_state.get("schema_version", 0),
+                "last_enriched_at_utc": datetime.now(timezone.utc).isoformat(),
+                "matched_rows": enrich_result.get("matched_rows", 0),
+                "updated_count": enrich_result.get("updated_count", 0),
+            }
+            save_json(LOCAL_DATA_STATE_FILE, schema_state)
+            if enrich_result.get("updated_count", 0):
+                st.cache_resource.clear()
+                st.toast(
+                    "BibTeX metadata repaired from source CSVs: "
+                    f"{enrich_result['updated_count']} paper(s) updated. Embedding cache preserved."
+                )
+                time.sleep(1.0)
+                st.rerun()
 
     content_status = detect_content_pack_status(DATA_DIR, DB_FILE, CACHE_DIR, SOURCE_MANIFEST_FILE, schema_state=load_json(LOCAL_DATA_STATE_FILE, {}))
     ui_language = st.sidebar.selectbox(
