@@ -1456,6 +1456,102 @@ def run():
         """
         <script>
         const doc = window.parent.document;
+        function ensureChipSeekerSearchOverlay() {
+          let overlay = doc.getElementById('chipseeker-local-search-overlay');
+          if (overlay) return overlay;
+          const style = doc.createElement('style');
+          style.id = 'chipseeker-local-search-overlay-style';
+          style.textContent = `
+            #chipseeker-local-search-overlay {
+              position: fixed; inset: 0; z-index: 999999; display: none;
+              align-items: center; justify-content: center; padding: 24px;
+              background: rgba(15,23,42,0.42); backdrop-filter: blur(3px);
+            }
+            #chipseeker-local-search-overlay.is-active { display: flex; }
+            #chipseeker-local-search-overlay .chipseeker-progress-card {
+              width: min(620px, 100%); background: white; border-radius: 24px;
+              border: 1px solid #dbe5f0; box-shadow: 0 32px 80px rgba(15,23,42,0.28);
+              padding: 26px 28px; font-family: "Segoe UI", Arial, sans-serif;
+            }
+            #chipseeker-local-search-overlay .chipseeker-progress-title {
+              font-size: 24px; font-weight: 950; margin: 0 0 8px; color: #0f172a;
+              letter-spacing: -0.03em;
+            }
+            #chipseeker-local-search-overlay .chipseeker-progress-subtitle {
+              color: #627182; line-height: 1.55; margin-bottom: 18px; font-size: 15px;
+            }
+            #chipseeker-local-search-overlay .chipseeker-progress-bar {
+              height: 10px; border-radius: 999px; background: #e2e8f0; overflow: hidden;
+            }
+            #chipseeker-local-search-overlay .chipseeker-progress-bar span {
+              display: block; width: 38%; height: 100%; border-radius: 999px;
+              background: linear-gradient(90deg,#ff4545,#1664ff,#16a34a);
+              animation: chipseekerProgressSlide 1.35s ease-in-out infinite alternate;
+            }
+            #chipseeker-local-search-overlay .chipseeker-progress-steps {
+              margin-top: 16px; display: grid; gap: 8px; color: #334155; font-weight: 800;
+            }
+            #chipseeker-local-search-overlay .chipseeker-progress-dot {
+              display: inline-block; width: 9px; height: 9px; border-radius: 999px;
+              background: #1664ff; box-shadow: 0 0 0 6px rgba(22,100,255,0.12);
+              margin-right: 8px;
+            }
+            @keyframes chipseekerProgressSlide {
+              from { transform: translateX(-35%); } to { transform: translateX(165%); }
+            }
+          `;
+          doc.head.appendChild(style);
+          overlay = doc.createElement('div');
+          overlay.id = 'chipseeker-local-search-overlay';
+          overlay.setAttribute('aria-live', 'polite');
+          overlay.innerHTML = `
+            <div class="chipseeker-progress-card">
+              <h2 class="chipseeker-progress-title">Searching ChipSeeker...</h2>
+              <div class="chipseeker-progress-subtitle">Please keep this page open. Large-library search can take a moment.</div>
+              <div class="chipseeker-progress-bar"><span></span></div>
+              <div class="chipseeker-progress-steps"></div>
+            </div>
+          `;
+          doc.body.appendChild(overlay);
+          return overlay;
+        }
+        function showChipSeekerSearchOverlay(mode) {
+          const overlay = ensureChipSeekerSearchOverlay();
+          const title = overlay.querySelector('.chipseeker-progress-title');
+          const subtitle = overlay.querySelector('.chipseeker-progress-subtitle');
+          const steps = overlay.querySelector('.chipseeker-progress-steps');
+          if (mode === 'llm_powered') {
+            title.textContent = 'LLM Powered Search is running...';
+            subtitle.textContent = 'DeepSeek is expanding your topic, ChipSeeker is retrieving candidates, then DeepSeek reranks the top papers.';
+            steps.innerHTML = [
+              '<div><span class="chipseeker-progress-dot"></span>1. Expanding your query with DeepSeek</div>',
+              '<div><span class="chipseeker-progress-dot"></span>2. Searching the semantic paper cache</div>',
+              '<div><span class="chipseeker-progress-dot"></span>3. Reranking top candidates with LLM</div>'
+            ].join('');
+          } else {
+            title.textContent = 'Semantic Search is running...';
+            subtitle.textContent = 'ChipSeeker is scanning the paper library and preparing ranked result cards.';
+            steps.innerHTML = '<div><span class="chipseeker-progress-dot"></span>Searching and ranking papers</div>';
+          }
+          overlay.classList.add('is-active');
+        }
+        function attachChipSeekerSearchOverlayButtons() {
+          const buttons = Array.from(doc.querySelectorAll('button'));
+          buttons.forEach((button) => {
+            const text = button.innerText || '';
+            if (button.dataset.chipseekerSearchOverlayBound === '1') return;
+            if (text.includes('LLM Powered Search') || text.includes('LLM ')) {
+              button.dataset.chipseekerSearchOverlayBound = '1';
+              button.addEventListener('click', () => showChipSeekerSearchOverlay('llm_powered'), {capture: true});
+            } else if (text.includes('Semantic Search')) {
+              button.dataset.chipseekerSearchOverlayBound = '1';
+              button.addEventListener('click', () => showChipSeekerSearchOverlay('semantic'), {capture: true});
+            }
+          });
+        }
+        attachChipSeekerSearchOverlayButtons();
+        setTimeout(attachChipSeekerSearchOverlayButtons, 500);
+        setTimeout(attachChipSeekerSearchOverlayButtons, 1500);
         if (!doc.__chipseekerSearchHotkeys) {
           doc.__chipseekerSearchHotkeys = true;
           doc.addEventListener('keydown', (event) => {
@@ -1464,6 +1560,7 @@ def run():
               const target = buttons.find((button) => button.innerText.includes('LLM Powered Search') || button.innerText.includes('LLM 增强搜索'));
               if (target) {
                 event.preventDefault();
+                showChipSeekerSearchOverlay('llm_powered');
                 target.click();
               }
             }
@@ -1762,11 +1859,25 @@ def run():
         citations = st.session_state.citations_map.get(doi.upper(), 0) if st.session_state.citations_fetched else 0
         citation_bonus = min(15, math.log10(citations + 1) * 6) if citations > 0 else 0
         final_score = item.get("comp_score", base_score + year_bonus + citation_bonus)
+        relevance_html = f"Relevance: {similarity * 100:.1f}%"
+        if item.get("llm_score") is not None:
+            try:
+                llm_score = float(item.get("llm_score"))
+                llm_delta = llm_score - (similarity * 100.0)
+                delta_color = "#15803d" if llm_delta >= 0 else "#b91c1c"
+                delta_bg = "#dcfce7" if llm_delta >= 0 else "#fee2e2"
+                relevance_html = (
+                    f"Relevance: {similarity * 100:.1f}% &rarr; LLM {llm_score:.0f}% "
+                    f"<span style='color:{delta_color}; background:{delta_bg}; padding:2px 8px; "
+                    f"border-radius:999px; font-size:0.78em; font-weight:900;'>{llm_delta:+.1f}</span>"
+                )
+            except (TypeError, ValueError):
+                pass
         st.markdown(
             f"""
             <div style="display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; margin-bottom: 8px; padding: 6px 12px; background-color: #f8f9fa; border-radius: 8px; border-left: 5px solid {color}; gap: 10px;">
                 <div style="flex: 1 1 auto; min-width: 200px;">
-                    <span style="font-size: 1.1em; font-weight: 900; color: {color};">Relevance: {similarity * 100:.1f}%</span>
+                    <span style="font-size: 1.1em; font-weight: 900; color: {color};">{relevance_html}</span>
                     <span style="background-color: {color}; color: white; padding: 2px 8px; border-radius: 12px; margin-left: 10px; font-size: 0.8em; display: inline-block;">{badge}</span>
                 </div>
                 <div style="flex: 0 1 auto; text-align: right; font-size: 1.05em; font-weight: bold; color: #D84315;">

@@ -68,6 +68,16 @@ def build_result_cards(results, query_text="", exact_query="", user_states=None,
         author_display = paper_authors_display(paper)
         state_key = paper_state_key(paper)
         user_state = dict(default_card_state(), **(user_states.get(state_key) or {}))
+        llm_score = item.get("llm_score")
+        llm_delta_text = ""
+        llm_delta_class = ""
+        if llm_score is not None:
+            try:
+                llm_delta = float(llm_score) - (similarity * 100.0)
+                llm_delta_text = f"{llm_delta:+.1f}"
+                llm_delta_class = "llm-delta-up" if llm_delta >= 0 else "llm-delta-down"
+            except (TypeError, ValueError):
+                pass
         cards.append(
             {
                 "index": index,
@@ -89,8 +99,10 @@ def build_result_cards(results, query_text="", exact_query="", user_states=None,
                 "badge_color": badge["color"],
                 "badge_label": badge["label"],
                 "score_text": f"{comp_score:.1f}",
-                "llm_score": item.get("llm_score"),
+                "llm_score": llm_score,
                 "llm_reason": item.get("llm_reason", ""),
+                "llm_delta_text": llm_delta_text,
+                "llm_delta_class": llm_delta_class,
                 "matched_terms": required_terms,
                 "paper_key": state_key,
                 "rating": user_state.get("rating", "Unrated"),
