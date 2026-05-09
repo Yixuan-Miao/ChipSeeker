@@ -1756,6 +1756,8 @@ def run():
         highlighted_author = highlight_text(author_str, required_words_hl)
         venue_display = get_venue_display_str(venue_data)
         highlighted_venue = highlight_text(venue_display, required_words_hl)
+        highlighted_year = highlight_text(str(year), required_words_hl)
+        year = highlighted_year
         highlighted_abstract = highlight_text(abstract, required_words_hl)
         citations = st.session_state.citations_map.get(doi.upper(), 0) if st.session_state.citations_fetched else 0
         citation_bonus = min(15, math.log10(citations + 1) * 6) if citations > 0 else 0

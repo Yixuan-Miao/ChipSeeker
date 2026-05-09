@@ -8,13 +8,25 @@ def get_paper_id(paper):
     return str(paper.get("doi") or paper.get("paper_key") or paper.get("title", "unknown"))
 
 
+def _flexible_highlight_pattern(keyword):
+    tokens = [token for token in re.split(r"[^A-Za-z0-9+]+", str(keyword or "").strip()) if token]
+    if not tokens:
+        return None
+    if len(tokens) == 1:
+        return re.compile(r"(?<![A-Za-z0-9+])(" + re.escape(tokens[0]) + r")(?![A-Za-z0-9+])", re.IGNORECASE)
+    joined = r"[^A-Za-z0-9+]*".join(re.escape(token) for token in tokens)
+    return re.compile(r"(?<![A-Za-z0-9+])(" + joined + r")(?![A-Za-z0-9+])", re.IGNORECASE)
+
+
 def highlight_text(text, keywords):
     if not text or not keywords:
         return text
     highlighted = text
-    for keyword in keywords:
+    for keyword in sorted(dict.fromkeys(str(keyword) for keyword in keywords if keyword), key=len, reverse=True):
         if keyword:
-            pattern = re.compile(f"({re.escape(keyword)})", re.IGNORECASE)
+            pattern = _flexible_highlight_pattern(keyword)
+            if pattern is None:
+                continue
             highlighted = pattern.sub(
                 r'<span style="background-color: #ffeb3b; color: black; font-weight: bold; padding: 0 4px; border-radius: 4px;">\1</span>',
                 highlighted,
@@ -52,8 +64,9 @@ def filter_search_results(raw_hits, selected_years, selected_ui_venues, must_hav
         if not (selected_years[0] <= year_value <= selected_years[1]):
             continue
 
+        venue_data = analyze_venue(paper.get("venue", ""))
         if selected_ui_venues:
-            parsed_venue = analyze_venue(paper.get("venue", ""))["n"]
+            parsed_venue = venue_data["n"]
             if parsed_venue not in selected_ui_venues:
                 continue
 
@@ -64,7 +77,15 @@ def filter_search_results(raw_hits, selected_years, selected_ui_venues, must_hav
                 author_str = f"{paper.get('first_author', '')} {paper.get('last_author', '')}"
             keyword_str = " ".join(paper.get("keywords", []))
             ieee_terms = " ".join(paper.get("ieee_terms", []))
-            corpus = f"{paper.get('title', '')} {paper.get('abstract', '')} {author_str} {paper.get('venue', '')} {keyword_str} {ieee_terms}".lower()
+            venue_terms = " ".join(
+                [
+                    str(paper.get("venue", "")),
+                    str(venue_data.get("n", "")),
+                    str(venue_data.get("t", "")),
+                    " ".join(venue_data.get("d", []) or []),
+                ]
+            )
+            corpus = f"{paper.get('title', '')} {paper.get('abstract', '')} {author_str} {venue_terms} {paper.get('year', '')} {keyword_str} {ieee_terms}".lower()
             normalized_corpus = re.sub(r"[^a-z0-9+]+", " ", corpus)
             if not all(any(term_matches(word, corpus, normalized_corpus) for word in or_words) for or_words in and_groups):
                 continue
