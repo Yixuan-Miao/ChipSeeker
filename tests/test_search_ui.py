@@ -1,4 +1,4 @@
-from chipseeker.search_ui import build_and_groups, filter_search_results, highlight_text
+from chipseeker.search_ui import build_and_groups, filter_search_results, highlight_text, looks_like_structured_exact_query
 
 
 def analyze_venue(value):
@@ -99,6 +99,12 @@ def test_exact_match_supports_author_venue_year_combo():
 
     assert len(results) == 1
     assert misses == []
+
+
+def test_structured_author_query_can_be_auto_exact():
+    assert looks_like_structured_exact_query("Y. Zeng")
+    assert looks_like_structured_exact_query("Y. Zeng & TMTT & 2025")
+    assert not looks_like_structured_exact_query("low power lna for qubit readout")
 
 
 def test_exact_match_uses_slash_for_or_not_spaces():

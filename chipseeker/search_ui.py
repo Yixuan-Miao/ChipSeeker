@@ -4,6 +4,30 @@ import re
 from chipseeker.domain_synonyms import expand_exact_term
 
 
+STRUCTURED_EXACT_VENUES = {
+    "nature",
+    "ne",
+    "isscc",
+    "jssc",
+    "vlsi",
+    "tmtt",
+    "tcas-i",
+    "tcasi",
+    "tcas-ii",
+    "tcasii",
+    "rfic",
+    "cicc",
+    "esscirc",
+    "a-sscc",
+    "asscc",
+    "ssc-l",
+    "sscl",
+    "ssc-m",
+    "sscm",
+    "iscas",
+}
+
+
 def get_paper_id(paper):
     return str(paper.get("doi") or paper.get("paper_key") or paper.get("title", "unknown"))
 
@@ -52,6 +76,23 @@ def required_words_from_query(must_have):
     for group in build_and_groups(must_have):
         required_words.extend(group)
     return required_words
+
+
+def looks_like_structured_exact_query(query):
+    text = str(query or "").strip()
+    if not text:
+        return False
+    normalized = re.sub(r"[^a-z0-9+]+", " ", text.lower()).strip()
+    tokens = set(normalized.split())
+    has_author_initial = re.search(r"\b[A-Za-z]\.\s*[A-Za-z][A-Za-z-]+", text) is not None
+    has_year = re.search(r"\b(?:19|20)\d{2}\b", text) is not None
+    has_venue = bool(tokens & STRUCTURED_EXACT_VENUES)
+    has_and_separator = re.search(r"(?:&|,|\band\b)", text, flags=re.IGNORECASE) is not None
+    if has_author_initial:
+        return True
+    if has_and_separator and (has_year or has_venue):
+        return True
+    return has_year and has_venue and len(tokens) <= 8
 
 
 def filter_search_results(raw_hits, selected_years, selected_ui_venues, must_have, analyze_venue, extract_year):

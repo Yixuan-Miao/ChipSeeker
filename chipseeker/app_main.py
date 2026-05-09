@@ -49,7 +49,7 @@ from chipseeker.paths import (
     SOURCE_REGISTRY_FILE,
     USER_DATA_FILE,
 )
-from chipseeker.search_ui import collect_year_counts, filter_search_results, get_paper_id, highlight_text, required_words_from_query, result_bucket_counts, sort_results
+from chipseeker.search_ui import collect_year_counts, filter_search_results, get_paper_id, highlight_text, looks_like_structured_exact_query, required_words_from_query, result_bucket_counts, sort_results
 from chipseeker.task_queue import cleanup_task, get_task, submit_arxiv_incremental, submit_embedding_build, submit_nature_incremental, submit_pdf_download
 from chipseeker.update_manager import (
     advance_ieee_sources,
@@ -1437,6 +1437,11 @@ def run():
             step=50,
             help=tr(ui_language, "Controls how many final results are displayed. Exact Match still scans the full library.", "只控制最终展示多少条结果；Exact Match 仍然扫描全库。"),
         )
+
+    if search_query and not must_have and looks_like_structured_exact_query(search_query):
+        must_have = search_query
+        search_query = ""
+        st.info("Detected an author / venue / year style query, so ChipSeeker searched it as Exact Match.")
 
     search_btn_col1, search_btn_col2 = st.columns([1, 1])
     with search_btn_col1:
