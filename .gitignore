@@ -5,6 +5,8 @@ local_data/
 __pycache__/
 *.pyc
 .pytest_cache/
+pytest-cache-files-*/
+*.lnk
 build/
 dist/
 .venv/
