@@ -50,7 +50,7 @@ from chipseeker.paths import (
     USER_DATA_FILE,
 )
 from chipseeker.search_ui import collect_year_counts, filter_search_results, get_paper_id, highlight_text, required_words_from_query, result_bucket_counts, sort_results
-from chipseeker.task_queue import cleanup_task, get_task, submit_arxiv_incremental, submit_embedding_build, submit_nature_incremental, submit_pdf_download
+from chipseeker.task_queue import cancel_task, cleanup_task, get_task, submit_arxiv_incremental, submit_embedding_build, submit_llm_powered_search, submit_nature_incremental, submit_pdf_download
 from chipseeker.update_manager import (
     advance_ieee_sources,
     build_ieee_search_url,
@@ -1609,14 +1609,106 @@ def run():
             else:
                 selected_years = (2000, CURRENT_YEAR)
 
+    def apply_search_results(filtered_results, initial_scan_count, query_state_key, search_mode, effective_query):
+        st.session_state.raw_results = filtered_results
+        st.session_state.initial_count = initial_scan_count
+        st.session_state.current_query = query_state_key
+        st.session_state.current_search_mode = search_mode
+        st.session_state["last_effective_search_query"] = effective_query
+        st.session_state["last_search_mode"] = search_mode
+        for item in filtered_results:
+            title = item["paper"].get("title")
+            user_data = get_user_data(title)
+            update_user_data(title, "search_count", int(user_data.get("search_count", 0)) + 1)
+            if item["similarity"] >= 0.25 and search_query:
+                if search_query not in user_data["matched_queries"]:
+                    user_data["matched_queries"].append(search_query)
+                    update_user_data(title, "matched_queries", user_data["matched_queries"])
+        for key in list(st.session_state.keys()):
+            if key.startswith("chk_"):
+                del st.session_state[key]
+
     trigger_search = bool(search_query or selected_ui_venues or must_have)
-    if trigger_search:
+    query_state_key = ""
+    if trigger_search and not llm_task_active:
         query_state_key = f"{search_query}_must{must_have}_limit{display_limit_val}_{selected_emb_model}_v{selected_ui_venues}_y{selected_years}_csv{hash(current_csv_state)}"
+
+    llm_task_active = False
+    llm_task_id = st.session_state.get("llm_search_task_id")
+    if llm_task_id:
+        llm_task = get_task(llm_task_id)
+        if llm_task and llm_task.get("status") in {"queued", "running"}:
+            llm_task_active = True
+            st.info(f"LLM Powered Search: {llm_task.get('message', llm_task.get('status', 'running'))}")
+            st.progress(float(llm_task.get("progress", 0.0)) or 0.01)
+            task_cols = st.columns([1, 1, 2])
+            if task_cols[0].button("Refresh Status", use_container_width=True):
+                st.rerun()
+            if task_cols[1].button("Cancel LLM Search", use_container_width=True):
+                cancel_task(llm_task_id)
+                st.session_state.pop("llm_search_task_id", None)
+                st.warning("LLM Powered Search canceled. Any late DeepSeek response will be ignored.")
+                st.rerun()
+            with st.expander("LLM Search Console", expanded=False):
+                st.code(format_task_history(llm_task), language="text")
+        elif llm_task and llm_task.get("status") == "completed":
+            result = llm_task.get("result", {})
+            apply_search_results(
+                result.get("results", []),
+                int(result.get("initial_count", 0)),
+                result.get("query_state_key") or query_state_key or llm_task_id,
+                "llm_powered",
+                result.get("effective_query", search_query),
+            )
+            st.success(f"LLM Powered Search finished. Reranked top {result.get('rerank_limit', 10)} papers.")
+            cleanup_task(llm_task_id)
+            st.session_state.pop("llm_search_task_id", None)
+            st.rerun()
+        elif llm_task and llm_task.get("status") == "canceled":
+            st.warning("LLM Powered Search was canceled.")
+            cleanup_task(llm_task_id)
+            st.session_state.pop("llm_search_task_id", None)
+        elif llm_task and llm_task.get("status") == "failed":
+            st.error(f"LLM Powered Search failed: {llm_task.get('error', 'unknown error')}")
+            cleanup_task(llm_task_id)
+            st.session_state.pop("llm_search_task_id", None)
+        else:
+            st.session_state.pop("llm_search_task_id", None)
+
+    if trigger_search and not llm_task_active:
         force_search = semantic_search_clicked or llm_powered_clicked
         if st.session_state.get("current_query") != query_state_key or force_search:
             search_mode = "llm_powered" if llm_powered_clicked else "semantic"
             st.session_state.citations_fetched = False
             st.session_state.citations_map = {}
+            if llm_powered_clicked:
+                if not search_query:
+                    st.error("LLM Powered Search needs a Step 1 semantic query.")
+                    st.stop()
+                if not llm_runtime_key:
+                    st.error(tr(ui_language, "LLM API key or Cloud Access is missing.", "缺少 LLM API key 或云端访问。"))
+                    st.stop()
+                if not active_scope_id:
+                    st.error("Semantic cache is not ready. Build a cache first.")
+                    st.stop()
+                st.session_state["llm_search_task_id"] = submit_llm_powered_search(
+                    DB_FILE,
+                    search_query,
+                    must_have,
+                    display_limit_val,
+                    selected_ui_venues,
+                    selected_years,
+                    selected_emb_model,
+                    embedding_api_key=emb_runtime_key,
+                    active_scope_key=active_scope_key,
+                    active_scope_years=active_scope_years,
+                    llm_api_key=llm_runtime_key,
+                    llm_base_url=base_url,
+                    llm_model=model_name,
+                    rerank_limit=10,
+                    query_state_key=query_state_key,
+                )
+                st.rerun()
             with st.spinner("Scanning library..."):
                 effective_query = search_query
                 st.session_state["last_effective_search_query"] = search_query
@@ -1681,21 +1773,7 @@ def run():
                             st.warning(f"LLM rerank failed; showing semantic order instead. {exc}")
                 if len(filtered_results) > display_limit_val:
                     filtered_results = filtered_results[:display_limit_val]
-                st.session_state.raw_results = filtered_results
-                st.session_state.initial_count = initial_scan_count
-                st.session_state.current_query = query_state_key
-                st.session_state.current_search_mode = search_mode
-                for item in filtered_results:
-                    title = item["paper"].get("title")
-                    user_data = get_user_data(title)
-                    update_user_data(title, "search_count", int(user_data.get("search_count", 0)) + 1)
-                    if item["similarity"] >= 0.25 and search_query:
-                        if search_query not in user_data["matched_queries"]:
-                            user_data["matched_queries"].append(search_query)
-                            update_user_data(title, "matched_queries", user_data["matched_queries"])
-                for key in list(st.session_state.keys()):
-                    if key.startswith("chk_"):
-                        del st.session_state[key]
+                apply_search_results(filtered_results, initial_scan_count, query_state_key, search_mode, effective_query)
 
     results = st.session_state.get("raw_results", [])
     initial_count = st.session_state.get("initial_count", 0)

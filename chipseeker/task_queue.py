@@ -27,7 +27,7 @@ def _log(message):
 def _summarize_payload(payload):
     summary = {}
     for key, value in payload.items():
-        if key in {"api_key"}:
+        if key in {"api_key"} or key.endswith("_api_key"):
             summary[key] = "***"
         elif key == "papers":
             summary[key] = f"{len(value)} papers"
@@ -62,10 +62,21 @@ def _run_task(task_id, fn, payload):
     try:
         result = fn(task_id, payload)
     except Exception as exc:
+        current = get_task(task_id) or {}
+        if current.get("cancel_requested") or current.get("status") == "canceled":
+            _log(f"{task_id} canceled while running")
+            append_history(task_id, "Task stopped after cancellation.", level="warning")
+            _set_task(task_id, status="canceled", message="Canceled", finished_at=time.time())
+            return
         _log(f"{task_id} failed error={exc}")
         append_history(task_id, f"Task failed: {exc}", level="error")
         _set_task(task_id, status="failed", error=str(exc), finished_at=time.time())
     else:
+        current = get_task(task_id) or {}
+        if current.get("cancel_requested") or current.get("status") == "canceled":
+            _log(f"{task_id} canceled result discarded")
+            append_history(task_id, "Task result discarded because it was canceled.", level="warning")
+            return
         _log(f"{task_id} completed result={result}")
         append_history(task_id, f"Task completed: {result}", level="success")
         _set_task(task_id, status="completed", result=result, finished_at=time.time())
@@ -113,6 +124,24 @@ def update_progress(task_id, progress=None, message=None):
             append_history(task_id, f"{percent * 100:.1f}% | {message}")
 
 
+def task_cancel_requested(task_id):
+    task = get_task(task_id)
+    return bool(task and (task.get("cancel_requested") or task.get("status") == "canceled"))
+
+
+def cancel_task(task_id, message="Canceled by user"):
+    if not task_id:
+        return
+    append_history(task_id, message, level="warning")
+    _set_task(
+        task_id,
+        status="canceled",
+        cancel_requested=True,
+        message=message,
+        finished_at=time.time(),
+    )
+
+
 def cleanup_task(task_id):
     with _LOCK:
         _TASKS.pop(task_id, None)
@@ -150,6 +179,152 @@ def submit_embedding_build(db_file, model_name, api_key="", years=None, scope_ke
         "embedding-build",
         {"db_file": db_file, "model_name": model_name, "api_key": api_key, "years": years or [], "scope_key": scope_key},
         _build_embeddings,
+    )
+
+
+def _raise_if_cancelled(task_id):
+    if task_cancel_requested(task_id):
+        raise RuntimeError("Task was canceled.")
+
+
+def _llm_powered_search(task_id, payload):
+    from chipseeker.llm_tools import expand_search_query_with_llm, rerank_results_with_llm
+    from chipseeker.search_ui import filter_search_results
+    from chipseeker.utils import extract_year
+    from chipseeker.venue_data import analyze_venue
+
+    search_query = str(payload.get("search_query", "")).strip()
+    must_have = str(payload.get("must_have", "")).strip()
+    display_limit = int(payload.get("display_limit", 50) or 50)
+    rerank_limit = int(payload.get("rerank_limit", 10) or 10)
+    selected_years = tuple(payload.get("selected_years") or ())
+    selected_ui_venues = list(payload.get("selected_ui_venues") or [])
+    active_scope_years = list(payload.get("active_scope_years") or [])
+    active_scope_key = payload.get("active_scope_key") or build_scope_key(active_scope_years)
+
+    update_progress(task_id, 0.05, "Preparing LLM powered search")
+    all_papers = load_json(payload["db_file"], [])
+    scoped_papers = filter_papers_by_years(all_papers, active_scope_years) if active_scope_years else None
+    _raise_if_cancelled(task_id)
+
+    update_progress(task_id, 0.12, "Expanding query with LLM")
+    effective_query = expand_search_query_with_llm(
+        search_query,
+        payload.get("llm_api_key", ""),
+        payload.get("llm_base_url", ""),
+        payload.get("llm_model", ""),
+    )
+    _raise_if_cancelled(task_id)
+
+    update_progress(task_id, 0.28, "Loading semantic cache")
+    searcher = PaperSearcher(
+        payload["db_file"],
+        model_name=payload["embedding_model"],
+        api_key=payload.get("embedding_api_key", ""),
+        papers_override=scoped_papers,
+        scope_key=active_scope_key,
+    )
+    exact_first_hits = [{"similarity": 1.0, "paper": paper} for paper in all_papers]
+    exact_first_hits = filter_search_results(
+        exact_first_hits,
+        selected_years,
+        selected_ui_venues,
+        must_have,
+        analyze_venue,
+        extract_year,
+    )
+    initial_scan_count = len(exact_first_hits) if must_have or selected_ui_venues else len(all_papers)
+    _raise_if_cancelled(task_id)
+
+    update_progress(task_id, 0.48, "Running semantic retrieval")
+    candidate_top_k = min(max(display_limit, 120), 400)
+    if must_have or selected_ui_venues:
+        filtered_results = searcher.search_candidates(
+            effective_query,
+            [item["paper"] for item in exact_first_hits],
+            top_k=candidate_top_k,
+        )
+    else:
+        filtered_results = searcher.search(query=effective_query, top_k=candidate_top_k)
+        filtered_results = filter_search_results(
+            filtered_results,
+            selected_years,
+            selected_ui_venues,
+            "",
+            analyze_venue,
+            extract_year,
+        )
+    _raise_if_cancelled(task_id)
+
+    actual_rerank_limit = min(rerank_limit, len(filtered_results))
+    update_progress(task_id, 0.68, f"LLM reranking top {actual_rerank_limit} papers")
+    filtered_results = rerank_results_with_llm(
+        search_query,
+        effective_query,
+        filtered_results,
+        payload.get("llm_api_key", ""),
+        payload.get("llm_base_url", ""),
+        payload.get("llm_model", ""),
+        limit=actual_rerank_limit,
+    )
+    _raise_if_cancelled(task_id)
+
+    if len(filtered_results) > display_limit:
+        filtered_results = filtered_results[:display_limit]
+    update_progress(task_id, 1.0, "LLM powered search finished")
+    return {
+        "results": filtered_results,
+        "initial_count": initial_scan_count,
+        "effective_query": effective_query,
+        "search_query": search_query,
+        "must_have": must_have,
+        "display_limit": display_limit,
+        "selected_ui_venues": selected_ui_venues,
+        "selected_years": selected_years,
+        "embedding_model": payload.get("embedding_model", ""),
+        "search_mode": "llm_powered",
+        "rerank_limit": actual_rerank_limit,
+        "query_state_key": payload.get("query_state_key", ""),
+    }
+
+
+def submit_llm_powered_search(
+    db_file,
+    search_query,
+    must_have,
+    display_limit,
+    selected_ui_venues,
+    selected_years,
+    embedding_model,
+    embedding_api_key="",
+    active_scope_key="all",
+    active_scope_years=None,
+    llm_api_key="",
+    llm_base_url="",
+    llm_model="",
+    rerank_limit=10,
+    query_state_key="",
+):
+    return submit_task(
+        "llm-search",
+        {
+            "db_file": db_file,
+            "search_query": search_query,
+            "must_have": must_have,
+            "display_limit": display_limit,
+            "selected_ui_venues": selected_ui_venues,
+            "selected_years": selected_years,
+            "embedding_model": embedding_model,
+            "embedding_api_key": embedding_api_key,
+            "active_scope_key": active_scope_key,
+            "active_scope_years": active_scope_years or [],
+            "llm_api_key": llm_api_key,
+            "llm_base_url": llm_base_url,
+            "llm_model": llm_model,
+            "rerank_limit": rerank_limit,
+            "query_state_key": query_state_key,
+        },
+        _llm_powered_search,
     )
 
 
