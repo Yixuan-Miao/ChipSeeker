@@ -1,6 +1,8 @@
 import math
 import re
 
+from chipseeker.domain_synonyms import expand_exact_term
+
 
 def get_paper_id(paper):
     return str(paper.get("doi") or paper.get("paper_key") or paper.get("title", "unknown"))
@@ -23,18 +25,20 @@ def highlight_text(text, keywords):
 def build_and_groups(must_have):
     and_groups = []
     if must_have:
-        for group in re.split(r"[,&]", must_have):
-            or_words = [word.strip().lower() for word in group.split() if word.strip()]
+        for group in re.split(r"\s*(?:,|&|\band\b)\s*", must_have, flags=re.IGNORECASE):
+            raw_words = [word.strip().lower().strip('"') for word in re.split(r"\s*/\s*", group) if word.strip()]
+            or_words = []
+            for word in raw_words:
+                or_words.extend(expand_exact_term(word))
             if or_words:
-                and_groups.append(or_words)
+                and_groups.append(list(dict.fromkeys(or_words)))
     return and_groups
 
 
 def required_words_from_query(must_have):
     required_words = []
-    if must_have:
-        for group in re.split(r"[,&]", must_have):
-            required_words.extend([word.strip() for word in group.split() if word.strip()])
+    for group in build_and_groups(must_have):
+        required_words.extend(group)
     return required_words
 
 
@@ -54,15 +58,33 @@ def filter_search_results(raw_hits, selected_years, selected_ui_venues, must_hav
                 continue
 
         if and_groups:
-            author_str = f"{paper.get('first_author', '')} {paper.get('last_author', '')}"
+            authors = paper.get("authors", [])
+            author_str = " ".join(authors) if isinstance(authors, list) else str(authors or "")
+            if not author_str.strip():
+                author_str = f"{paper.get('first_author', '')} {paper.get('last_author', '')}"
             keyword_str = " ".join(paper.get("keywords", []))
-            corpus = f"{paper.get('title', '')} {paper.get('abstract', '')} {author_str} {paper.get('venue', '')} {keyword_str}".lower()
-            if not all(any(re.search(r"\b" + re.escape(word) + r"\b", corpus) for word in or_words) for or_words in and_groups):
+            ieee_terms = " ".join(paper.get("ieee_terms", []))
+            corpus = f"{paper.get('title', '')} {paper.get('abstract', '')} {author_str} {paper.get('venue', '')} {keyword_str} {ieee_terms}".lower()
+            normalized_corpus = re.sub(r"[^a-z0-9+]+", " ", corpus)
+            if not all(any(term_matches(word, corpus, normalized_corpus) for word in or_words) for or_words in and_groups):
                 continue
 
         filtered_results.append(item)
 
     return filtered_results
+
+
+def term_matches(term, corpus, normalized_corpus=None):
+    term = str(term or "").strip().lower()
+    if not term:
+        return False
+    normalized_corpus = normalized_corpus or re.sub(r"[^a-z0-9+]+", " ", corpus.lower())
+    normalized_term = re.sub(r"[^a-z0-9+]+", " ", term).strip()
+    if not normalized_term:
+        return False
+    if " " in normalized_term:
+        return f" {normalized_term} " in f" {normalized_corpus} "
+    return re.search(r"\b" + re.escape(normalized_term) + r"\b", normalized_corpus) is not None
 
 
 def result_bucket_counts(results, search_query):

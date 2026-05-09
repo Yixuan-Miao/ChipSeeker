@@ -64,7 +64,7 @@ def test_search_runtime_repairs_only_changed_fingerprints(tmp_path):
     assert status["cached_papers"] == 1
     assert status["new_papers"] == 1
 
-    searcher = DummySearcher(str(db_file), model_name="all-MiniLM-L6-v2")
+    searcher = DummySearcher(str(db_file), model_name="voyage-4-large")
     assert DummySearcher.embed_history[-1] == ["Paper B Gamma"]
     assert np.array_equal(searcher.eb, np.array([[13.0], [13.0]], dtype=np.float32))
 
@@ -114,3 +114,24 @@ def test_search_runtime_reuses_legacy_hash_cache_after_database_move(tmp_path):
     assert portable_meta.endswith("cache_isscc_papers_all-MiniLM-L6-v2_all.meta.json")
     assert (cache_dir / "cache_isscc_papers_all-MiniLM-L6-v2_all.npy").exists()
     assert (cache_dir / "cache_isscc_papers_all-MiniLM-L6-v2_all.meta.json").exists()
+
+
+def test_search_candidates_reranks_exact_filtered_subset(tmp_path):
+    db_file = tmp_path / "papers.json"
+    papers = [
+        {"title": "Paper A", "abstract": "Alpha"},
+        {"title": "Paper B", "abstract": "Much longer beta text"},
+        {"title": "Paper C", "abstract": "Gamma"},
+    ]
+    write_db(db_file, papers)
+
+    DummySearcher.embed_history = []
+    searcher = DummySearcher(str(db_file), model_name="all-MiniLM-L6-v2")
+    results = searcher.search_candidates(
+        "query",
+        [papers[2], papers[0]],
+        top_k=10,
+    )
+
+    assert len(results) == 2
+    assert {item["paper"]["title"] for item in results} == {"Paper A", "Paper C"}

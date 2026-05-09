@@ -7,6 +7,7 @@ import webbrowser
 from datetime import date, datetime, timezone
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 from chipseeker.config_store import UserDataStore, load_app_config
 from chipseeker.cloud_access import build_cloud_token, cloud_access_configured
@@ -23,7 +24,7 @@ from chipseeker.data_sync import (
 )
 from chipseeker.embedding_scope import available_years, build_scope_key, filter_papers_by_years, scope_label
 from chipseeker.exports import build_bibtex, build_csv_rows, build_notebooklm_export, build_search_results_html, generate_csv_link, paper_authors_display, write_text_file
-from chipseeker.llm_tools import analyze_with_llm, generate_global_report_with_llm, generate_search_keywords, get_batch_citations
+from chipseeker.llm_tools import analyze_with_llm, expand_search_query_with_llm, generate_global_report_with_llm, generate_search_keywords, get_batch_citations, rerank_results_with_llm
 from chipseeker.maintenance import generate_db_stats
 from chipseeker.migrations import migrate_local_data
 from chipseeker.paths import (
@@ -84,6 +85,19 @@ NATURE_JOURNAL_OPTIONS = [
     ("communications-engineering", "Communications Engineering"),
     ("npj-quantum-information", "npj Quantum Information"),
 ]
+RATING_OPTIONS = ["Unrated", "Masterpiece", "Solid", "Average", "Marginal", "Poor"]
+RATING_LABELS = {
+    "Unrated": "☆ Unrated",
+    "Masterpiece": "★★★★★ Masterpiece",
+    "Solid": "★★★★ Solid",
+    "Average": "★★★ Average",
+    "Marginal": "★★ Marginal",
+    "Poor": "★ Poor",
+}
+DEEPSEEK_MODEL_OPTIONS = {
+    "DeepSeek Lite/Fast (deepseek-v4-flash)": "deepseek-v4-flash",
+    "DeepSeek Pro (deepseek-v4-pro)": "deepseek-v4-pro",
+}
 
 
 def _vx_auth():
@@ -383,12 +397,34 @@ def embedding_model_requires_api(model_name):
 
 def resolve_provider_defaults(current_preset, app_config):
     if current_preset == "DeepSeek":
-        return "https://api.deepseek.com", "deepseek-chat"
+        configured_model = str(app_config.get("llm_model", "")).strip()
+        model = configured_model if configured_model in DEEPSEEK_MODEL_OPTIONS.values() else "deepseek-v4-flash"
+        return "https://api.deepseek.com", model
     if current_preset == "SiliconFlow":
         return "https://api.siliconflow.cn/v1", "Qwen/Qwen2.5-7B-Instruct"
     if current_preset == "Kimi":
         return "https://api.moonshot.cn/v1", "moonshot-v1-8k"
     return app_config.get("llm_base_url", ""), app_config.get("llm_model", "")
+
+
+def render_llm_model_input(ui_language, current_preset, default_model, key):
+    if current_preset != "DeepSeek":
+        return st.text_input(tr(ui_language, "Model ID", "模型 ID"), value=default_model, key=key)
+    labels = list(DEEPSEEK_MODEL_OPTIONS.keys())
+    model_to_label = {model: label for label, model in DEEPSEEK_MODEL_OPTIONS.items()}
+    current_label = model_to_label.get(default_model, labels[0])
+    selected_label = st.selectbox(
+        tr(ui_language, "DeepSeek Model", "DeepSeek 模型"),
+        labels,
+        index=labels.index(current_label),
+        key=key,
+        help=tr(
+            ui_language,
+            "Lite/Fast uses deepseek-v4-flash for speed. Pro uses deepseek-v4-pro for higher quality but slower responses.",
+            "Lite/Fast 使用 deepseek-v4-flash，速度更快；Pro 使用 deepseek-v4-pro，质量更高但更慢。",
+        ),
+    )
+    return DEEPSEEK_MODEL_OPTIONS[selected_label]
 
 
 def cloud_access_ready(app_config):
@@ -555,7 +591,7 @@ def render_quick_start(app_config, content_status, ui_language):
             default_base, default_model = resolve_provider_defaults(current_preset, app_config)
             llm_api_key = st.text_input("LLM API Key", value=app_config.get("llm_api_key", ""), type="password")
             llm_base_url = st.text_input("LLM Base URL", value=default_base)
-            llm_model = st.text_input("LLM Model", value=default_model)
+            llm_model = render_llm_model_input(ui_language, current_preset, default_model, "quick_start_llm_model")
         with st.expander(tr(ui_language, "Paid API Access: Voyage + DeepSeek", "付费 API Access：Voyage + DeepSeek"), expanded=False):
             st.caption(tr(
                 ui_language,
@@ -1385,15 +1421,58 @@ def run():
                 "Step 2. Optional keyword search inside results",
                 "步骤 2：可选，在结果中做关键词过滤",
             ),
-            placeholder=tr(ui_language, "Examples: ADC PLL means OR; ADC, PLL or ADC & PLL means AND", "例：ADC PLL 表示 OR；ADC, PLL 或 ADC & PLL 表示 AND"),
+            placeholder=tr(ui_language, "Examples: Y. Zeng | ADC/PLL | ADC, calibration", "示例：Y. Zeng | ADC/PLL | ADC, calibration"),
             help=tr(
                 ui_language,
-                "Case-insensitive. Use spaces for OR: `ADC PLL` matches ADC or PLL. Use comma or &: `ADC, PLL` / `ADC & PLL` requires both words.",
-                "不区分大小写。空格表示 OR：`ADC PLL` 命中 ADC 或 PLL。逗号或 & 表示 AND：`ADC, PLL` / `ADC & PLL` 要求两个词都出现。",
+                "Case-insensitive. Spaces stay inside one phrase, so `Y. Zeng` searches that name. Use `/` for OR: `ADC/PLL`. Use comma, `&`, or `and` for AND: `ADC, calibration`.",
+                "不区分大小写。空格保留为短语，所以 `Y. Zeng` 会按作者名搜索。用 `/` 表示 OR：`ADC/PLL`。用逗号、`&` 或 `and` 表示 AND：`ADC, calibration`。",
             ),
         )
     with col_s3:
-        top_k_val = st.number_input(tr(ui_language, "Search Depth", "搜索深度"), min_value=50, max_value=2000, value=50, step=50)
+        display_limit_val = st.number_input(
+            tr(ui_language, "Display Limit", "展示数量"),
+            min_value=50,
+            max_value=2000,
+            value=50,
+            step=50,
+            help=tr(ui_language, "Controls how many final results are displayed. Exact Match still scans the full library.", "只控制最终展示多少条结果；Exact Match 仍然扫描全库。"),
+        )
+
+    search_btn_col1, search_btn_col2 = st.columns([1, 1])
+    with search_btn_col1:
+        semantic_search_clicked = st.button(
+            tr(ui_language, "Semantic Search", "语义搜索"),
+            type="primary",
+            use_container_width=True,
+            help=tr(ui_language, "Fast search with your direct query.", "使用原始输入快速搜索。"),
+        )
+    with search_btn_col2:
+        llm_powered_clicked = st.button(
+            tr(ui_language, "LLM Powered Search", "LLM 增强搜索"),
+            use_container_width=True,
+            help=tr(ui_language, "LLM expands your query, runs semantic search, then reranks the top candidates. Shortcut: Ctrl+Enter.", "LLM 先扩展搜索词，再语义搜索并重排候选结果。快捷键：Ctrl+Enter。"),
+        )
+    components.html(
+        """
+        <script>
+        const doc = window.parent.document;
+        if (!doc.__chipseekerSearchHotkeys) {
+          doc.__chipseekerSearchHotkeys = true;
+          doc.addEventListener('keydown', (event) => {
+            if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+              const buttons = Array.from(doc.querySelectorAll('button'));
+              const target = buttons.find((button) => button.innerText.includes('LLM Powered Search') || button.innerText.includes('LLM 增强搜索'));
+              if (target) {
+                event.preventDefault();
+                target.click();
+              }
+            }
+          });
+        }
+        </script>
+        """,
+        height=0,
+    )
 
     selected_ui_venues = []
     selected_years = (2000, CURRENT_YEAR)
@@ -1410,8 +1489,11 @@ def run():
                 st.error(tr(ui_language, "Please configure an LLM API key or ChipSeeker Cloud Access first.", "请先配置 LLM API key 或 ChipSeeker 云端访问。"))
             else:
                 with st.spinner("Generating..."):
-                    st.session_state.kw_result = generate_search_keywords(user_idea, llm_runtime_key, base_url, model_name)
-                    st.session_state.last_idea = user_idea
+                    try:
+                        st.session_state.kw_result = generate_search_keywords(user_idea, llm_runtime_key, base_url, model_name)
+                        st.session_state.last_idea = user_idea
+                    except Exception as exc:
+                        st.error(str(exc))
         if st.session_state.get("kw_result"):
             st.info(f"{tr(ui_language, 'Suggested Keywords', '推荐关键词')}: `{st.session_state.kw_result}`")
 
@@ -1432,27 +1514,85 @@ def run():
 
     trigger_search = bool(search_query or selected_ui_venues or must_have)
     if trigger_search:
-        query_state_key = f"{search_query}_must{must_have}_top{top_k_val}_{selected_emb_model}_v{selected_ui_venues}_y{selected_years}_csv{hash(current_csv_state)}"
-        if st.session_state.get("current_query") != query_state_key:
+        query_state_key = f"{search_query}_must{must_have}_limit{display_limit_val}_{selected_emb_model}_v{selected_ui_venues}_y{selected_years}_csv{hash(current_csv_state)}"
+        force_search = semantic_search_clicked or llm_powered_clicked
+        if st.session_state.get("current_query") != query_state_key or force_search:
+            search_mode = "llm_powered" if llm_powered_clicked else "semantic"
             st.session_state.citations_fetched = False
             st.session_state.citations_map = {}
             with st.spinner("Scanning library..."):
-                if search_query and not searcher:
-                    if embedding_model_requires_api(selected_emb_model) and not embedding_api_ready:
-                        st.warning(tr(ui_language, "Semantic query search is disabled because the selected embedding model requires an API key. Switch to MiniLM or add a key first.", "语义搜索当前不可用，因为所选 embedding 模型需要 API key。你可以先切回 MiniLM，或者先填写 key。"))
+                effective_query = search_query
+                st.session_state["last_effective_search_query"] = search_query
+                st.session_state["last_search_mode"] = search_mode
+                if search_mode == "llm_powered" and search_query:
+                    if not llm_runtime_key:
+                        st.error(tr(ui_language, "LLM API key or Cloud Access is missing.", "缺少 LLM API key 或云端访问。"))
+                        st.stop()
+                    with st.spinner("LLM is expanding your query..."):
+                        try:
+                            effective_query = expand_search_query_with_llm(search_query, llm_runtime_key, base_url, model_name)
+                        except Exception as exc:
+                            st.error(str(exc))
+                            st.stop()
+                    st.session_state["last_effective_search_query"] = effective_query
+                    st.info(f"LLM expanded query: `{effective_query}`")
+
+                exact_first_hits = [{"similarity": 1.0, "paper": paper} for paper in all_papers_in_db]
+                exact_first_hits = filter_search_results(
+                    exact_first_hits,
+                    selected_years,
+                    selected_ui_venues,
+                    must_have,
+                    analyze_venue,
+                    extract_year,
+                )
+                initial_scan_count = len(exact_first_hits) if must_have or selected_ui_venues else len(all_papers_in_db)
+
+                if search_query:
+                    if not searcher:
+                        if embedding_model_requires_api(selected_emb_model) and not embedding_api_ready:
+                            st.warning(tr(ui_language, "Semantic query search is disabled because the selected embedding model requires an API key. Switch to MiniLM or add a key first.", "语义搜索当前不可用，因为所选 embedding 模型需要 API key。你可以先切回 MiniLM，或者先填写 key。"))
+                        else:
+                            st.warning(tr(ui_language, "Current semantic cache is not ready. Build one of the ranges above first, or keep using metadata filters for now.", "当前语义缓存还没准备好。请先构建上面的任一范围，或者暂时只使用元数据过滤。"))
+                        filtered_results = exact_first_hits[:display_limit_val] if (must_have or selected_ui_venues) else []
+                    elif must_have or selected_ui_venues:
+                        candidate_top_k = min(max(display_limit_val, 120), 400) if search_mode == "llm_powered" else display_limit_val
+                        filtered_results = searcher.search_candidates(
+                            effective_query,
+                            [item["paper"] for item in exact_first_hits],
+                            top_k=candidate_top_k,
+                        )
                     else:
-                        st.warning(tr(ui_language, "Current semantic cache is not ready. Build one of the ranges above first, or keep using metadata filters for now.", "当前语义缓存还没准备好。请先构建上面的任一范围，或者暂时只使用元数据过滤。"))
-                    raw_hits = []
+                        candidate_top_k = min(max(display_limit_val, 120), 400) if search_mode == "llm_powered" else display_limit_val
+                        filtered_results = searcher.search(query=effective_query, top_k=candidate_top_k)
+                        filtered_results = filter_search_results(filtered_results, selected_years, selected_ui_venues, "", analyze_venue, extract_year)
                 else:
-                    raw_hits = searcher.search(query=search_query, top_k=top_k_val) if search_query else [{"similarity": 1.0, "paper": paper} for paper in all_papers_in_db]
-                filtered_results = filter_search_results(raw_hits, selected_years, selected_ui_venues, must_have, analyze_venue, extract_year)
+                    filtered_results = exact_first_hits[:display_limit_val]
+                if search_mode == "llm_powered" and search_query and filtered_results:
+                    with st.spinner("LLM is reranking top candidates..."):
+                        try:
+                            filtered_results = rerank_results_with_llm(
+                                search_query,
+                                st.session_state.get("last_effective_search_query", search_query),
+                                filtered_results,
+                                llm_runtime_key,
+                                base_url,
+                                model_name,
+                                limit=min(50, len(filtered_results)),
+                            )
+                        except Exception as exc:
+                            st.warning(f"LLM rerank failed; showing semantic order instead. {exc}")
+                if len(filtered_results) > display_limit_val:
+                    filtered_results = filtered_results[:display_limit_val]
                 st.session_state.raw_results = filtered_results
-                st.session_state.initial_count = len(raw_hits)
+                st.session_state.initial_count = initial_scan_count
                 st.session_state.current_query = query_state_key
+                st.session_state.current_search_mode = search_mode
                 for item in filtered_results:
+                    title = item["paper"].get("title")
+                    user_data = get_user_data(title)
+                    update_user_data(title, "search_count", int(user_data.get("search_count", 0)) + 1)
                     if item["similarity"] >= 0.25 and search_query:
-                        title = item["paper"].get("title")
-                        user_data = get_user_data(title)
                         if search_query not in user_data["matched_queries"]:
                             user_data["matched_queries"].append(search_query)
                             update_user_data(title, "matched_queries", user_data["matched_queries"])
@@ -1469,6 +1609,8 @@ def run():
             st.stop()
         bucket_counts = result_bucket_counts(results, search_query)
         st.success(f"Extracted {len(results)} matches. Rare/All: {bucket_counts['rare']} | Perfect: {bucket_counts['perfect']} | Valuable: {bucket_counts['valuable']} | Relevant: {bucket_counts['relevant']}")
+        if st.session_state.get("current_search_mode") == "llm_powered":
+            st.caption(f"LLM powered search | expanded query: {st.session_state.get('last_effective_search_query', search_query)}")
         year_counts = collect_year_counts(results, extract_year)
         if year_counts:
             with st.expander(tr(ui_language, "Optional analytics: Publication Trend", "可选分析：发表年份趋势"), expanded=False):
@@ -1644,23 +1786,20 @@ def run():
                 f"**{tr(ui_language, 'Venue', '期刊/会议')}:** <span style='color:{domain_color}; font-weight:bold;'>{highlighted_venue}</span> ({year}) &nbsp;&nbsp;|&nbsp;&nbsp; **Tier:** <span style='background-color:{tier_color}; color:white; padding:2px 6px; border-radius:4px; font-size:0.85em; font-weight:bold;'>{venue_data['t']}</span>",
                 unsafe_allow_html=True,
             )
-            if user_data["matched_queries"]:
-                st.markdown(f"**{tr(ui_language, 'Matched', '命中关键词')}:** " + " ".join([f"`{query}`" for query in user_data["matched_queries"]]))
+            if item.get("llm_score") is not None:
+                st.markdown(
+                    f"**LLM relevance:** `{item.get('llm_score')}/100` &nbsp; {item.get('llm_reason', '')}",
+                    unsafe_allow_html=True,
+                )
         with c2:
+            search_hits = int(user_data.get("search_count", len(user_data.get("matched_queries", []))))
+            st.markdown(f"**{tr(ui_language, 'Search Hits', '搜索命中次数')}:** `{search_hits}`")
             st.markdown(f"**{tr(ui_language, 'Reads', '阅读次数')}:** `{user_data['open_count']}`")
             if st.session_state.citations_fetched:
                 st.markdown(f"**{tr(ui_language, 'Cites', '引用数')}:** `{citations}` `{tr(ui_language, 'Fetched', '已抓取')}`")
             else:
                 st.markdown(f"**{tr(ui_language, 'Cites', '引用数')}:** `{tr(ui_language, 'Pending (Manual Fetch)', '待抓取（手动）')}`")
         with c3:
-            rating_options = [
-                "Unrated",
-                "Masterpiece",
-                "Solid",
-                "Average",
-                "Marginal",
-                "Poor",
-            ]
             rating_alias = {
                 "Masterpiece": "Masterpiece",
                 "Solid": "Solid",
@@ -1668,14 +1807,16 @@ def run():
                 "Marginal": "Marginal",
                 "Poor": "Poor",
             }
-            current_rating = rating_alias.get(user_data["rating"], user_data["rating"] if user_data["rating"] in rating_options else "Unrated")
-            new_rating = st.selectbox(
+            current_rating = rating_alias.get(user_data["rating"], user_data["rating"] if user_data["rating"] in RATING_OPTIONS else "Unrated")
+            rating_labels = [RATING_LABELS[value] for value in RATING_OPTIONS]
+            selected_rating_label = st.selectbox(
                 tr(ui_language, "Rating", "评分"),
-                rating_options,
-                index=rating_options.index(current_rating),
+                rating_labels,
+                index=RATING_OPTIONS.index(current_rating),
                 key=f"rate_{chk_key}",
                 label_visibility="collapsed",
             )
+            new_rating = RATING_OPTIONS[rating_labels.index(selected_rating_label)]
             if new_rating != user_data["rating"]:
                 update_user_data(title, "rating", new_rating)
             new_comments = st.text_input(tr(ui_language, "Notes", "笔记"), value=user_data["comments"], key=f"comment_{chk_key}", placeholder=tr(ui_language, "Take notes...", "写点笔记..."))
@@ -1712,7 +1853,7 @@ def run():
         default_base, default_model = resolve_provider_defaults(current_preset, app_config)
         api_key = st.text_input(tr(ui_language, "LLM API Key", "LLM API Key"), value=app_config.get("llm_api_key", ""), type="password", key="llm_api_key_input")
         base_url = st.text_input(tr(ui_language, "Base URL", "Base URL"), value=default_base, key="llm_base_url_input")
-        model_name = st.text_input(tr(ui_language, "Model ID", "模型 ID"), value=default_model, key="llm_model_input")
+        model_name = render_llm_model_input(ui_language, current_preset, default_model, "llm_model_input")
         if st.button(tr(ui_language, "Save LLM Settings", "保存 LLM 设置"), use_container_width=True, key="save_llm_settings"):
             app_config.update({"provider_preset": current_preset, "llm_api_key": api_key, "llm_base_url": base_url, "llm_model": model_name})
             save_json(CONFIG_FILE, app_config)

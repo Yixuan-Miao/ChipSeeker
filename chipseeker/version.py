@@ -1,2 +1,2 @@
-APP_VERSION = "V2.1.2"
+APP_VERSION = "V2.3.1"
 GITHUB_REPO_URL = "https://github.com/Yixuan-Miao/ChipSeeker"

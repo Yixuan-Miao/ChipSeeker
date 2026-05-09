@@ -1,4 +1,4 @@
-# ChipSeeker V2.1.2
+# ChipSeeker V2.3.1
 
 ## Quick Install / 快速安装
 

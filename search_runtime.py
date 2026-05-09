@@ -8,6 +8,8 @@ import time
 import numpy as np
 from chipseeker.cloud_access import cloud_embed, is_cloud_token
 
+EMBEDDING_TEXT_MODE = os.environ.get("CHIPSEEKER_EMBEDDING_TEXT_MODE", "title_abstract").strip().lower()
+
 
 def _log(message):
     timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -39,11 +41,17 @@ def _format_eta(seconds):
     return f"{seconds}s"
 
 
+def _cache_scope_key(scope_key):
+    if EMBEDDING_TEXT_MODE in ("metadata", "metadata_enriched", "v2"):
+        return f"{scope_key or 'all'}_metadata-v2"
+    return scope_key or "all"
+
+
 def get_cache_paths(db_file, model_name, scope_key="all"):
     db_name = os.path.splitext(os.path.basename(db_file))[0]
     db_safe = re.sub(r'[^A-Za-z0-9._-]+', '_', db_name)
     model_safe = re.sub(r'[^A-Za-z0-9._-]+', '_', model_name)
-    scope_safe = re.sub(r'[^A-Za-z0-9._-]+', '_', scope_key or "all")
+    scope_safe = re.sub(r'[^A-Za-z0-9._-]+', '_', _cache_scope_key(scope_key))
     cache_dir = os.path.join(os.path.dirname(os.path.abspath(db_file)), "cache")
     os.makedirs(cache_dir, exist_ok=True)
     cache_file = os.path.join(cache_dir, f"cache_{db_safe}_{model_safe}_{scope_safe}.npy")
@@ -55,7 +63,7 @@ def _legacy_cache_candidates(db_file, model_name, scope_key="all"):
     db_name = os.path.splitext(os.path.basename(db_file))[0]
     db_safe = re.sub(r'[^A-Za-z0-9._-]+', '_', db_name)
     model_safe = re.sub(r'[^A-Za-z0-9._-]+', '_', model_name)
-    scope_safe = re.sub(r'[^A-Za-z0-9._-]+', '_', scope_key or "all")
+    scope_safe = re.sub(r'[^A-Za-z0-9._-]+', '_', _cache_scope_key(scope_key))
     cache_dir = os.path.join(os.path.dirname(os.path.abspath(db_file)), "cache")
     if not os.path.isdir(cache_dir):
         return []
@@ -166,12 +174,42 @@ def resolve_portable_cache(db_file, model_name, scope_key, fingerprints):
     return primary_cache, primary_meta, "", 0
 
 
+def _list_text(value):
+    if isinstance(value, (list, tuple)):
+        return " ".join(str(item) for item in value if str(item).strip())
+    return str(value or "")
+
+
 def _paper_text(paper):
-    return f"{paper.get('title', '')} {paper.get('abstract', '')}".strip()
+    title = paper.get("title", "")
+    abstract = paper.get("abstract", "")
+    if EMBEDDING_TEXT_MODE not in ("metadata", "metadata_enriched", "v2"):
+        return f"{title} {abstract}".strip()
+    parts = [
+        f"Title: {title}",
+        f"Abstract: {abstract}",
+        f"Venue: {paper.get('venue', '')}",
+        f"Author Keywords: {_list_text(paper.get('keywords'))}",
+        f"IEEE Terms: {_list_text(paper.get('ieee_terms'))}",
+    ]
+    return "\n".join(part for part in parts if part.split(":", 1)[-1].strip())
 
 
 def _dataset_fingerprints(papers):
     return [hashlib.sha1(_paper_text(paper).encode('utf-8')).hexdigest() for paper in papers]
+
+
+def _paper_match_key(paper):
+    doi = str((paper or {}).get("doi", "")).strip().upper()
+    if doi:
+        return f"doi:{doi}"
+    title = re.sub(r"\s+", " ", str((paper or {}).get("title", "")).strip().lower())
+    year = str((paper or {}).get("year", "")).strip()
+    if title and year:
+        return f"title_year:{title}|{year}"
+    if title:
+        return f"title:{title}"
+    return f"fp:{hashlib.sha1(_paper_text(paper).encode('utf-8')).hexdigest()}"
 
 
 def describe_cache_status(db_file, model_name, scope_key="all", papers_override=None):
@@ -263,6 +301,7 @@ class PaperSearcher:
     def _save_meta(self, fingerprints):
         payload = {
             "cache_schema": 2,
+            "embedding_text_mode": EMBEDDING_TEXT_MODE,
             "db_name": os.path.basename(self.jp),
             "model_name": self.mn,
             "scope_key": self.scope_key,
@@ -406,3 +445,35 @@ class PaperSearcher:
             qe = np.array(qe).reshape(1, -1)
         hits = _semantic_search(qe, self.eb, top_k=top_k)
         return [{"similarity": x['score'], "paper": self.dt[x['corpus_id']]} for x in hits]
+
+    def search_candidates(self, query, candidate_papers, top_k=50):
+        candidate_papers = list(candidate_papers or [])
+        if not candidate_papers:
+            return []
+
+        positions = {}
+        for index, paper in enumerate(self.dt):
+            positions.setdefault(_paper_match_key(paper), []).append(index)
+
+        candidate_indexes = []
+        seen_indexes = set()
+        for paper in candidate_papers:
+            indexes = positions.get(_paper_match_key(paper), [])
+            for index in indexes:
+                if index not in seen_indexes:
+                    candidate_indexes.append(index)
+                    seen_indexes.add(index)
+                    break
+
+        if not candidate_indexes:
+            return []
+
+        qe = self._embed([query], stage_message="Embedding query") if self.mt != 'l' else self.md.encode(query, convert_to_numpy=True)
+        if self.mt != 'l':
+            qe = np.array(qe).reshape(1, -1)
+        subset_embeddings = self.eb[candidate_indexes]
+        hits = _semantic_search(qe, subset_embeddings, top_k=min(int(top_k), len(candidate_indexes)))
+        return [
+            {"similarity": hit["score"], "paper": self.dt[candidate_indexes[hit["corpus_id"]]]}
+            for hit in hits
+        ]

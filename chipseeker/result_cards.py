@@ -35,6 +35,8 @@ def default_card_state():
         "rating": "Unrated",
         "comments": "",
         "open_count": 0,
+        "matched_queries": [],
+        "search_count": 0,
     }
 
 
@@ -89,6 +91,7 @@ def build_result_cards(results, query_text="", exact_query="", user_states=None,
                 "rating": user_state.get("rating", "Unrated"),
                 "comments": user_state.get("comments", ""),
                 "open_count": int(user_state.get("open_count", 0)),
+                "search_count": int(user_state.get("search_count", len(user_state.get("matched_queries", [])))),
                 "citation_count": citation_count,
                 "paper": paper,
             }

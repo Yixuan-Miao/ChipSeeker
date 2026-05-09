@@ -1,0 +1,175 @@
+{
+  "version": 1,
+  "groups": [
+    {
+      "canonical": "operational amplifier",
+      "terms": ["op amp", "opamp", "ota", "operational transconductance amplifier", "folded cascode", "telescopic amplifier", "two-stage amplifier", "gain boosting", "chopper amplifier", "auto-zero amplifier"],
+      "domains": ["analog"]
+    },
+    {
+      "canonical": "low-noise amplifier",
+      "terms": ["lna", "low noise amplifier", "cryogenic lna", "wideband lna", "noise matching", "inductive degeneration", "common-gate lna", "common-source lna", "hemt lna", "inp hemt"],
+      "domains": ["rf", "quantum"]
+    },
+    {
+      "canonical": "analog-to-digital converter",
+      "terms": ["adc", "a/d converter", "data converter", "sar adc", "pipeline adc", "delta-sigma adc", "sigma-delta adc", "flash adc", "time-interleaved adc", "noise-shaping sar", "vco-based adc", "continuous-time delta-sigma", "ctsdm"],
+      "domains": ["analog", "mixed-signal"]
+    },
+    {
+      "canonical": "digital-to-analog converter",
+      "terms": ["dac", "d/a converter", "current-steering dac", "r-2r dac", "capacitive dac", "segmented dac", "resistor-string dac", "delta-sigma dac"],
+      "domains": ["analog", "mixed-signal"]
+    },
+    {
+      "canonical": "phase-locked loop",
+      "terms": ["pll", "all-digital pll", "adpll", "fractional-n pll", "integer-n pll", "bang-bang pll", "bbpll", "mdll", "multiplying delay-locked loop", "dll", "clock generator", "clock recovery", "cdr"],
+      "domains": ["rf", "mixed-signal"]
+    },
+    {
+      "canonical": "oscillator",
+      "terms": ["vco", "dco", "lc oscillator", "ring oscillator", "crystal oscillator", "xo", "relaxation oscillator", "injection-locked oscillator", "quadrature oscillator", "phase noise"],
+      "domains": ["rf", "mixed-signal"]
+    },
+    {
+      "canonical": "frequency synthesizer",
+      "terms": ["synthesizer", "rf synthesizer", "mm-wave synthesizer", "sub-sampling pll", "injection locking", "frequency multiplier", "divider", "prescaler", "ilfd"],
+      "domains": ["rf", "mmwave"]
+    },
+    {
+      "canonical": "mixer",
+      "terms": ["upconversion mixer", "downconversion mixer", "passive mixer", "active mixer", "gilbert mixer", "iq mixer", "sub-harmonic mixer", "harmonic rejection mixer"],
+      "domains": ["rf"]
+    },
+    {
+      "canonical": "power amplifier",
+      "terms": ["pa", "rf power amplifier", "mm-wave pa", "doherty pa", "class-d pa", "class-e pa", "class-f pa", "outphasing", "envelope tracking", "digital predistortion", "dpd"],
+      "domains": ["rf", "mmwave"]
+    },
+    {
+      "canonical": "transceiver",
+      "terms": ["receiver", "rx", "transmitter", "tx", "rf front-end", "front end", "zero-if", "low-if", "direct conversion", "superheterodyne", "beamformer", "phased array"],
+      "domains": ["rf", "wireless"]
+    },
+    {
+      "canonical": "millimeter-wave",
+      "terms": ["mm-wave", "mmwave", "毫米波", "sub-thz", "terahertz", "thz", "60 ghz", "77 ghz", "140 ghz", "d-band", "e-band", "w-band"],
+      "domains": ["rf", "mmwave"]
+    },
+    {
+      "canonical": "wireline transceiver",
+      "terms": ["serdes", "wireline", "equalizer", "ctle", "dfe", "ffe", "pam4", "nrzi", "clock-data recovery", "cdr", "high-speed io", "optical receiver"],
+      "domains": ["mixed-signal", "communication"]
+    },
+    {
+      "canonical": "voltage regulator",
+      "terms": ["ldo", "low-dropout regulator", "dc-dc converter", "buck converter", "boost converter", "switched-capacitor converter", "charge pump", "pmic", "power management", "iv regulator"],
+      "domains": ["power"]
+    },
+    {
+      "canonical": "bandgap reference",
+      "terms": ["bgr", "voltage reference", "current reference", "ptat", "ctat", "temperature sensor", "thermal sensor", "curvature compensation"],
+      "domains": ["analog", "sensor"]
+    },
+    {
+      "canonical": "sensor interface",
+      "terms": ["readout circuit", "afe", "analog front-end", "capacitance-to-digital converter", "cdc", "temperature sensor", "biosensor", "image sensor", "cmos image sensor", "cis", "neural recording"],
+      "domains": ["analog", "biomedical", "sensor"]
+    },
+    {
+      "canonical": "memory",
+      "terms": ["sram", "dram", "reram", "rram", "mram", "stt-mram", "flash memory", "nonvolatile memory", "nvram", "sense amplifier", "bitcell", "near-memory computing"],
+      "domains": ["memory", "ai-hardware"]
+    },
+    {
+      "canonical": "compute-in-memory",
+      "terms": ["cim", "in-memory computing", "processing-in-memory", "pim", "near-memory computing", "sram cim", "reram cim", "analog cim", "digital cim", "mac array", "binary neural network accelerator"],
+      "domains": ["ai-hardware", "memory"]
+    },
+    {
+      "canonical": "ai accelerator",
+      "terms": ["neural network accelerator", "deep learning accelerator", "dnn accelerator", "cnn accelerator", "transformer accelerator", "systolic array", "tensor core", "npu", "edge ai", "tinyml", "hardware accelerator"],
+      "domains": ["ai-hardware"]
+    },
+    {
+      "canonical": "machine learning hardware",
+      "terms": ["ml hardware", "ai chip", "edge processor", "neuromorphic processor", "spiking neural network", "snn", "event-driven processor", "approximate computing", "mixed-signal computing"],
+      "domains": ["ai-hardware"]
+    },
+    {
+      "canonical": "hardware security",
+      "terms": ["physical unclonable function", "puf", "true random number generator", "trng", "side-channel attack", "fault injection", "secure enclave", "cryptographic accelerator"],
+      "domains": ["security"]
+    },
+    {
+      "canonical": "eda",
+      "terms": ["electronic design automation", "place and route", "placement", "routing", "logic synthesis", "high-level synthesis", "hls", "timing closure", "sta", "design space exploration", "dse", "analog layout automation"],
+      "domains": ["eda"]
+    },
+    {
+      "canonical": "cryogenic cmos",
+      "terms": ["cryo-cmos", "cryocmos", "cryogenic cmos", "low-temperature cmos", "4 k cmos", "77 k cmos", "cryogenic electronics", "quantum controller", "qubit control chip", "cryo controller"],
+      "domains": ["quantum", "cmos"]
+    },
+    {
+      "canonical": "qubit readout",
+      "terms": ["quantum readout", "qubit measurement", "dispersive readout", "readout resonator", "multiplexed readout", "single-shot readout", "cryogenic readout", "rf reflectometry", "spin qubit readout"],
+      "domains": ["quantum"]
+    },
+    {
+      "canonical": "qubit control",
+      "terms": ["quantum control", "qubit controller", "pulse generator", "microwave pulse", "iq modulation", "single-qubit gate", "two-qubit gate", "flux bias", "spin qubit control", "superconducting qubit control"],
+      "domains": ["quantum"]
+    },
+    {
+      "canonical": "quantum error correction",
+      "terms": ["qec", "surface code", "syndrome extraction", "quantum decoder", "cryogenic decoder", "low-latency decoder", "fault-tolerant quantum computing"],
+      "domains": ["quantum"]
+    },
+    {
+      "canonical": "superconducting qubit",
+      "terms": ["transmon", "flux qubit", "xmon", "josephson junction", "squid", "superconducting circuit", "circuit qed", "resonator"],
+      "domains": ["quantum"]
+    },
+    {
+      "canonical": "spin qubit",
+      "terms": ["silicon spin qubit", "quantum dot", "rf reflectometry", "charge sensing", "single-electron transistor", "set sensor", "gate-based readout"],
+      "domains": ["quantum"]
+    },
+    {
+      "canonical": "device technology",
+      "terms": ["finfet", "fdsOI", "soi", "gaa", "nanosheet", "nanowire", "cmos process", "bcd", "bicmos", "gan", "inp", "hemt", "mosfet", "tfet"],
+      "domains": ["device"]
+    },
+    {
+      "canonical": "analog layout",
+      "terms": ["common-centroid", "layout matching", "guard ring", "substrate noise", "parasitic extraction", "pex", "emir", "electromigration", "ir drop", "latch-up"],
+      "domains": ["analog", "layout"]
+    },
+    {
+      "canonical": "calibration",
+      "terms": ["background calibration", "foreground calibration", "digital calibration", "self-calibration", "mismatch calibration", "offset cancellation", "gain calibration", "timing skew calibration"],
+      "domains": ["mixed-signal"]
+    },
+    {
+      "canonical": "noise",
+      "terms": ["thermal noise", "flicker noise", "1/f noise", "phase noise", "jitter", "noise figure", "nf", "input-referred noise", "quantization noise"],
+      "domains": ["analog", "rf"]
+    },
+    {
+      "canonical": "linearity",
+      "terms": ["sfdr", "sndr", "thd", "hd2", "hd3", "ip3", "iip3", "p1db", "enob", "dynamic range", "linearity enhancement"],
+      "domains": ["analog", "rf"]
+    },
+    {
+      "canonical": "low power",
+      "terms": ["ultra-low power", "energy efficient", "subthreshold", "near-threshold", "energy harvesting", "batteryless", "duty cycling", "power gating"],
+      "domains": ["analog", "digital", "iot"]
+    },
+    {
+      "canonical": "clocking",
+      "terms": ["clock distribution", "clock tree", "skew", "jitter", "deskew", "time-to-digital converter", "tdc", "delay line", "time amplifier"],
+      "domains": ["mixed-signal", "digital"]
+    }
+  ]
+}

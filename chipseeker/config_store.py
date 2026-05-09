@@ -4,7 +4,7 @@ from chipseeker.utils import load_json, save_json
 DEFAULT_CONFIG = {
     "llm_api_key": "",
     "llm_base_url": "https://api.deepseek.com",
-    "llm_model": "deepseek-chat",
+    "llm_model": "deepseek-v4-flash",
     "provider_preset": "DeepSeek",
     "embedding_model": "all-MiniLM-L6-v2",
     "emb_api_key": "",
@@ -43,9 +43,11 @@ class UserDataStore:
     def get(self, title):
         item = self.data.get(
             title,
-            {"rating": "Unrated", "open_count": 0, "comments": "", "matched_queries": []},
+            {"rating": "Unrated", "open_count": 0, "comments": "", "matched_queries": [], "search_count": 0},
         )
         item["rating"] = LEGACY_RATING_MAP.get(item["rating"], item["rating"])
+        item.setdefault("matched_queries", [])
+        item.setdefault("search_count", len(item.get("matched_queries", [])))
         return item
 
     def update(self, title, key, value):
@@ -55,6 +57,7 @@ class UserDataStore:
                 "open_count": 0,
                 "comments": "",
                 "matched_queries": [],
+                "search_count": 0,
             }
         self.data[title][key] = value
         save_json(self.filepath, self.data)

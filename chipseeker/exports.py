@@ -225,14 +225,6 @@ def build_search_results_html(results, search_query, current_year, analyze_venue
             "B": "#8E24AA",
             "C": "#757575",
         }.get(venue_data.get("t", ""), "#9E9E9E")
-        matched_queries = user_data.get("matched_queries", [])
-        matched_html = ""
-        if matched_queries:
-            matched_html = (
-                "<div class='meta-row'><strong>Matched:</strong> "
-                + " ".join(f"<code>{html.escape(query)}</code>" for query in matched_queries)
-                + "</div>"
-            )
         citation_text = f"{citations} (Fetched)" if citations_fetched else "Pending (Manual Fetch)"
         links = []
         if doi:
@@ -242,7 +234,18 @@ def build_search_results_html(results, search_query, current_year, analyze_venue
         links_html = " | ".join(links)
         abstract_block = html.escape(abstract).replace("\n", "<br>")
         notes = html.escape(user_data.get("comments", "") or "")
-        rating = html.escape(user_data.get("rating", "Unrated"))
+        rating_value = user_data.get("rating", "Unrated")
+        rating = html.escape(
+            {
+                "Unrated": "☆ Unrated",
+                "Masterpiece": "★★★★★ Masterpiece",
+                "Solid": "★★★★ Solid",
+                "Average": "★★★ Average",
+                "Marginal": "★★ Marginal",
+                "Poor": "★ Poor",
+            }.get(rating_value, rating_value)
+        )
+        search_count = int(user_data.get("search_count", len(user_data.get("matched_queries", []))))
 
         cards.append(
             f"""
@@ -271,13 +274,13 @@ def build_search_results_html(results, search_query, current_year, analyze_venue
                     <strong>Tier:</strong>
                     <span class="tier" style="background:{tier_color};">{html.escape(venue_data.get("t", "N/A"))}</span>
                   </div>
-                  {matched_html}
                   <details class="abstract-box">
                     <summary>Read Abstract</summary>
                     <div class="abstract-text">{abstract_block}</div>
                   </details>
                 </div>
                 <div class="side-col">
+                  <div><strong>Search Hits:</strong> <code>{search_count}</code></div>
                   <div><strong>Reads:</strong> <code>{int(user_data.get("open_count", 0))}</code></div>
                   <div><strong>Cites:</strong> <code>{html.escape(citation_text)}</code></div>
                   <div><strong>Rating:</strong> <code>{rating}</code></div>
