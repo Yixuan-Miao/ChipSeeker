@@ -94,9 +94,48 @@ def _cache_matches_fingerprints(cache_file, meta_file, fingerprints):
             and fingerprints[:len(old_fingerprints)] == old_fingerprints
         ):
             return "append_only", len(old_fingerprints)
+        if embeddings.shape[0] == len(old_fingerprints):
+            matched_count = _count_reusable_fingerprints(old_fingerprints, fingerprints)
+            if matched_count:
+                return "partial", matched_count
     except Exception:
         return "", 0
     return "", 0
+
+
+def _count_reusable_fingerprints(old_fingerprints, fingerprints):
+    available = {}
+    for fingerprint in old_fingerprints:
+        available[fingerprint] = available.get(fingerprint, 0) + 1
+    matched_count = 0
+    for fingerprint in fingerprints:
+        count = available.get(fingerprint, 0)
+        if count:
+            available[fingerprint] = count - 1
+            matched_count += 1
+    return matched_count
+
+
+def _partial_reuse_embeddings(cache_file, meta_file, fingerprints):
+    old_embeddings = np.load(cache_file)
+    meta = _load_meta_file(meta_file)
+    old_fingerprints = meta.get("fingerprints", [])
+    if old_embeddings.shape[0] != len(old_fingerprints):
+        return None, []
+
+    positions = {}
+    for index, fingerprint in enumerate(old_fingerprints):
+        positions.setdefault(fingerprint, []).append(index)
+
+    reused = np.zeros((len(fingerprints), old_embeddings.shape[1]), dtype=np.float32)
+    missing_indexes = []
+    for index, fingerprint in enumerate(fingerprints):
+        old_positions = positions.get(fingerprint)
+        if old_positions:
+            reused[index] = old_embeddings[old_positions.pop(0)]
+        else:
+            missing_indexes.append(index)
+    return reused, missing_indexes
 
 
 def _migrate_cache_if_needed(source_cache, source_meta, target_cache, target_meta):
@@ -113,11 +152,17 @@ def resolve_portable_cache(db_file, model_name, scope_key, fingerprints):
     state, cached_count = _cache_matches_fingerprints(primary_cache, primary_meta, fingerprints) if os.path.exists(primary_cache) else ("", 0)
     if state:
         return primary_cache, primary_meta, state, cached_count
+    best_partial = None
     for candidate_cache, candidate_meta in _legacy_cache_candidates(db_file, model_name, scope_key):
         state, cached_count = _cache_matches_fingerprints(candidate_cache, candidate_meta, fingerprints)
-        if state:
+        if state in ("exact", "append_only"):
             cache_file, meta_file = _migrate_cache_if_needed(candidate_cache, candidate_meta, primary_cache, primary_meta)
             return cache_file, meta_file, state, cached_count
+        if state == "partial" and (best_partial is None or cached_count > best_partial[3]):
+            best_partial = (candidate_cache, candidate_meta, state, cached_count)
+    if best_partial:
+        cache_file, meta_file = _migrate_cache_if_needed(best_partial[0], best_partial[1], primary_cache, primary_meta)
+        return cache_file, meta_file, best_partial[2], best_partial[3]
     return primary_cache, primary_meta, "", 0
 
 
@@ -158,6 +203,10 @@ def describe_cache_status(db_file, model_name, scope_key="all", papers_override=
         return status
     if cache_state == "append_only":
         status["append_only"] = True
+        status["cached_papers"] = cached_count
+        status["new_papers"] = max(0, len(fingerprints) - cached_count)
+        return status
+    if cache_state == "partial":
         status["cached_papers"] = cached_count
         status["new_papers"] = max(0, len(fingerprints) - cached_count)
         return status
@@ -322,8 +371,27 @@ class PaperSearcher:
                     np.save(self.cf, embeddings)
                     self._save_meta(current_fingerprints)
                     return embeddings
+
+                if cache_state == "partial":
+                    self._log(f"partial cache reuse {cached_count}/{len(current_fingerprints)} from {self.cf}")
+                    reused_embeddings, missing_indexes = _partial_reuse_embeddings(self.cf, self.mf, current_fingerprints)
+                    if reused_embeddings is None:
+                        raise RuntimeError("partial cache metadata does not match embedding rows")
+                    if missing_indexes:
+                        missing_texts = [texts[index] for index in missing_indexes]
+                        new_embeddings = self._embed(missing_texts, stage_message="Repairing changed embeddings")
+                        for row_index, embedding in zip(missing_indexes, new_embeddings):
+                            reused_embeddings[row_index] = embedding
+                    np.save(self.cf, reused_embeddings)
+                    self._save_meta(current_fingerprints)
+                    return reused_embeddings
             except Exception as exc:
                 self._log(f"failed to load cache {self.cf}: {exc}")
+                if cache_state in ("append_only", "partial"):
+                    raise RuntimeError(
+                        "Reusable embedding cache was found, but repairing the small changed subset failed. "
+                        "Full-library rebuild was intentionally skipped; fix the network/API issue and retry."
+                    ) from exc
         elif os.path.exists(self.cf):
             self._log("cache invalidated because paper order/content changed")
 

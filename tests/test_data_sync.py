@@ -27,7 +27,7 @@ def write_csv(path, rows):
         writer.writerows(rows)
 
 
-def test_scan_and_import_uses_multilevel_keys_and_clears_cache(tmp_path):
+def test_scan_and_import_uses_multilevel_keys_and_preserves_cache_for_repair(tmp_path):
     source_root = tmp_path / "sources"
     source_root.mkdir()
     cache_dir = tmp_path / "cache"
@@ -102,7 +102,7 @@ def test_scan_and_import_uses_multilevel_keys_and_clears_cache(tmp_path):
     assert added_count == 1
     assert updated_count == 1
     assert removed_count == 0
-    assert not old_cache.exists()
+    assert old_cache.exists()
 
     db_text = db_file.read_text(encoding="utf-8")
     assert "10.1000/update" in db_text

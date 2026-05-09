@@ -21,7 +21,7 @@ def write_db(path, papers):
     path.write_text(json.dumps(papers, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def test_search_runtime_rebuilds_cache_when_order_changes(tmp_path):
+def test_search_runtime_reorders_cache_when_order_changes(tmp_path):
     db_file = tmp_path / "papers.json"
     papers = [
         {"title": "Paper A", "abstract": "Alpha"},
@@ -35,8 +35,38 @@ def test_search_runtime_rebuilds_cache_when_order_changes(tmp_path):
     assert len(DummySearcher.embed_history[0]) == 2
 
     write_db(db_file, list(reversed(papers)))
+    status = describe_cache_status(str(db_file), "all-MiniLM-L6-v2")
+    assert status["cached_papers"] == 2
+    assert status["new_papers"] == 0
+    searcher = DummySearcher(str(db_file), model_name="all-MiniLM-L6-v2")
+    assert len(DummySearcher.embed_history) == 1
+    assert np.array_equal(searcher.eb, np.array([[12.0], [13.0]], dtype=np.float32))
+
+
+def test_search_runtime_repairs_only_changed_fingerprints(tmp_path):
+    db_file = tmp_path / "papers.json"
+    papers = [
+        {"title": "Paper A", "abstract": "Alpha"},
+        {"title": "Paper B", "abstract": "Beta"},
+    ]
+    write_db(db_file, papers)
+
+    DummySearcher.embed_history = []
     DummySearcher(str(db_file), model_name="all-MiniLM-L6-v2")
-    assert len(DummySearcher.embed_history[-1]) == 2
+    assert len(DummySearcher.embed_history[0]) == 2
+
+    changed_papers = [
+        {"title": "Paper A", "abstract": "Alpha"},
+        {"title": "Paper B", "abstract": "Gamma"},
+    ]
+    write_db(db_file, changed_papers)
+    status = describe_cache_status(str(db_file), "all-MiniLM-L6-v2")
+    assert status["cached_papers"] == 1
+    assert status["new_papers"] == 1
+
+    searcher = DummySearcher(str(db_file), model_name="all-MiniLM-L6-v2")
+    assert DummySearcher.embed_history[-1] == ["Paper B Gamma"]
+    assert np.array_equal(searcher.eb, np.array([[13.0], [13.0]], dtype=np.float32))
 
 
 def test_search_runtime_reuses_legacy_hash_cache_after_database_move(tmp_path):
