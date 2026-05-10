@@ -17,6 +17,7 @@ _EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="chipseeker")
 _TASKS = {}
 _LOCK = threading.Lock()
 _MAX_HISTORY = 200
+DEFAULT_LLM_RERANK_LIMIT = 20
 
 
 def _log(message):
@@ -76,6 +77,7 @@ def _run_task(task_id, fn, payload):
         if current.get("cancel_requested") or current.get("status") == "canceled":
             _log(f"{task_id} canceled result discarded")
             append_history(task_id, "Task result discarded because it was canceled.", level="warning")
+            _set_task(task_id, status="canceled", message="Canceled", finished_at=time.time())
             return
         _log(f"{task_id} completed result={result}")
         append_history(task_id, f"Task completed: {result}", level="success")
@@ -196,7 +198,7 @@ def _llm_powered_search(task_id, payload):
     search_query = str(payload.get("search_query", "")).strip()
     must_have = str(payload.get("must_have", "")).strip()
     display_limit = int(payload.get("display_limit", 50) or 50)
-    rerank_limit = int(payload.get("rerank_limit", 10) or 10)
+    rerank_limit = int(payload.get("rerank_limit", DEFAULT_LLM_RERANK_LIMIT) or DEFAULT_LLM_RERANK_LIMIT)
     selected_years = tuple(payload.get("selected_years") or ())
     selected_ui_venues = list(payload.get("selected_ui_venues") or [])
     active_scope_years = list(payload.get("active_scope_years") or [])
@@ -302,7 +304,7 @@ def submit_llm_powered_search(
     llm_api_key="",
     llm_base_url="",
     llm_model="",
-    rerank_limit=10,
+    rerank_limit=DEFAULT_LLM_RERANK_LIMIT,
     query_state_key="",
 ):
     return submit_task(

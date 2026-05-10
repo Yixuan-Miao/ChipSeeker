@@ -24,7 +24,7 @@ from chipseeker.data_sync import (
 )
 from chipseeker.embedding_scope import available_years, build_scope_key, filter_papers_by_years, scope_label
 from chipseeker.exports import build_bibtex, build_csv_rows, build_notebooklm_export, build_search_results_html, generate_csv_link, paper_authors_display, write_text_file
-from chipseeker.llm_tools import analyze_with_llm, expand_search_query_with_llm, generate_global_report_with_llm, generate_search_keywords, get_batch_citations, rerank_results_with_llm
+from chipseeker.llm_tools import analyze_with_llm, generate_global_report_with_llm, generate_search_keywords, get_batch_citations
 from chipseeker.maintenance import generate_db_stats
 from chipseeker.migrations import migrate_local_data
 from chipseeker.paths import (
@@ -1640,11 +1640,11 @@ def run():
         if llm_task and llm_task.get("status") in {"queued", "running"}:
             llm_task_active = True
             st.info(f"LLM Powered Search: {llm_task.get('message', llm_task.get('status', 'running'))}")
-            st.progress(float(llm_task.get("progress", 0.0)) or 0.01)
-            task_cols = st.columns([1, 1, 2])
-            if task_cols[0].button("Refresh Status", use_container_width=True):
+            task_cols = st.columns([5, 1, 1])
+            task_cols[0].progress(float(llm_task.get("progress", 0.0)) or 0.01)
+            if task_cols[1].button("Refresh", use_container_width=True):
                 st.rerun()
-            if task_cols[1].button("Cancel LLM Search", use_container_width=True):
+            if task_cols[2].button("Cancel", use_container_width=True, type="primary"):
                 cancel_task(llm_task_id)
                 st.session_state.pop("llm_search_task_id", None)
                 st.warning("LLM Powered Search canceled. Any late DeepSeek response will be ignored.")
@@ -1660,7 +1660,7 @@ def run():
                 "llm_powered",
                 result.get("effective_query", search_query),
             )
-            st.success(f"LLM Powered Search finished. Reranked top {result.get('rerank_limit', 10)} papers.")
+            st.success(f"LLM Powered Search finished. Reranked top {result.get('rerank_limit', 20)} papers.")
             cleanup_task(llm_task_id)
             st.session_state.pop("llm_search_task_id", None)
             st.rerun()
@@ -1705,7 +1705,7 @@ def run():
                     llm_api_key=llm_runtime_key,
                     llm_base_url=base_url,
                     llm_model=model_name,
-                    rerank_limit=10,
+                    rerank_limit=20,
                     query_state_key=query_state_key,
                 )
                 st.rerun()
@@ -1745,32 +1745,18 @@ def run():
                             st.warning(tr(ui_language, "Current semantic cache is not ready. Build one of the ranges above first, or keep using metadata filters for now.", "当前语义缓存还没准备好。请先构建上面的任一范围，或者暂时只使用元数据过滤。"))
                         filtered_results = exact_first_hits[:display_limit_val] if (must_have or selected_ui_venues) else []
                     elif must_have or selected_ui_venues:
-                        candidate_top_k = min(max(display_limit_val, 120), 400) if search_mode == "llm_powered" else display_limit_val
+                        candidate_top_k = display_limit_val
                         filtered_results = searcher.search_candidates(
                             effective_query,
                             [item["paper"] for item in exact_first_hits],
                             top_k=candidate_top_k,
                         )
                     else:
-                        candidate_top_k = min(max(display_limit_val, 120), 400) if search_mode == "llm_powered" else display_limit_val
+                        candidate_top_k = display_limit_val
                         filtered_results = searcher.search(query=effective_query, top_k=candidate_top_k)
                         filtered_results = filter_search_results(filtered_results, selected_years, selected_ui_venues, "", analyze_venue, extract_year)
                 else:
                     filtered_results = exact_first_hits[:display_limit_val]
-                if search_mode == "llm_powered" and search_query and filtered_results:
-                    with st.spinner("LLM is reranking top candidates..."):
-                        try:
-                            filtered_results = rerank_results_with_llm(
-                                search_query,
-                                st.session_state.get("last_effective_search_query", search_query),
-                                filtered_results,
-                                llm_runtime_key,
-                                base_url,
-                                model_name,
-                                limit=min(50, len(filtered_results)),
-                            )
-                        except Exception as exc:
-                            st.warning(f"LLM rerank failed; showing semantic order instead. {exc}")
                 if len(filtered_results) > display_limit_val:
                     filtered_results = filtered_results[:display_limit_val]
                 apply_search_results(filtered_results, initial_scan_count, query_state_key, search_mode, effective_query)

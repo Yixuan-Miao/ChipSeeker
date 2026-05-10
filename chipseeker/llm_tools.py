@@ -36,7 +36,7 @@ def call_llm_api(prompt, api_key, base_url, model_name, temp=0.3):
 
     from openai import OpenAI
 
-    client = OpenAI(api_key=api_key, base_url=base_url, timeout=30.0, max_retries=0)
+    client = OpenAI(api_key=api_key, base_url=base_url, timeout=180.0, max_retries=0)
     try:
         response = client.chat.completions.create(
             model=model_name,
@@ -56,7 +56,7 @@ def call_llm_api(prompt, api_key, base_url, model_name, temp=0.3):
                 "Open LLM Review & Analysis -> Configure LLM API and update the key."
             ) from exc
         if "timed out" in lower_message or "timeout" in lower_message:
-            raise RuntimeError("LLM request timed out. Try again later or switch to a faster model.") from exc
+            raise RuntimeError("LLM request timed out after 3 minutes. Try again later or switch to a faster model.") from exc
         raise
 
 
