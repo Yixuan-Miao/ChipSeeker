@@ -1628,12 +1628,12 @@ def run():
             if key.startswith("chk_"):
                 del st.session_state[key]
 
+    llm_task_active = False
     trigger_search = bool(search_query or selected_ui_venues or must_have)
     query_state_key = ""
-    if trigger_search and not llm_task_active:
+    if trigger_search:
         query_state_key = f"{search_query}_must{must_have}_limit{display_limit_val}_{selected_emb_model}_v{selected_ui_venues}_y{selected_years}_csv{hash(current_csv_state)}"
 
-    llm_task_active = False
     llm_task_id = st.session_state.get("llm_search_task_id")
     if llm_task_id:
         llm_task = get_task(llm_task_id)
