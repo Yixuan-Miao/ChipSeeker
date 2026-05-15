@@ -1,12 +1,12 @@
 [
   {
     "date": "2026-05-15",
-    "title": "Coverage audit: current library includes ISSCC 2026, IEEE journal 2026 Jan-Mar issues plus Early Access. Next refresh target: IEEE Apr-May and Nature/NE Mar-May.",
-    "title_zh": "覆盖检查：当前库已包含 ISSCC 2026、IEEE 期刊 2026 年 1-3 月正刊和 Early Access。下一次补充目标：IEEE 4-5 月、Nature/NE 3-5 月。"
+    "title": "Library update: ISSCC 2026 and early-2026 IEEE journal papers are now included.",
+    "title_zh": "文献库更新：已加入 ISSCC 2026 与 2026 年初 IEEE 期刊新论文。"
   },
   {
     "date": "2026-04-29",
     "title": "DeepSeek V4 Pro is now live for LLM Analysis and LLM Powered Search.",
-    "title_zh": "LLM Analysis 和 LLM Powered Search 已接入 DeepSeek V4 Pro。"
+    "title_zh": "功能更新：LLM Analysis 与 LLM Powered Search 已接入 DeepSeek V4 Pro。"
   }
 ]

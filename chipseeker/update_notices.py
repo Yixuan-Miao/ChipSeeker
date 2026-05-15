@@ -7,8 +7,8 @@ NOTICE_FILE = Path(__file__).with_name("update_notices.json")
 FALLBACK_NOTICES = [
     {
         "date": "2026-05-15",
-        "title": "Coverage audit: current library includes ISSCC 2026, IEEE journal 2026 Jan-Mar issues plus Early Access. Next refresh target: IEEE Apr-May and Nature/NE Mar-May.",
-        "title_zh": "覆盖检查：当前库已包含 ISSCC 2026、IEEE 期刊 2026 年 1-3 月正刊和 Early Access。下一次补充目标：IEEE 4-5 月、Nature/NE 3-5 月。",
+        "title": "Library update: ISSCC 2026 and early-2026 IEEE journal papers are now included.",
+        "title_zh": "文献库更新：已加入 ISSCC 2026 与 2026 年初 IEEE 期刊新论文。",
     }
 ]
 
