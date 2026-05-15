@@ -32,4 +32,4 @@ build-backend = "setuptools.build_meta"
 packages = ["chipseeker", "chipseeker.data"]
 
 [tool.setuptools.package-data]
-chipseeker = ["data/*.json"]
+chipseeker = ["data/*.json", "update_notices.json"]

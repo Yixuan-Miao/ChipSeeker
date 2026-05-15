@@ -51,6 +51,7 @@ from chipseeker.paths import (
 )
 from chipseeker.search_ui import collect_year_counts, filter_search_results, get_paper_id, highlight_text, required_words_from_query, result_bucket_counts, sort_results
 from chipseeker.task_queue import cancel_task, cleanup_task, get_task, submit_arxiv_incremental, submit_embedding_build, submit_llm_powered_search, submit_nature_incremental, submit_pdf_download
+from chipseeker.update_notices import load_update_notices
 from chipseeker.update_manager import (
     advance_ieee_sources,
     build_ieee_search_url,
@@ -272,6 +273,26 @@ def get_searcher_engine(db_file, model_name, api_key="", scope_key="all", scope_
 
 def render_taxonomy_matrix(total_papers, db_stats, active_years):
     with st.expander(f"Taxonomy & Library Matrix (Total Records: {total_papers})", expanded=True):
+        notices = load_update_notices(limit=2)
+        if notices:
+            notice_rows = []
+            for notice in notices:
+                text = notice.get("title_zh") or notice.get("title") or ""
+                date_text = notice.get("date") or "Update"
+                notice_rows.append(
+                    f"<div style='display:flex; gap:10px; align-items:flex-start; padding:6px 0; border-top:1px solid rgba(15,23,42,0.08);'>"
+                    f"<span style='font-size:12px; font-weight:900; color:#2563eb; min-width:74px;'>{date_text}</span>"
+                    f"<span style='font-size:13px; line-height:1.45; color:#334155; font-weight:700;'>{text}</span>"
+                    f"</div>"
+                )
+            st.markdown(
+                "<div style='margin:0 0 14px; padding:12px 14px; border:1px solid #dbeafe; border-radius:14px; "
+                "background:linear-gradient(135deg,#eff6ff,#f8fafc); box-shadow:0 10px 24px rgba(37,99,235,0.08);'>"
+                "<div style='font-size:12px; font-weight:950; color:#1d4ed8; letter-spacing:.08em; text-transform:uppercase;'>Library Updates</div>"
+                + "".join(notice_rows)
+                + "</div>",
+                unsafe_allow_html=True,
+            )
         if not active_years:
             st.info("No recognized venues found. Please import source CSV files.")
             return
