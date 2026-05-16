@@ -86,6 +86,17 @@ def inspect_csv_headers(path, logger=None):
     return [normalize_text(header) for header in headers if normalize_text(header)]
 
 
+def file_sha1(path, chunk_size=1024 * 1024):
+    digest = hashlib.sha1()
+    with open(path, "rb") as handle:
+        while True:
+            chunk = handle.read(chunk_size)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def classify_csv_source(headers):
     header_set = set(headers or [])
     missing = sorted(SOURCE_CSV_REQUIRED_FIELDS - header_set)
@@ -121,18 +132,26 @@ def load_source_manifest_entries(manifest_path=SOURCE_MANIFEST_FILE):
 
 def refresh_source_manifest(source_root=SOURCE_CSV_DIR, manifest_path=SOURCE_MANIFEST_FILE, logger=None):
     entries = []
-    for root, _, files in os.walk(source_root):
+    for root, dirs, files in os.walk(source_root):
+        dirs.sort()
         for name in sorted(files):
             if not name.lower().endswith(".csv"):
                 continue
             path = os.path.join(root, name)
             headers = inspect_csv_headers(path, logger=logger)
             profile = classify_csv_source(headers)
+            try:
+                digest = file_sha1(path)
+            except Exception as exc:
+                digest = ""
+                if logger:
+                    logger.warning("Could not hash CSV %s: %s", path, exc)
             entries.append(
                 {
                     "relative_path": os.path.relpath(path, source_root).replace("\\", "/"),
                     "category": classify_source_file(path),
                     "size_bytes": os.path.getsize(path),
+                    "sha1": digest,
                     "modified_at_utc": datetime.fromtimestamp(
                         os.path.getmtime(path), tz=timezone.utc
                     ).isoformat(),
@@ -142,6 +161,18 @@ def refresh_source_manifest(source_root=SOURCE_CSV_DIR, manifest_path=SOURCE_MAN
                     "skip_reason": profile["skip_reason"],
                 }
             )
+    seen_hashes = {}
+    for entry in sorted(entries, key=lambda item: item["relative_path"]):
+        digest = entry.get("sha1", "")
+        if not entry.get("valid_source") or not digest:
+            continue
+        duplicate_of = seen_hashes.get(digest)
+        if duplicate_of:
+            entry["valid_source"] = False
+            entry["duplicate_of"] = duplicate_of
+            entry["skip_reason"] = f"duplicate CSV content of {duplicate_of}"
+        else:
+            seen_hashes[digest] = entry["relative_path"]
     save_json(
         manifest_path,
         {
@@ -164,12 +195,29 @@ def organize_source_files(source_root=SOURCE_CSV_DIR, logger=None):
         category = classify_source_file(path)
         target_dir = source_target_dir(source_root, category)
         target_path = os.path.join(target_dir, name)
+        if os.path.exists(target_path):
+            stem, ext = os.path.splitext(name)
+            suffix = 2
+            while True:
+                candidate = os.path.join(target_dir, f"{stem}_{suffix}{ext}")
+                if not os.path.exists(candidate):
+                    target_path = candidate
+                    break
+                suffix += 1
         if os.path.abspath(path) == os.path.abspath(target_path):
             continue
-        shutil.move(path, target_path)
-        moved_files.append(target_path)
-        if logger:
-            logger.info("Organized source CSV %s -> %s", path, target_path)
+        try:
+            shutil.move(path, target_path)
+            moved_files.append(target_path)
+            if logger:
+                logger.info("Organized source CSV %s -> %s", path, target_path)
+        except OSError as exc:
+            if logger:
+                logger.warning(
+                    "Could not organize source CSV %s; it will be scanned in place. Error: %s",
+                    path,
+                    exc,
+                )
     return moved_files
 
 
@@ -434,10 +482,25 @@ def scan_and_import_csvs(db_file, cache_dir, source_root=SOURCE_CSV_DIR, manifes
 
     all_papers = load_json(db_file, [])
     existing_papers = {}
+    lookup = {}
+    ambiguous_keys = set()
+
+    def register_lookup_keys(canonical_key, paper):
+        for lookup_key in paper_lookup_keys(paper):
+            if not lookup_key:
+                continue
+            current = lookup.get(lookup_key)
+            if current and current != canonical_key:
+                ambiguous_keys.add(lookup_key)
+                lookup.pop(lookup_key, None)
+            elif lookup_key not in ambiguous_keys:
+                lookup[lookup_key] = canonical_key
+
     for paper in all_papers:
         key = paper_identity_key(paper)
-        if key:
+        if key and key not in existing_papers:
             existing_papers[key] = paper
+            register_lookup_keys(key, paper)
     original_keys = set(existing_papers.keys())
 
     for file in csv_files:
@@ -459,13 +522,22 @@ def scan_and_import_csvs(db_file, cache_dir, source_root=SOURCE_CSV_DIR, manifes
                     if not paper_key:
                         continue
 
-                    if paper_key not in current_keys:
-                        ordered_keys.append(paper_key)
-                    current_keys.add(paper_key)
+                    canonical_key = None
+                    for lookup_key in paper_lookup_keys(paper_obj):
+                        if lookup_key in lookup:
+                            canonical_key = lookup[lookup_key]
+                            break
+                    if canonical_key is None:
+                        canonical_key = paper_key
 
-                    existing_paper = existing_papers.get(paper_key)
+                    if canonical_key not in current_keys:
+                        ordered_keys.append(canonical_key)
+                    current_keys.add(canonical_key)
+
+                    existing_paper = existing_papers.get(canonical_key)
                     if existing_paper is None:
-                        existing_papers[paper_key] = paper_obj
+                        existing_papers[canonical_key] = paper_obj
+                        register_lookup_keys(canonical_key, paper_obj)
                         new_in_file += 1
                     else:
                         merged_paper, changed, embedding_changed = _merge_paper_from_source(
@@ -477,7 +549,8 @@ def scan_and_import_csvs(db_file, cache_dir, source_root=SOURCE_CSV_DIR, manifes
                             continue
                         if embedding_changed:
                             cache_invalidating_update_count += 1
-                        existing_papers[paper_key] = merged_paper
+                        existing_papers[canonical_key] = merged_paper
+                        register_lookup_keys(canonical_key, merged_paper)
                         updated_in_file += 1
 
             if new_in_file > 0:

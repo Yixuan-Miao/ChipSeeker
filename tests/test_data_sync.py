@@ -178,6 +178,71 @@ def test_metadata_only_refresh_preserves_embedding_cache(tmp_path):
     assert '"article_number": "123456"' in db_text
 
 
+def test_yearly_duplicate_csv_merges_by_lookup_keys_and_skips_identical_files(tmp_path):
+    source_root = tmp_path / "sources"
+    source_root.mkdir()
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    db_file = tmp_path / "papers.json"
+    manifest_path = tmp_path / "source_manifest.json"
+
+    row = {
+        "Document Title": "Yearly Bulk Paper",
+        "Abstract": "A" * 140,
+        "Authors": "Alice Smith; Bob Chen",
+        "Author Keywords": "adc",
+        "Publication Year": "2026",
+        "Publication Title": "IEEE Journal of Solid-State Circuits",
+        "Volume": "61",
+        "Issue": "3",
+        "Start Page": "10",
+        "End Page": "20",
+        "DOI": "10.1109/JSSC.2026.1234567",
+        "PDF Link": "https://ieeexplore.ieee.org/stamp/stamp.jsp?arnumber=1234567",
+    }
+    write_csv(source_root / "jssc_2026_full.csv", [row])
+    write_csv(source_root / "jssc_2026_full_duplicate.csv", [row])
+    db_file.write_text(
+        json.dumps(
+            [
+                {
+                    "title": "Yearly Bulk Paper",
+                    "abstract": "A" * 140,
+                    "year": "2026",
+                    "venue": "IEEE Journal of Solid-State Circuits",
+                    "doi": "",
+                    "pdf_link": "",
+                    "authors": ["A. Smith"],
+                    "first_author": "A. Smith",
+                    "last_author": "A. Smith",
+                    "keywords": [],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    valid_files = list_source_csv_files(str(source_root), str(manifest_path))
+    assert len(valid_files) == 1
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert any(entry.get("duplicate_of") for entry in manifest["entries"])
+
+    added_count, updated_count, removed_count, _ = scan_and_import_csvs(
+        str(db_file),
+        str(cache_dir),
+        source_root=str(source_root),
+        manifest_path=str(manifest_path),
+    )
+
+    papers = json.loads(db_file.read_text(encoding="utf-8"))
+    assert added_count == 0
+    assert updated_count == 1
+    assert removed_count == 0
+    assert len(papers) == 1
+    assert papers[0]["doi"] == "10.1109/JSSC.2026.1234567"
+    assert papers[0]["authors"] == ["Alice Smith", "Bob Chen"]
+
+
 def test_enrich_bibliographic_metadata_repairs_existing_db_without_removal(tmp_path):
     source_root = tmp_path / "sources"
     source_root.mkdir()

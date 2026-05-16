@@ -6,6 +6,8 @@ __pycache__/
 *.pyc
 .pytest_cache/
 pytest-cache-files-*/
+pytest_tmp_runtime/
+manual_verify_csv_dedupe_*/
 *.lnk
 build/
 dist/
