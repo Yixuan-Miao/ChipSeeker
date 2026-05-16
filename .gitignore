@@ -9,6 +9,7 @@ pytest-cache-files-*/
 pytest_tmp_runtime/
 manual_verify_csv_dedupe_*/
 manual_verify_early_access_*/
+manual_verify_junk_filter_*/
 *.lnk
 build/
 dist/

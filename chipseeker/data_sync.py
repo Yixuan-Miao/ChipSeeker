@@ -540,13 +540,28 @@ def _merge_paper_from_source(existing_paper, source_paper, allow_core_updates=Tr
     return merged, changed, before_embedding != embedding_relevant_signature(merged)
 
 
-def is_junk_paper(title, abstract):
+def _title_has_keyword(title_lower, keyword):
+    if keyword.isalnum() and len(keyword) <= 4:
+        return re.search(rf"\b{re.escape(keyword)}\b", title_lower) is not None
+    return keyword in title_lower
+
+
+def _title_has_any(title_lower, keywords):
+    return any(_title_has_keyword(title_lower, keyword) for keyword in keywords)
+
+
+def is_junk_paper(title, abstract, row=None):
     title_lower = title.get("title", "").lower() if isinstance(title, dict) else str(title).lower()
-    abstract_lower = str(abstract).lower()
-    junk_keywords = [
-        "guest editorial",
+    abstract_text = normalize_text(abstract)
+    abstract_lower = abstract_text.lower()
+    row = row or {}
+    has_doi = bool(normalize_doi(row.get("DOI", "")))
+    no_abstract_values = {"", "na", "n/a", "no abstract available.", "no abstract"}
+
+    hard_junk_keywords = [
         "table of contents",
         "front cover",
+        "back cover",
         "frontmatter",
         "author index",
         "message from",
@@ -556,18 +571,49 @@ def is_junk_paper(title, abstract):
         "index of authors",
         "issue information",
         "editor's note",
+        "list of reviewers",
+        "masthead",
+        "advertisement",
+        "publisher's note",
+    ]
+    if _title_has_any(title_lower, hard_junk_keywords):
+        return True
+
+    useful_intro_keywords = [
+        "introduction",
+        "overview",
+        "technical session",
+        "plenary session",
+        "session",
+        "tutorial",
+        "forum",
+        "keynote",
+        "panel",
+        "invited",
+        "special issue on",
+        "guest editorial",
+    ]
+    if (
+        has_doi
+        and _title_has_any(title_lower, useful_intro_keywords)
+        and abstract_lower not in no_abstract_values
+        and len(abstract_lower) >= 30
+    ):
+        return False
+
+    soft_junk_keywords = [
+        "guest editorial",
         "editorial:",
         "special issue on",
-        "list of reviewers",
         "special event",
         "student research preview",
         "srp",
         "technical session",
         "plenary session",
     ]
-    if any(keyword in title_lower for keyword in junk_keywords):
+    if _title_has_any(title_lower, soft_junk_keywords):
         return True
-    if len(abstract_lower) < 100 or abstract_lower in {"", "na", "n/a", "no abstract available.", "no abstract"}:
+    if len(abstract_lower) < 100 or abstract_lower in no_abstract_values:
         return True
     return False
 
@@ -612,7 +658,7 @@ def scan_and_import_csvs(db_file, cache_dir, source_root=SOURCE_CSV_DIR, manifes
                 for row in reader:
                     title = normalize_text(row.get("Document Title", ""))
                     abstract = normalize_text(row.get("Abstract", ""))
-                    if is_junk_paper(title, abstract):
+                    if is_junk_paper(title, abstract, row):
                         continue
                     if not title or not abstract or abstract.upper() == "NA":
                         continue
@@ -704,7 +750,7 @@ def enrich_bibliographic_metadata(db_file, source_root=SOURCE_CSV_DIR, manifest_
                 for row in reader:
                     title = normalize_text(row.get("Document Title", ""))
                     abstract = normalize_text(row.get("Abstract", ""))
-                    if not title or not abstract or is_junk_paper(title, abstract):
+                    if not title or not abstract or is_junk_paper(title, abstract, row):
                         continue
                     source_paper = build_paper_from_row(row)
                     candidate_indexes = []
