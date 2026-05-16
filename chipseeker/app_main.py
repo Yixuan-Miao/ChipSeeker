@@ -79,8 +79,8 @@ LANGUAGE_OPTIONS = ["English", "简体中文"]
 NATURE_JOURNAL_OPTIONS = [
     ("", "All Nature journals"),
     ("nature", "Nature"),
-    ("nature-electronics", "Nature Electronics"),
-    ("nature-communications", "Nature Communications"),
+    ("natelectron", "Nature Electronics"),
+    ("ncomms", "Nature Communications"),
     ("nature-machine-intelligence", "Nature Machine Intelligence"),
     ("nature-nanotechnology", "Nature Nanotechnology"),
     ("nature-photonics", "Nature Photonics"),

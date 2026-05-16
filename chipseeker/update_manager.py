@@ -23,6 +23,63 @@ def _default_registry_payload():
     return template
 
 
+def _safe_revision(source):
+    try:
+        return int(source.get("revision", 0))
+    except Exception:
+        return 0
+
+
+def _merge_template_sources(payload):
+    """Add or refresh built-in source templates without losing local progress."""
+    template_payload = _default_registry_payload()
+    template_sources = template_payload.get("sources", [])
+    if not isinstance(template_sources, list):
+        return False
+
+    payload.setdefault("sources", [])
+    existing_by_id = {
+        source.get("id"): index
+        for index, source in enumerate(payload["sources"])
+        if isinstance(source, dict) and source.get("id")
+    }
+    preserve_keys = {
+        "enabled",
+        "last_checked_date",
+        "last_completed_month",
+        "pending_ieee_batch",
+    }
+    changed = False
+
+    for template_source in template_sources:
+        if not isinstance(template_source, dict) or not template_source.get("id"):
+            continue
+        source_id = template_source["id"]
+        existing_index = existing_by_id.get(source_id)
+        if existing_index is None:
+            payload["sources"].append(dict(template_source))
+            existing_by_id[source_id] = len(payload["sources"]) - 1
+            changed = True
+            continue
+
+        existing_source = payload["sources"][existing_index]
+        if not isinstance(existing_source, dict):
+            payload["sources"][existing_index] = dict(template_source)
+            changed = True
+            continue
+        if _safe_revision(template_source) <= _safe_revision(existing_source):
+            continue
+
+        refreshed = dict(template_source)
+        for key in preserve_keys:
+            if key in existing_source:
+                refreshed[key] = existing_source[key]
+        payload["sources"][existing_index] = refreshed
+        changed = True
+
+    return changed
+
+
 def load_source_registry(registry_path=SOURCE_REGISTRY_FILE):
     payload = load_json(registry_path, None)
     if not isinstance(payload, dict):
@@ -32,6 +89,8 @@ def load_source_registry(registry_path=SOURCE_REGISTRY_FILE):
     payload.setdefault("sources", [])
     payload.setdefault("pending_ieee_batch", None)
     payload.setdefault("updated_at_utc", _utc_now())
+    if _merge_template_sources(payload):
+        save_source_registry(payload, registry_path)
     return payload
 
 

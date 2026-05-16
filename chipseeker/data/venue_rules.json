@@ -38,7 +38,7 @@
       "d": ["Devices", "Analog Circuits"],
       "ty": "Journal",
       "u": "https://www.nature.com/natelectron/",
-      "if": 33.7,
+      "if": 40.9,
       "q": "Q1"
     },
     {
@@ -49,7 +49,7 @@
       "d": ["Quantum & Physics", "Devices"],
       "ty": "Journal",
       "u": "https://www.nature.com/ncomms/",
-      "if": 14.8,
+      "if": 15.7,
       "q": "Q1"
     },
     {
@@ -60,7 +60,7 @@
       "d": ["Quantum & Physics"],
       "ty": "Journal",
       "u": "https://www.nature.com/nphys/",
-      "if": 19.6,
+      "if": 18.4,
       "q": "Q1"
     },
     {
@@ -71,7 +71,40 @@
       "d": ["Devices", "Quantum & Physics"],
       "ty": "Journal",
       "u": "https://www.nature.com/nnano/",
-      "if": 38.3,
+      "if": 34.9,
+      "q": "Q1"
+    },
+    {
+      "k": ["nature machine intelligence"],
+      "n": "Nature Machine Intelligence",
+      "t": "SS",
+      "s": 97,
+      "d": ["EDA", "Devices"],
+      "ty": "Journal",
+      "u": "https://www.nature.com/natmachintell/",
+      "if": 23.9,
+      "q": "Q1"
+    },
+    {
+      "k": ["nature photonics"],
+      "n": "Nature Photonics",
+      "t": "SS",
+      "s": 97,
+      "d": ["Devices", "Quantum & Physics"],
+      "ty": "Journal",
+      "u": "https://www.nature.com/nphoton/",
+      "if": 32.9,
+      "q": "Q1"
+    },
+    {
+      "k": ["communications engineering"],
+      "n": "Communications Engineering",
+      "t": "A",
+      "s": 82,
+      "d": ["Analog Circuits", "Devices", "EDA"],
+      "ty": "Journal",
+      "u": "https://www.nature.com/commseng/",
+      "if": 5.7,
       "q": "Q1"
     },
     {
@@ -82,7 +115,7 @@
       "d": ["Quantum & Physics", "Devices", "Analog Circuits"],
       "ty": "Journal",
       "u": "https://www.nature.com/",
-      "if": 50.5,
+      "if": 48.5,
       "q": "Q1"
     },
     {
@@ -137,7 +170,7 @@
       "d": ["Analog Circuits", "RF & mm-Wave"],
       "ty": "Journal",
       "u": "https://ieeexplore.ieee.org/xpl/RecentIssue.jsp?punumber=4",
-      "if": 6.2,
+      "if": 5.6,
       "q": "Q1"
     },
     {
@@ -199,8 +232,8 @@
       "d": ["Analog Circuits"],
       "ty": "Journal",
       "u": "https://ieee-cas.org/pubs/tcas-ii",
-      "if": 4.8,
-      "q": "Q2"
+      "if": 4.9,
+      "q": "Q1"
     },
     {
       "k": ["tcas-i", "tcas i", "circuits and systems i"],
@@ -210,7 +243,7 @@
       "d": ["Analog Circuits"],
       "ty": "Journal",
       "u": "https://ieee-cas.org/pubs/tcas-i",
-      "if": 5.1,
+      "if": 5.2,
       "q": "Q1"
     },
     {
@@ -221,8 +254,8 @@
       "d": ["RF & mm-Wave"],
       "ty": "Journal",
       "u": "https://mtt.org/publications/transactions-on-microwave-theory-and-techniques/",
-      "if": 4.7,
-      "q": "Q1"
+      "if": 4.5,
+      "q": "Q2"
     },
     {
       "k": ["tbcas", "biomedical circuits and systems", "biocas"],
@@ -232,7 +265,7 @@
       "d": ["Analog Circuits"],
       "ty": "Journal",
       "u": "https://ieee-cas.org/pubs/tbcas",
-      "if": 5.5,
+      "if": 4.9,
       "q": "Q1"
     },
     {
@@ -243,7 +276,7 @@
       "d": ["Quantum & Physics"],
       "ty": "Journal",
       "u": "https://tqe.ieee.org/",
-      "if": 3.8,
+      "if": 4.6,
       "q": "Q2"
     },
     {
@@ -326,8 +359,8 @@
       "d": ["Analog Circuits"],
       "ty": "Journal",
       "u": "https://sscs.ieee.org/publications/ieee-solid-state-circuits-letters",
-      "if": 3.5,
-      "q": "Q2"
+      "if": 2.0,
+      "q": "Q3"
     },
     {
       "k": ["ted", "transactions on electron devices"],
@@ -337,7 +370,7 @@
       "d": ["Devices"],
       "ty": "Journal",
       "u": "https://eds.ieee.org/publications/transactions-on-electron-devices",
-      "if": 3.4,
+      "if": 3.2,
       "q": "Q2"
     },
     {
@@ -348,7 +381,7 @@
       "d": ["Quantum & Physics", "Devices"],
       "ty": "Journal",
       "u": "https://pubs.aip.org/aip/apl",
-      "if": 4.0,
+      "if": 3.5,
       "q": "Q2"
     },
     {
@@ -359,7 +392,7 @@
       "d": ["Quantum & Physics"],
       "ty": "Journal",
       "u": "https://journals.aps.org/prb/",
-      "if": 3.7,
+      "if": 3.3,
       "q": "Q2"
     },
     {
@@ -370,7 +403,7 @@
       "d": ["RF & mm-Wave"],
       "ty": "Journal",
       "u": "https://mtt.org/publications/microwave-and-wireless-components-letters/",
-      "if": 3.2,
+      "if": 3.3,
       "q": "Q2"
     },
     {
@@ -392,7 +425,7 @@
       "d": ["Quantum & Physics"],
       "ty": "Journal",
       "u": "https://ieeexplore.ieee.org/xpl/RecentIssue.jsp?punumber=77",
-      "if": 1.8,
+      "if": 1.7,
       "q": "Q3"
     },
     {
@@ -433,7 +466,7 @@
       "d": ["Analog Circuits"],
       "ty": "Journal",
       "u": "https://sscs.ieee.org/publications/ieee-solid-state-circuits-magazine",
-      "if": 1.5,
+      "if": 1.4,
       "q": "Q4"
     },
     {

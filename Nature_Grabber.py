@@ -41,6 +41,14 @@ def ensure_bs4():
     if BeautifulSoup is None:
         raise ImportError("beautifulsoup4 is not installed. Run `pip install -r requirements.txt` first.")
 
+
+def normalize_nature_search_query(query):
+    """Nature search is more reliable when phrase quotes are removed."""
+    text = clean_text(query)
+    text = re.sub(r'"([^"]+)"', r"\1", text)
+    return clean_text(text)
+
+
 def resolve_output_path(output_file):
     if os.path.isabs(output_file):
         target_path = output_file
@@ -52,7 +60,7 @@ def resolve_output_path(output_file):
 
 def build_search_params(query, journal, year_from, page, start_date=None):
     params = {
-        "q": query,
+        "q": normalize_nature_search_query(query),
         "page": page,
         "date_range": f"{start_date or f'{year_from}-01-01'}_{time.strftime('%Y-%m-%d')}",
     }
@@ -64,6 +72,8 @@ def build_search_params(query, journal, year_from, page, start_date=None):
 def fetch_html(session, url, params=None):
     response = session.get(url, params=params, headers=HEADERS, timeout=30)
     response.raise_for_status()
+    if "Client Challenge" in response.text or "/_fs-ch-" in response.text:
+        raise RuntimeError("Nature returned a client challenge page. Retry later or run from a browser-backed network session.")
     return response.text
 
 
