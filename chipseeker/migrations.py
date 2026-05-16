@@ -122,6 +122,13 @@ def _migrate_to_v7(state):
     _record_state(state, 7, "Scheduled bibliographic metadata refresh for IEEE-style BibTeX exports.")
 
 
+def _migrate_to_v8(state):
+    # Force one library rescan so existing CSV sources can enrich stored papers
+    # with funding/citation/reference/license fields used by annual reports.
+    state["library_sync"] = {}
+    _record_state(state, 8, "Scheduled metadata refresh for annual conference report exports.")
+
+
 def migrate_local_data():
     state = load_json(LOCAL_DATA_STATE_FILE, _default_state())
     if not isinstance(state, dict):
@@ -149,6 +156,9 @@ def migrate_local_data():
     if version < 7:
         _migrate_to_v7(state)
         version = 7
+    if version < 8:
+        _migrate_to_v8(state)
+        version = 8
 
     if version != CURRENT_LOCAL_DATA_VERSION:
         state["schema_version"] = CURRENT_LOCAL_DATA_VERSION

@@ -6,14 +6,14 @@ NOTICE_FILE = Path(__file__).with_name("update_notices.json")
 
 FALLBACK_NOTICES = [
     {
-        "date": "2026-05-15",
-        "title": "Library update: ISSCC 2026 and early-2026 IEEE journal papers are now included.",
-        "title_zh": "文献库更新：已加入 ISSCC 2026 与 2026 年初 IEEE 期刊新论文。",
+        "date": "2026-05-16",
+        "title": "Library update: JSSC May 2026 and CICC 2026 papers are now in the update pipeline.",
+        "title_zh": "文献库更新：JSSC 2026 五月与 CICC 2026 论文已进入更新流程。",
     }
 ]
 
 
-def load_update_notices(limit=3):
+def load_update_notices(limit=20):
     try:
         notices = json.loads(NOTICE_FILE.read_text(encoding="utf-8"))
     except Exception:

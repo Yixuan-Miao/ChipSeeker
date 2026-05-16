@@ -23,6 +23,12 @@ def write_csv(path, rows):
         "Date Added To Xplore",
         "Online Date",
         "Issue Date",
+        "Meeting Date",
+        "Funding Information",
+        "Article Citation Count",
+        "Patent Citation Count",
+        "Reference Count",
+        "License",
     ]
     with open(path, "w", encoding="utf-8-sig", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -143,6 +149,11 @@ def test_metadata_only_refresh_preserves_embedding_cache(tmp_path):
                 "DOI": "10.1000/meta",
                 "PDF Link": "https://ieeexplore.ieee.org/stamp/stamp.jsp?arnumber=123456",
                 "Document Identifier": "IEEE Journals",
+                "Funding Information": "Example grant",
+                "Article Citation Count": "12",
+                "Patent Citation Count": "1",
+                "Reference Count": "37",
+                "License": "CCBYNCND",
             }
         ],
     )
@@ -179,6 +190,10 @@ def test_metadata_only_refresh_preserves_embedding_cache(tmp_path):
     assert '"volume": "73"' in db_text
     assert '"pages": "1-8"' in db_text
     assert '"article_number": "123456"' in db_text
+    assert '"funding_information": "Example grant"' in db_text
+    assert '"article_citation_count": "12"' in db_text
+    assert '"reference_count": "37"' in db_text
+    assert '"license": "CCBYNCND"' in db_text
 
 
 def test_yearly_duplicate_csv_merges_by_lookup_keys_and_skips_identical_files(tmp_path):

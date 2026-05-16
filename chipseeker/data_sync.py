@@ -42,6 +42,12 @@ BIBLIOGRAPHIC_ENRICH_FIELDS = (
     "date_added_to_xplore",
     "online_date",
     "issue_date",
+    "meeting_date",
+    "funding_information",
+    "article_citation_count",
+    "patent_citation_count",
+    "reference_count",
+    "license",
     "article_number",
 )
 LIST_ENRICH_FIELDS = ("keywords", "ieee_terms")
@@ -353,6 +359,12 @@ def build_paper_from_row(row):
         "date_added_to_xplore": normalize_text(row.get("Date Added To Xplore", "")),
         "online_date": normalize_text(row.get("Online Date", "")),
         "issue_date": normalize_text(row.get("Issue Date", "")),
+        "meeting_date": normalize_text(row.get("Meeting Date", "")),
+        "funding_information": normalize_text(row.get("Funding Information", "")),
+        "article_citation_count": normalize_text(row.get("Article Citation Count", "")),
+        "patent_citation_count": normalize_text(row.get("Patent Citation Count", "")),
+        "reference_count": normalize_text(row.get("Reference Count", "")),
+        "license": normalize_text(row.get("License", "")),
         "article_number": extract_article_number(row),
     }
 
@@ -406,6 +418,12 @@ def paper_signature(paper):
         normalize_text(paper.get("date_added_to_xplore", "")),
         normalize_text(paper.get("online_date", "")),
         normalize_text(paper.get("issue_date", "")),
+        normalize_text(paper.get("meeting_date", "")),
+        normalize_text(paper.get("funding_information", "")),
+        normalize_text(paper.get("article_citation_count", "")),
+        normalize_text(paper.get("patent_citation_count", "")),
+        normalize_text(paper.get("reference_count", "")),
+        normalize_text(paper.get("license", "")),
         normalize_text(paper.get("article_number", "")),
     )
 

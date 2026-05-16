@@ -1,4 +1,5 @@
 import asyncio
+import html as html_lib
 import math
 import os
 import sys
@@ -23,7 +24,7 @@ from chipseeker.data_sync import (
     scan_and_import_csvs,
 )
 from chipseeker.embedding_scope import available_years, build_scope_key, filter_papers_by_years, scope_label
-from chipseeker.exports import build_bibtex, build_csv_rows, build_notebooklm_export, build_search_results_html, generate_csv_link, paper_authors_display, write_text_file
+from chipseeker.exports import build_annual_conference_report, build_bibtex, build_csv_rows, build_notebooklm_export, build_search_results_html, generate_csv_link, paper_authors_display, write_text_file
 from chipseeker.llm_tools import analyze_with_llm, generate_global_report_with_llm, generate_search_keywords, get_batch_citations
 from chipseeker.maintenance import generate_db_stats
 from chipseeker.migrations import migrate_local_data
@@ -273,16 +274,26 @@ def get_searcher_engine(db_file, model_name, api_key="", scope_key="all", scope_
 
 def render_taxonomy_matrix(total_papers, db_stats, active_years):
     with st.expander(f"Taxonomy & Library Matrix (Total Records: {total_papers})", expanded=True):
-        notices = load_update_notices(limit=2)
+        notices = load_update_notices(limit=20)
         if notices:
             notice_rows = []
-            for notice in notices:
-                text = notice.get("title_zh") or notice.get("title") or ""
-                date_text = notice.get("date") or "Update"
+            history_rows = []
+            for notice in notices[:2]:
+                text = html_lib.escape(notice.get("title_zh") or notice.get("title") or "")
+                date_text = html_lib.escape(notice.get("date") or "Update")
                 notice_rows.append(
                     f"<div style='display:flex; gap:10px; align-items:flex-start; padding:6px 0; border-top:1px solid rgba(15,23,42,0.08);'>"
                     f"<span style='font-size:12px; font-weight:900; color:#2563eb; min-width:74px;'>{date_text}</span>"
                     f"<span style='font-size:13px; line-height:1.45; color:#334155; font-weight:700;'>{text}</span>"
+                    f"</div>"
+                )
+            for notice in notices:
+                text = html_lib.escape(notice.get("title_zh") or notice.get("title") or "")
+                date_text = html_lib.escape(notice.get("date") or "Update")
+                history_rows.append(
+                    f"<div style='display:flex; gap:10px; align-items:flex-start; padding:7px 0; border-top:1px solid rgba(15,23,42,0.06);'>"
+                    f"<span style='font-size:12px; font-weight:900; color:#64748b; min-width:74px;'>{date_text}</span>"
+                    f"<span style='font-size:13px; line-height:1.45; color:#475569;'>{text}</span>"
                     f"</div>"
                 )
             st.markdown(
@@ -290,6 +301,11 @@ def render_taxonomy_matrix(total_papers, db_stats, active_years):
                 "background:linear-gradient(135deg,#eff6ff,#f8fafc); box-shadow:0 10px 24px rgba(37,99,235,0.08);'>"
                 "<div style='font-size:12px; font-weight:950; color:#1d4ed8; letter-spacing:.08em; text-transform:uppercase;'>Library Updates</div>"
                 + "".join(notice_rows)
+                + "<details style='margin-top:8px;'>"
+                + "<summary style='cursor:pointer; color:#1d4ed8; font-size:12px; font-weight:900;'>View all update history</summary>"
+                + "<div style='margin-top:8px;'>"
+                + "".join(history_rows)
+                + "</div></details>"
                 + "</div>",
                 unsafe_allow_html=True,
             )
@@ -706,7 +722,76 @@ def render_conflict_review(source_csv_files):
                 st.rerun()
 
 
-def render_update_manager(source_csv_files):
+def render_annual_conference_report_export(all_papers):
+    with st.expander("Annual Conference Report Export", expanded=False):
+        st.caption(
+            "Generate a clean Markdown/TXT source pack from the deduplicated database. "
+            "Use it after importing a full-year conference CSV, then paste the file into an AI tool for an annual report."
+        )
+        conference_papers = []
+        for paper in all_papers:
+            venue_info = analyze_venue(paper.get("venue", ""))
+            if venue_info.get("ty") == "Conference":
+                conference_papers.append((paper, venue_info))
+
+        if not conference_papers:
+            st.info("No conference papers found in the current database.")
+            return
+
+        venue_options = sorted({venue_info["n"] for _, venue_info in conference_papers})
+        years = sorted(
+            {extract_year(paper.get("year", "")) for paper, _ in conference_papers if extract_year(paper.get("year", ""))},
+            reverse=True,
+        )
+        default_year = years[0] if years else CURRENT_YEAR
+        col1, col2, col3 = st.columns([2, 1, 1])
+        with col1:
+            selected_venues = st.multiselect(
+                "Conference venue(s)",
+                options=venue_options,
+                default=venue_options[:1],
+                help="Select one or more conferences, e.g. ISSCC + CICC for a yearly AI report.",
+            )
+        with col2:
+            selected_year = st.selectbox("Year", options=years or [CURRENT_YEAR], index=(years.index(default_year) if default_year in years else 0))
+        with col3:
+            output_format = st.radio("Format", ["md", "txt"], horizontal=True)
+
+        selected_set = set(selected_venues)
+        selected_papers = [
+            paper
+            for paper, venue_info in conference_papers
+            if venue_info["n"] in selected_set and extract_year(paper.get("year", "")) == int(selected_year)
+        ]
+        st.caption(f"Matched `{len(selected_papers)}` cleaned records from the current JSON database.")
+
+        if st.button("Generate Annual Conference Report Source Pack", use_container_width=True, disabled=not selected_papers):
+            venue_label = "+".join(selected_venues) if selected_venues else "Conference"
+            content = build_annual_conference_report(selected_papers, venue_label, str(selected_year), output_format=output_format)
+            filename = f"ChipSeeker_{slugify_filename(venue_label)}_{selected_year}_annual_report_source.{output_format}"
+            output_path = os.path.join(EXPORT_DIR, "conference_reports", filename)
+            write_text_file(output_path, content)
+            st.session_state["annual_conference_report"] = {
+                "content": content,
+                "filename": filename,
+                "path": output_path,
+                "count": len(selected_papers),
+            }
+
+        report = st.session_state.get("annual_conference_report", {})
+        if report:
+            st.success(f"Created `{report['filename']}` with {report['count']} paper records.")
+            st.caption(f"Saved locally: `{report['path']}`")
+            st.download_button(
+                "Download Report Source Pack",
+                data=report["content"],
+                file_name=report["filename"],
+                mime="text/markdown" if report["filename"].endswith(".md") else "text/plain",
+                use_container_width=True,
+            )
+
+
+def render_update_manager(source_csv_files, all_papers):
     st.header("Update Manager")
     st.caption("IEEE uses manual incremental batches. Nature uses automatic incremental updates.")
 
@@ -719,6 +804,8 @@ def render_update_manager(source_csv_files):
     metric_col1.metric("IEEE Sources", sum(1 for source in ieee_sources if source.get("enabled")))
     metric_col2.metric("Auto Sources", sum(1 for source in (nature_sources + arxiv_sources) if source.get("enabled")))
     metric_col3.metric("Pending IEEE Batch", 1 if registry.get("pending_ieee_batch") else 0)
+
+    render_annual_conference_report_export(all_papers)
 
     tab_ieee, tab_nature, tab_arxiv = st.tabs(["IEEE Incremental", "Nature Incremental", "arXiv Incremental"])
 
@@ -1162,7 +1249,7 @@ def run():
     total_papers, db_stats, active_years = generate_db_stats(all_papers_in_db, analyze_venue)
 
     if workspace_view == "Update Manager":
-        render_update_manager(source_csv_files)
+        render_update_manager(source_csv_files, all_papers_in_db)
         return
 
     if workspace_view == "Conflict Review":

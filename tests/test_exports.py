@@ -1,4 +1,4 @@
-from chipseeker.exports import build_bibtex, paper_authors_display
+from chipseeker.exports import build_annual_conference_report, build_bibtex, paper_authors_display
 
 
 def test_author_display_uses_full_available_author_list():
@@ -33,3 +33,36 @@ def test_ieee_style_bibtex_uses_full_author_list_and_metadata():
     assert "pages={6539-6553}," in bibtex
     assert "keywords={Noise;Qubit;HEMTs;Cryogenic;low-noise amplifier (LNA);qubit readout}," in bibtex
     assert "doi={10.1109/TMTT.2025.3556982}" in bibtex
+
+
+def test_annual_conference_report_contains_core_metadata():
+    paper = {
+        "title": "A Cryogenic Readout Chip",
+        "authors": ["A. Author", "B. Builder"],
+        "venue": "ISSCC",
+        "year": "2026",
+        "doi": "10.1109/ISSCC.2026.1234567",
+        "pdf_link": "https://ieeexplore.ieee.org/stamp/stamp.jsp?arnumber=1234567",
+        "volume": "1",
+        "number": "12",
+        "pages": "10-14",
+        "article_number": "1234567",
+        "keywords": ["Cryogenic CMOS", "Qubit readout"],
+        "ieee_terms": ["Qubit", "CMOS integrated circuits"],
+        "funding_information": "Example funding",
+        "article_citation_count": "5",
+        "reference_count": "32",
+        "license": "IEEE",
+        "abstract": "This paper presents a cryogenic readout chip for quantum computing systems.",
+    }
+
+    report = build_annual_conference_report([paper], "ISSCC", "2026", output_format="md")
+
+    assert "# ISSCC 2026 Annual Conference Paper Pack" in report
+    assert "## 1. A Cryogenic Readout Chip" in report
+    assert "**Authors:** A. Author; B. Builder" in report
+    assert "**Author Keywords:** Cryogenic CMOS; Qubit readout" in report
+    assert "**IEEE Terms:** Qubit; CMOS integrated circuits" in report
+    assert "**Funding:** Example funding" in report
+    assert "**Article Citations:** 5" in report
+    assert "### Abstract" in report
