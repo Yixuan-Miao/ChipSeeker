@@ -20,6 +20,9 @@ def write_csv(path, rows):
         "DOI",
         "PDF Link",
         "Document Identifier",
+        "Date Added To Xplore",
+        "Online Date",
+        "Issue Date",
     ]
     with open(path, "w", encoding="utf-8-sig", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -241,6 +244,90 @@ def test_yearly_duplicate_csv_merges_by_lookup_keys_and_skips_identical_files(tm
     assert len(papers) == 1
     assert papers[0]["doi"] == "10.1109/JSSC.2026.1234567"
     assert papers[0]["authors"] == ["Alice Smith", "Bob Chen"]
+
+
+def test_later_issue_metadata_beats_early_access_even_if_old_csv_scans_afterward(tmp_path):
+    source_root = tmp_path / "sources"
+    source_root.mkdir()
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    db_file = tmp_path / "papers.json"
+    manifest_path = tmp_path / "source_manifest.json"
+
+    doi = "10.1109/JSSC.2026.1234567"
+    base = {
+        "Document Title": "Early Access Then Issue Paper",
+        "Abstract": "A" * 160,
+        "Authors": "Alice Smith; Bob Chen",
+        "Author Keywords": "adc",
+        "Publication Year": "2026",
+        "Publication Title": "IEEE Journal of Solid-State Circuits",
+        "DOI": doi,
+        "PDF Link": "https://ieeexplore.ieee.org/stamp/stamp.jsp?arnumber=1234567",
+        "Document Identifier": "IEEE Journals",
+    }
+    final_issue = {
+        **base,
+        "Volume": "61",
+        "Issue": "9",
+        "Start Page": "6539",
+        "End Page": "6553",
+        "Date Added To Xplore": "17 Sep 2026",
+        "Online Date": "17 Apr 2026",
+        "Issue Date": "Sept. 2026",
+    }
+    early_access = {
+        **base,
+        "Start Page": "1",
+        "End Page": "1",
+        "Date Added To Xplore": "17 Apr 2026",
+        "Online Date": "17 Apr 2026",
+        "Issue Date": "",
+    }
+    write_csv(source_root / "a_final_issue.csv", [final_issue])
+    write_csv(source_root / "z_old_early_access.csv", [early_access])
+    db_file.write_text(
+        json.dumps(
+            [
+                {
+                    "title": "Early Access Then Issue Paper",
+                    "abstract": "A" * 160,
+                    "year": "2026",
+                    "venue": "IEEE Journal of Solid-State Circuits",
+                    "doi": doi,
+                    "pdf_link": "https://ieeexplore.ieee.org/stamp/stamp.jsp?arnumber=1234567",
+                    "authors": ["Alice Smith", "Bob Chen"],
+                    "first_author": "Alice Smith",
+                    "last_author": "Bob Chen",
+                    "keywords": ["adc"],
+                    "start_page": "1",
+                    "end_page": "1",
+                    "pages": "1-1",
+                    "date_added_to_xplore": "17 Apr 2026",
+                    "online_date": "17 Apr 2026",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    added_count, updated_count, removed_count, _ = scan_and_import_csvs(
+        str(db_file),
+        str(cache_dir),
+        source_root=str(source_root),
+        manifest_path=str(manifest_path),
+    )
+
+    papers = json.loads(db_file.read_text(encoding="utf-8"))
+    assert added_count == 0
+    assert updated_count == 1
+    assert removed_count == 0
+    assert len(papers) == 1
+    assert papers[0]["volume"] == "61"
+    assert papers[0]["issue"] == "9"
+    assert papers[0]["pages"] == "6539-6553"
+    assert papers[0]["issue_date"] == "Sept. 2026"
+    assert papers[0]["date_added_to_xplore"] == "17 Sep 2026"
 
 
 def test_enrich_bibliographic_metadata_repairs_existing_db_without_removal(tmp_path):

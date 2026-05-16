@@ -39,6 +39,7 @@ BIBLIOGRAPHIC_ENRICH_FIELDS = (
     "isbn",
     "publisher",
     "document_identifier",
+    "date_added_to_xplore",
     "online_date",
     "issue_date",
     "article_number",
@@ -59,6 +60,52 @@ def extract_article_number(row):
     pdf_link = normalize_text(row.get("PDF Link", ""))
     match = re.search(r"(?:arnumber=|/document/)(\d+)", pdf_link)
     return match.group(1) if match else ""
+
+
+_MONTH_NORMALIZATION = {
+    "jan.": "Jan",
+    "feb.": "Feb",
+    "mar.": "Mar",
+    "apr.": "Apr",
+    "jun.": "Jun",
+    "jul.": "Jul",
+    "aug.": "Aug",
+    "sep.": "Sep",
+    "sept.": "Sep",
+    "oct.": "Oct",
+    "nov.": "Nov",
+    "dec.": "Dec",
+}
+
+
+def parse_source_date_score(value):
+    text = normalize_text(value)
+    if not text:
+        return 0
+    normalized = text.replace(",", " ")
+    for old, new in _MONTH_NORMALIZATION.items():
+        normalized = re.sub(rf"\b{re.escape(old)}", new, normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    formats = (
+        "%d %b %Y",
+        "%d %B %Y",
+        "%b %d %Y",
+        "%B %d %Y",
+        "%Y-%m-%d",
+        "%Y/%m/%d",
+        "%m/%d/%Y",
+        "%b %Y",
+        "%B %Y",
+        "%Y",
+    )
+    for fmt in formats:
+        try:
+            parsed = datetime.strptime(normalized, fmt)
+        except ValueError:
+            continue
+        return parsed.year * 10000 + parsed.month * 100 + parsed.day
+    match = re.search(r"\b(19|20)\d{2}\b", normalized)
+    return int(match.group(0)) * 10000 + 101 if match else 0
 
 
 def classify_source_file(path):
@@ -303,6 +350,7 @@ def build_paper_from_row(row):
         "isbn": normalize_text(row.get("ISBNs", "")),
         "publisher": normalize_text(row.get("Publisher", "")),
         "document_identifier": normalize_text(row.get("Document Identifier", "")),
+        "date_added_to_xplore": normalize_text(row.get("Date Added To Xplore", "")),
         "online_date": normalize_text(row.get("Online Date", "")),
         "issue_date": normalize_text(row.get("Issue Date", "")),
         "article_number": extract_article_number(row),
@@ -355,6 +403,7 @@ def paper_signature(paper):
         normalize_text(paper.get("isbn", "")),
         normalize_text(paper.get("publisher", "")),
         normalize_text(paper.get("document_identifier", "")),
+        normalize_text(paper.get("date_added_to_xplore", "")),
         normalize_text(paper.get("online_date", "")),
         normalize_text(paper.get("issue_date", "")),
         normalize_text(paper.get("article_number", "")),
@@ -385,6 +434,58 @@ def _merge_unique_values(existing, incoming):
             merged.append(item)
             seen.add(key)
     return merged
+
+
+def _paper_source_date_score(paper):
+    return max(
+        parse_source_date_score(paper.get("date_added_to_xplore", "")),
+        parse_source_date_score(paper.get("issue_date", "")),
+        parse_source_date_score(paper.get("online_date", "")),
+    )
+
+
+def _paper_metadata_completeness_score(paper):
+    score = 0
+    if normalize_text(paper.get("volume", "")):
+        score += 20
+    if normalize_text(paper.get("issue", "")) or normalize_text(paper.get("number", "")):
+        score += 20
+    if normalize_text(paper.get("start_page", "")):
+        score += 10
+    if normalize_text(paper.get("end_page", "")):
+        score += 10
+    pages = normalize_text(paper.get("pages", ""))
+    if pages and pages not in {"1", "1-1"}:
+        score += 10
+    if normalize_text(paper.get("issue_date", "")):
+        score += 20
+    if normalize_text(paper.get("date_added_to_xplore", "")):
+        score += 5
+    if normalize_text(paper.get("online_date", "")):
+        score += 5
+    if normalize_text(paper.get("article_number", "")):
+        score += 5
+    if normalize_text(paper.get("publisher", "")):
+        score += 2
+    if normalize_text(paper.get("document_identifier", "")):
+        score += 2
+    return score
+
+
+def _paper_metadata_rank(paper):
+    return (_paper_metadata_completeness_score(paper), _paper_source_date_score(paper))
+
+
+def _should_replace_bibliographic_field(existing_paper, source_paper, field):
+    incoming = normalize_text(source_paper.get(field, ""))
+    if not incoming:
+        return False
+    current = normalize_text(existing_paper.get(field, ""))
+    if not current:
+        return True
+    if current == incoming:
+        return False
+    return _paper_metadata_rank(source_paper) >= _paper_metadata_rank(existing_paper)
 
 
 def _author_richness(authors):
@@ -432,9 +533,8 @@ def _merge_paper_from_source(existing_paper, source_paper, allow_core_updates=Tr
             changed = True
 
     for field in BIBLIOGRAPHIC_ENRICH_FIELDS:
-        incoming = source_paper.get(field, "")
-        if normalize_text(incoming) and merged.get(field) != incoming:
-            merged[field] = incoming
+        if _should_replace_bibliographic_field(merged, source_paper, field):
+            merged[field] = source_paper.get(field, "")
             changed = True
 
     return merged, changed, before_embedding != embedding_relevant_signature(merged)
