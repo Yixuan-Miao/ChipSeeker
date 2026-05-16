@@ -7,7 +7,9 @@ import uuid
 from datetime import date
 from concurrent.futures import ThreadPoolExecutor
 
+from chipseeker.data_sync import scan_and_import_csvs
 from chipseeker.embedding_scope import build_scope_key, filter_papers_by_years
+from chipseeker.paths import CACHE_DIR, DB_FILE, SOURCE_CSV_DIR, SOURCE_MANIFEST_FILE
 from chipseeker.update_manager import default_incremental_start_date, find_source, load_source_registry, save_incremental_run_result, save_source_registry
 from chipseeker.utils import load_json
 from search_runtime import PaperSearcher
@@ -405,15 +407,18 @@ def _run_provider_incremental(task_id, payload):
     run_date = date.today().isoformat()
     completed_ids = []
     written_files = []
+    source_count = max(1, len(source_ids))
 
     for index, source_id in enumerate(source_ids):
         source = find_source(registry, source_id)
         if not source or not source.get("enabled") or not source.get("query"):
             continue
-        update_progress(task_id, index / max(1, len(source_ids)), f"Fetching {provider} source {source.get('name', source_id)}")
+        source_start_date = default_incremental_start_date(source)
+        update_progress(task_id, index / source_count * 0.88, f"Fetching {provider} source {source.get('name', source_id)} from {source_start_date}")
         source_dir = os.path.join(output_dir, source_id)
         os.makedirs(source_dir, exist_ok=True)
-        output_file = os.path.join(source_dir, f"{source.get('export_prefix', source_id)}_{run_date}.csv")
+        safe_start_date = source_start_date.replace("-", "")
+        output_file = os.path.join(source_dir, f"{source.get('export_prefix', source_id)}_{run_date}_from{safe_start_date}.csv")
         try:
             if provider == "nature":
                 rows = grab_nature(
@@ -421,7 +426,7 @@ def _run_provider_incremental(task_id, payload):
                     output_file=output_file,
                     journal=source.get("journal", ""),
                     year_from=2015,
-                    start_date=default_incremental_start_date(source),
+                    start_date=source_start_date,
                     max_pages=int(source.get("max_pages", 5)),
                     sleep_seconds=float(source.get("sleep_seconds", 1.0)),
                 )
@@ -430,27 +435,70 @@ def _run_provider_incremental(task_id, payload):
                     query=source["query"],
                     output_file=output_file,
                     categories=source.get("categories", []),
-                    start_date=default_incremental_start_date(source),
+                    start_date=source_start_date,
                     max_results=int(source.get("max_results", 100)),
                     sleep_seconds=float(source.get("sleep_seconds", 0.5)),
                 )
         except Exception as exc:
-            written_files.append({"source_id": source_id, "output_file": output_file, "rows": 0, "error": str(exc)})
+            written_files.append({"source_id": source_id, "output_file": output_file, "rows": 0, "start_date": source_start_date, "error": str(exc)})
             continue
-        written_files.append({"source_id": source_id, "output_file": output_file, "rows": len(rows)})
+        written_files.append({"source_id": source_id, "output_file": output_file, "rows": len(rows), "start_date": source_start_date})
         completed_ids.append(source_id)
 
     if completed_ids:
         save_incremental_run_result(registry, completed_ids, run_date)
         save_source_registry(registry, payload["registry_path"])
+
+    import_result = None
+    if payload.get("import_after") and completed_ids:
+        update_progress(task_id, 0.92, "Importing fetched CSV files into the paper library")
+        added, updated, removed, file_summaries = scan_and_import_csvs(
+            payload.get("db_file") or DB_FILE,
+            payload.get("cache_dir") or CACHE_DIR,
+            source_root=payload.get("source_root") or SOURCE_CSV_DIR,
+            manifest_path=payload.get("manifest_path") or SOURCE_MANIFEST_FILE,
+        )
+        import_result = {
+            "added": added,
+            "updated": updated,
+            "removed": removed,
+            "files_scanned": len(file_summaries),
+        }
+        append_history(task_id, f"Imported CSV files: added={added}, updated={updated}, removed={removed}, files_scanned={len(file_summaries)}")
+
     update_progress(task_id, 1.0, f"{provider} incremental update finished")
-    return {"provider": provider, "source_ids": completed_ids, "written_files": written_files, "checked_date": run_date}
+    return {
+        "provider": provider,
+        "source_ids": completed_ids,
+        "written_files": written_files,
+        "checked_date": run_date,
+        "import_result": import_result,
+    }
 
 
-def submit_nature_incremental(registry_path, source_ids, output_dir):
+def submit_nature_incremental(
+    registry_path,
+    source_ids,
+    output_dir,
+    import_after=False,
+    db_file=None,
+    cache_dir=None,
+    source_root=None,
+    manifest_path=None,
+):
     return submit_task(
         "nature-incremental",
-        {"registry_path": registry_path, "source_ids": source_ids, "output_dir": output_dir, "provider": "nature"},
+        {
+            "registry_path": registry_path,
+            "source_ids": source_ids,
+            "output_dir": output_dir,
+            "provider": "nature",
+            "import_after": import_after,
+            "db_file": db_file,
+            "cache_dir": cache_dir,
+            "source_root": source_root,
+            "manifest_path": manifest_path,
+        },
         _run_provider_incremental,
     )
 

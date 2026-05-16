@@ -791,9 +791,64 @@ def render_annual_conference_report_export(all_papers):
             )
 
 
+def render_one_click_nature_update(nature_sources):
+    today_iso = date.today().isoformat()
+    enabled_sources = [source for source in nature_sources if source.get("enabled") and source.get("query")]
+    due_sources = [source for source in enabled_sources if default_incremental_start_date(source) <= today_iso]
+    earliest_due = min((default_incremental_start_date(source) for source in due_sources), default="Up to date")
+    checked_dates = [source.get("last_checked_date") for source in enabled_sources if source.get("last_checked_date")]
+    last_checked = max(checked_dates, default="Never")
+
+    st.markdown("### One-Click Nature/NE Update")
+    st.caption("Fetch every enabled Nature-family source from its last successful update date to today, then import the new CSVs automatically.")
+
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Enabled Sources", len(enabled_sources))
+    col2.metric("Need Update", len(due_sources))
+    col3.metric("From", earliest_due)
+    col4.metric("To", today_iso)
+    st.caption(f"Latest saved checkpoint: `{last_checked}`. Each source keeps its own checkpoint, so repeated full-year downloads will not duplicate the JSON library.")
+
+    task_key = "one_click_nature_update_task"
+    task_id = st.session_state.get(task_key)
+
+    def success_message(result):
+        imported = result.get("import_result") or {}
+        failed = [item for item in result.get("written_files", []) if item.get("error")]
+        return (
+            "One-click Nature/NE update completed. "
+            f"Sources: {len(result.get('source_ids', []))}; "
+            f"added {imported.get('added', 0)}, updated {imported.get('updated', 0)}, removed {imported.get('removed', 0)}; "
+            f"failed {len(failed)}."
+        )
+
+    task = render_task_status(task_id, "One-click Nature/NE update", success_message=success_message)
+    if task is None and task_id:
+        st.session_state.pop(task_key, None)
+        st.session_state["csv_state"] = ()
+        st.rerun()
+
+    running = bool(task and task.get("status") in {"queued", "running"})
+    button_label = "Update Nature/NE Now"
+    if not due_sources:
+        button_label = "Nature/NE Already Up To Date"
+    if st.button(button_label, type="primary", use_container_width=True, disabled=running or not due_sources):
+        st.session_state[task_key] = submit_nature_incremental(
+            SOURCE_REGISTRY_FILE,
+            [source["id"] for source in due_sources],
+            NATURE_UPDATE_DIR,
+            import_after=True,
+            db_file=DB_FILE,
+            cache_dir=CACHE_DIR,
+            source_root=SOURCE_CSV_DIR,
+            manifest_path=SOURCE_MANIFEST_FILE,
+        )
+        st.rerun()
+
+
 def render_update_manager(source_csv_files, all_papers):
     st.header("Update Manager")
-    st.caption("IEEE uses manual incremental batches. Nature uses automatic incremental updates.")
+    st.caption("Default path: one click updates Nature/NE from the last checkpoint to today and imports the new papers automatically.")
 
     registry = load_source_registry(SOURCE_REGISTRY_FILE)
     ieee_sources = list_sources(registry, "ieee")
@@ -805,7 +860,18 @@ def render_update_manager(source_csv_files, all_papers):
     metric_col2.metric("Auto Sources", sum(1 for source in (nature_sources + arxiv_sources) if source.get("enabled")))
     metric_col3.metric("Pending IEEE Batch", 1 if registry.get("pending_ieee_batch") else 0)
 
+    render_one_click_nature_update(nature_sources)
+
     render_annual_conference_report_export(all_papers)
+
+    st.markdown("---")
+    show_advanced_updates = st.toggle(
+        "Show advanced update tools",
+        value=False,
+        help="Open this only when you need to edit source templates, run manual IEEE batches, or debug Nature/arXiv fetches.",
+    )
+    if not show_advanced_updates:
+        return
 
     tab_ieee, tab_nature, tab_arxiv = st.tabs(["IEEE Incremental", "Nature Incremental", "arXiv Incremental"])
 
@@ -1024,8 +1090,17 @@ def render_update_manager(source_csv_files, all_papers):
             if not selected_nature_ids:
                 st.warning("Select at least one Nature source with a query.")
             else:
-                st.session_state[nature_task_key] = submit_nature_incremental(SOURCE_REGISTRY_FILE, selected_nature_ids, NATURE_UPDATE_DIR)
-                st.success("Nature incremental update queued in the background.")
+                st.session_state[nature_task_key] = submit_nature_incremental(
+                    SOURCE_REGISTRY_FILE,
+                    selected_nature_ids,
+                    NATURE_UPDATE_DIR,
+                    import_after=True,
+                    db_file=DB_FILE,
+                    cache_dir=CACHE_DIR,
+                    source_root=SOURCE_CSV_DIR,
+                    manifest_path=SOURCE_MANIFEST_FILE,
+                )
+                st.success("Nature incremental update queued in the background. New CSVs will be imported automatically.")
 
         st.markdown("---")
         st.markdown("### Manual Nature Grabber")
