@@ -1,32 +1,37 @@
 [
   {
+    "date": "2026-05-17",
+    "title": "Science/NC/NE IC refresh: five-year cryo-CMOS and integrated-circuit papers added.",
+    "title_zh": "Science/NC/NE 集成电路更新：已补充近五年 cryo-CMOS 与 IC 相关论文。"
+  },
+  {
     "date": "2026-05-16",
     "title": "Nature/NE: May 2026 refresh is live.",
-    "title_zh": "Nature/NE：2026年5月 已更新！"
+    "title_zh": "Nature/NE：2026 年 5 月论文已更新。"
   },
   {
     "date": "2026-05-16",
     "title": "IEEE IC library: JSSC May 2026 and CICC 2026 are live.",
-    "title_zh": "IEEE 集成电路库：JSSC 2026年5月与 CICC 2026 已更新！"
+    "title_zh": "IEEE 集成电路库：JSSC 2026 年 5 月与 CICC 2026 已更新。"
   },
   {
     "date": "2026-05-16",
-    "title": "Nature/NE/arXiv alerts now cover AI chips, chiplets, cryo-CMOS, and quantum-control hardware.",
-    "title_zh": "检索词更新：AI 芯片、Chiplet、cryo-CMOS 与量子控制硬件方向已扩展！"
+    "title": "Search alerts now cover AI chips, chiplets, cryo-CMOS, and quantum-control hardware.",
+    "title_zh": "检索源更新：已覆盖 AI 芯片、Chiplet、cryo-CMOS 与量子控制硬件。"
   },
   {
     "date": "2026-05-16",
     "title": "Venue metrics have been refreshed for Nature-family and IEEE IC journals.",
-    "title_zh": "期刊信息更新：Nature 系列与 IEEE 集成电路期刊 IF / 分区已刷新！"
+    "title_zh": "期刊信息更新：Nature 系列与 IEEE 集成电路期刊 IF / 分区已刷新。"
   },
   {
     "date": "2026-05-15",
     "title": "ISSCC 2026 and early-2026 IEEE journal papers are live.",
-    "title_zh": "文献库更新：ISSCC 2026 与 2026 年初 IEEE 期刊论文已更新！"
+    "title_zh": "文献库更新：ISSCC 2026 与 2026 年初 IEEE 期刊论文已更新。"
   },
   {
     "date": "2026-04-29",
     "title": "DeepSeek V4 is live for LLM Analysis and LLM Powered Search.",
-    "title_zh": "功能更新：LLM Analysis 与 LLM Powered Search 已接入 DeepSeek V4！"
+    "title_zh": "功能更新：LLM Analysis 与 LLM Powered Search 已接入 DeepSeek V4。"
   }
 ]

@@ -48,10 +48,11 @@ from chipseeker.paths import (
     SOURCE_CSV_DIR,
     SOURCE_MANIFEST_FILE,
     SOURCE_REGISTRY_FILE,
+    SCIENCE_UPDATE_DIR,
     USER_DATA_FILE,
 )
 from chipseeker.search_ui import collect_year_counts, filter_search_results, get_paper_id, highlight_text, required_words_from_query, result_bucket_counts, sort_results
-from chipseeker.task_queue import cancel_task, cleanup_task, get_task, submit_arxiv_incremental, submit_embedding_build, submit_llm_powered_search, submit_nature_incremental, submit_pdf_download
+from chipseeker.task_queue import cancel_task, cleanup_task, get_task, submit_arxiv_incremental, submit_embedding_build, submit_llm_powered_search, submit_nature_incremental, submit_pdf_download, submit_science_incremental
 from chipseeker.update_notices import load_update_notices
 from chipseeker.update_manager import (
     advance_ieee_sources,
@@ -791,16 +792,20 @@ def render_annual_conference_report_export(all_papers):
             )
 
 
-def render_one_click_nature_update(nature_sources):
+def render_one_click_literature_update(nature_sources, science_sources):
     today_iso = date.today().isoformat()
-    enabled_sources = [source for source in nature_sources if source.get("enabled") and source.get("query")]
+    enabled_sources = [source for source in (nature_sources + science_sources) if source.get("enabled") and source.get("query")]
+    enabled_nature_sources = [source for source in nature_sources if source.get("enabled") and source.get("query")]
+    enabled_science_sources = [source for source in science_sources if source.get("enabled") and source.get("query")]
     due_sources = [source for source in enabled_sources if default_incremental_start_date(source) <= today_iso]
+    due_nature_sources = [source for source in enabled_nature_sources if default_incremental_start_date(source) <= today_iso]
+    due_science_sources = [source for source in enabled_science_sources if default_incremental_start_date(source) <= today_iso]
     earliest_due = min((default_incremental_start_date(source) for source in due_sources), default="Up to date")
     checked_dates = [source.get("last_checked_date") for source in enabled_sources if source.get("last_checked_date")]
     last_checked = max(checked_dates, default="Never")
 
-    st.markdown("### One-Click Nature/NE Update")
-    st.caption("Fetch every enabled Nature-family source from its last successful update date to today, then import the new CSVs automatically.")
+    st.markdown("### One-Click Literature Update")
+    st.caption("Fetch every enabled Nature/NE/NC/Science source from its last successful update date to today, then import the new CSVs automatically.")
 
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Enabled Sources", len(enabled_sources))
@@ -809,40 +814,62 @@ def render_one_click_nature_update(nature_sources):
     col4.metric("To", today_iso)
     st.caption(f"Latest saved checkpoint: `{last_checked}`. Each source keeps its own checkpoint, so repeated full-year downloads will not duplicate the JSON library.")
 
-    task_key = "one_click_nature_update_task"
-    task_id = st.session_state.get(task_key)
+    nature_task_key = "one_click_nature_update_task"
+    science_task_key = "one_click_science_update_task"
+    nature_task_id = st.session_state.get(nature_task_key)
+    science_task_id = st.session_state.get(science_task_key)
 
     def success_message(result):
         imported = result.get("import_result") or {}
         failed = [item for item in result.get("written_files", []) if item.get("error")]
         return (
-            "One-click Nature/NE update completed. "
+            "One-click literature update completed. "
             f"Sources: {len(result.get('source_ids', []))}; "
             f"added {imported.get('added', 0)}, updated {imported.get('updated', 0)}, removed {imported.get('removed', 0)}; "
             f"failed {len(failed)}."
         )
 
-    task = render_task_status(task_id, "One-click Nature/NE update", success_message=success_message)
-    if task is None and task_id:
-        st.session_state.pop(task_key, None)
+    nature_task = render_task_status(nature_task_id, "One-click Nature/NE/NC update", success_message=success_message)
+    science_task = render_task_status(science_task_id, "One-click Science update", success_message=success_message)
+    if nature_task is None and nature_task_id:
+        st.session_state.pop(nature_task_key, None)
+        st.session_state["csv_state"] = ()
+        st.rerun()
+    if science_task is None and science_task_id:
+        st.session_state.pop(science_task_key, None)
         st.session_state["csv_state"] = ()
         st.rerun()
 
-    running = bool(task and task.get("status") in {"queued", "running"})
-    button_label = "Update Nature/NE Now"
+    running = any(
+        bool(task and task.get("status") in {"queued", "running"})
+        for task in (nature_task, science_task)
+    )
+    button_label = "Update Nature/NE/Science Now"
     if not due_sources:
-        button_label = "Nature/NE Already Up To Date"
+        button_label = "Literature Sources Already Up To Date"
     if st.button(button_label, type="primary", use_container_width=True, disabled=running or not due_sources):
-        st.session_state[task_key] = submit_nature_incremental(
-            SOURCE_REGISTRY_FILE,
-            [source["id"] for source in due_sources],
-            NATURE_UPDATE_DIR,
-            import_after=True,
-            db_file=DB_FILE,
-            cache_dir=CACHE_DIR,
-            source_root=SOURCE_CSV_DIR,
-            manifest_path=SOURCE_MANIFEST_FILE,
-        )
+        if due_nature_sources:
+            st.session_state[nature_task_key] = submit_nature_incremental(
+                SOURCE_REGISTRY_FILE,
+                [source["id"] for source in due_nature_sources],
+                NATURE_UPDATE_DIR,
+                import_after=True,
+                db_file=DB_FILE,
+                cache_dir=CACHE_DIR,
+                source_root=SOURCE_CSV_DIR,
+                manifest_path=SOURCE_MANIFEST_FILE,
+            )
+        if due_science_sources:
+            st.session_state[science_task_key] = submit_science_incremental(
+                SOURCE_REGISTRY_FILE,
+                [source["id"] for source in due_science_sources],
+                SCIENCE_UPDATE_DIR,
+                import_after=True,
+                db_file=DB_FILE,
+                cache_dir=CACHE_DIR,
+                source_root=SOURCE_CSV_DIR,
+                manifest_path=SOURCE_MANIFEST_FILE,
+            )
         st.rerun()
 
 
@@ -854,13 +881,14 @@ def render_update_manager(source_csv_files, all_papers):
     ieee_sources = list_sources(registry, "ieee")
     nature_sources = list_sources(registry, "nature")
     arxiv_sources = list_sources(registry, "arxiv")
+    science_sources = list_sources(registry, "science")
 
     metric_col1, metric_col2, metric_col3 = st.columns(3)
     metric_col1.metric("IEEE Sources", sum(1 for source in ieee_sources if source.get("enabled")))
-    metric_col2.metric("Auto Sources", sum(1 for source in (nature_sources + arxiv_sources) if source.get("enabled")))
+    metric_col2.metric("Auto Sources", sum(1 for source in (nature_sources + arxiv_sources + science_sources) if source.get("enabled")))
     metric_col3.metric("Pending IEEE Batch", 1 if registry.get("pending_ieee_batch") else 0)
 
-    render_one_click_nature_update(nature_sources)
+    render_one_click_literature_update(nature_sources, science_sources)
 
     render_annual_conference_report_export(all_papers)
 

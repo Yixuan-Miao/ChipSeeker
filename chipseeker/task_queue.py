@@ -399,6 +399,7 @@ def submit_pdf_download(papers, save_dir):
 def _run_provider_incremental(task_id, payload):
     from Nature_Grabber import grab_nature
     from Arxiv_Grabber import grab_arxiv
+    from Science_Grabber import grab_science
 
     registry = load_source_registry(payload["registry_path"])
     source_ids = payload["source_ids"]
@@ -430,7 +431,7 @@ def _run_provider_incremental(task_id, payload):
                     max_pages=int(source.get("max_pages", 5)),
                     sleep_seconds=float(source.get("sleep_seconds", 1.0)),
                 )
-            else:
+            elif provider == "arxiv":
                 rows = grab_arxiv(
                     query=source["query"],
                     output_file=output_file,
@@ -439,6 +440,17 @@ def _run_provider_incremental(task_id, payload):
                     max_results=int(source.get("max_results", 100)),
                     sleep_seconds=float(source.get("sleep_seconds", 0.5)),
                 )
+            elif provider == "science":
+                rows = grab_science(
+                    query=source["query"],
+                    output_file=output_file,
+                    issns=source.get("issns", []),
+                    start_date=source_start_date,
+                    max_results=int(source.get("max_results", 100)),
+                    sleep_seconds=float(source.get("sleep_seconds", 0.5)),
+                )
+            else:
+                raise ValueError(f"Unsupported provider: {provider}")
         except Exception as exc:
             written_files.append({"source_id": source_id, "output_file": output_file, "rows": 0, "start_date": source_start_date, "error": str(exc)})
             continue
@@ -507,5 +519,32 @@ def submit_arxiv_incremental(registry_path, source_ids, output_dir):
     return submit_task(
         "arxiv-incremental",
         {"registry_path": registry_path, "source_ids": source_ids, "output_dir": output_dir, "provider": "arxiv"},
+        _run_provider_incremental,
+    )
+
+
+def submit_science_incremental(
+    registry_path,
+    source_ids,
+    output_dir,
+    import_after=False,
+    db_file=None,
+    cache_dir=None,
+    source_root=None,
+    manifest_path=None,
+):
+    return submit_task(
+        "science-incremental",
+        {
+            "registry_path": registry_path,
+            "source_ids": source_ids,
+            "output_dir": output_dir,
+            "provider": "science",
+            "import_after": import_after,
+            "db_file": db_file,
+            "cache_dir": cache_dir,
+            "source_root": source_root,
+            "manifest_path": manifest_path,
+        },
         _run_provider_incremental,
     )

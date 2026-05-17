@@ -13,6 +13,7 @@ GENERATED_SOURCE_DIR = os.path.join(SOURCE_CSV_DIR, "generated_exports")
 IEEE_UPDATE_DIR = os.path.join(MANUAL_SOURCE_DIR, "ieee_updates")
 NATURE_UPDATE_DIR = os.path.join(GENERATED_SOURCE_DIR, "nature_updates")
 ARXIV_UPDATE_DIR = os.path.join(GENERATED_SOURCE_DIR, "arxiv_updates")
+SCIENCE_UPDATE_DIR = os.path.join(GENERATED_SOURCE_DIR, "science_updates")
 CACHE_DIR = os.path.join(DATA_DIR, "cache")
 EXPORT_DIR = os.path.join(DATA_DIR, "exports")
 CONTENT_PACK_EXPORT_DIR = os.path.join(EXPORT_DIR, "content_packs")
@@ -51,6 +52,7 @@ def ensure_runtime_dirs():
         IEEE_UPDATE_DIR,
         NATURE_UPDATE_DIR,
         ARXIV_UPDATE_DIR,
+        SCIENCE_UPDATE_DIR,
         CACHE_DIR,
         EXPORT_DIR,
         CONTENT_PACK_EXPORT_DIR,

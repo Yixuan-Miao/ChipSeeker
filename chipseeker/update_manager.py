@@ -45,6 +45,8 @@ def _merge_template_sources(payload):
     }
     preserve_keys = {
         "enabled",
+        "initial_lookback_years",
+        "initial_start_date",
         "last_checked_date",
         "last_completed_month",
         "pending_ieee_batch",
@@ -245,6 +247,19 @@ def default_incremental_start_date(source):
     last_checked = parse_iso_date(source.get("last_checked_date", ""))
     if last_checked:
         return (last_checked + timedelta(days=1)).isoformat()
+    initial_start = parse_iso_date(source.get("initial_start_date", ""))
+    if initial_start:
+        return initial_start.isoformat()
+    try:
+        lookback_years = int(source.get("initial_lookback_years", 0) or 0)
+    except Exception:
+        lookback_years = 0
+    if lookback_years > 0:
+        today = date.today()
+        try:
+            return today.replace(year=today.year - lookback_years).isoformat()
+        except ValueError:
+            return (today - timedelta(days=365 * lookback_years)).isoformat()
     return "2015-01-01"
 
 
