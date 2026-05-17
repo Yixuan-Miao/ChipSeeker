@@ -12,7 +12,8 @@ import streamlit.components.v1 as components
 
 from chipseeker.config_store import UserDataStore, load_app_config
 from chipseeker.cloud_access import build_cloud_token, cloud_access_configured
-from chipseeker.content_pack import ContentPackInstallError, build_content_pack, build_content_update_pack, detect_content_pack_status, install_bundled_demo_csv, install_content_pack, install_content_update_pack
+from chipseeker.content_pack import ContentPackInstallError, build_content_pack, build_content_update_pack, detect_content_pack_status, install_bundled_demo_csv, install_content_pack, install_content_update_pack, refresh_content_pack_baseline
+from chipseeker.content_release import ContentReleaseError, content_release_configured, load_content_release_config, publish_content_pack_to_release
 from chipseeker.conflict_review import collect_source_records, detect_conflicts, dismiss_conflict, load_conflict_resolutions, restore_conflicts
 from chipseeker.data_sync import (
     bibliographic_metadata_enrich_required,
@@ -574,6 +575,65 @@ def render_content_pack_sidebar(content_status, ui_language):
                 )
             except ContentPackInstallError as exc:
                 st.error(str(exc))
+        app_config = load_app_config([CONFIG_FILE, LEGACY_CONFIG_FILE])
+        release_config = load_content_release_config(app_config)
+        if content_release_configured(release_config):
+            st.markdown("---")
+            st.caption("Internal private publisher is enabled on this machine.")
+            st.caption(
+                f"Target: `{release_config.repo}` / `{release_config.tag}` / "
+                f"`{release_config.update_asset_name}`"
+            )
+            if st.button("Build & Upload Private Update Pack", use_container_width=True):
+                try:
+                    update_result = build_content_update_pack(
+                        DATA_DIR,
+                        DB_FILE,
+                        CACHE_DIR,
+                        SOURCE_MANIFEST_FILE,
+                        schema_state=load_json(LOCAL_DATA_STATE_FILE, {}),
+                        output_dir=CONTENT_PACK_EXPORT_DIR,
+                        pack_name=release_config.update_asset_name,
+                        save_state=False,
+                    )
+                    publish_result = publish_content_pack_to_release(
+                        update_result["zip_path"],
+                        release_config,
+                        asset_name=release_config.update_asset_name,
+                    )
+                    refresh_content_pack_baseline(DATA_DIR, DB_FILE, CACHE_DIR)
+                    st.success(
+                        "Uploaded private update pack: "
+                        f"{publish_result['asset_name']} ({publish_result['size_bytes'] / 1024 / 1024:.1f} MB)"
+                    )
+                except (ContentPackInstallError, ContentReleaseError) as exc:
+                    st.error(str(exc))
+            with st.expander("Internal full pack upload", expanded=False):
+                st.caption("Use this only when creating a new baseline for a new server or buyer.")
+                if st.button("Build & Upload Private Full Pack", use_container_width=True):
+                    try:
+                        full_result = build_content_pack(
+                            DATA_DIR,
+                            DB_FILE,
+                            CACHE_DIR,
+                            SOURCE_MANIFEST_FILE,
+                            schema_state=load_json(LOCAL_DATA_STATE_FILE, {}),
+                            output_dir=CONTENT_PACK_EXPORT_DIR,
+                            pack_name=release_config.full_asset_name,
+                            save_state=False,
+                        )
+                        publish_result = publish_content_pack_to_release(
+                            full_result["zip_path"],
+                            release_config,
+                            asset_name=release_config.full_asset_name,
+                        )
+                        refresh_content_pack_baseline(DATA_DIR, DB_FILE, CACHE_DIR)
+                        st.success(
+                            "Uploaded private full pack: "
+                            f"{publish_result['asset_name']} ({publish_result['size_bytes'] / 1024 / 1024:.1f} MB)"
+                        )
+                    except (ContentPackInstallError, ContentReleaseError) as exc:
+                        st.error(str(exc))
         st.caption(tr(ui_language, "Large ZIP files are supported locally.", "本地支持较大的 ZIP 内容包。"))
         uploaded_pack = st.file_uploader(tr(ui_language, "Install Content Pack ZIP", "安装内容包 ZIP"), type=["zip"], key="sidebar_content_pack_upload")
         if uploaded_pack is not None and st.button(tr(ui_language, "Install Uploaded Pack", "安装上传内容包"), use_container_width=True):

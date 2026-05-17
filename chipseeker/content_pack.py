@@ -6,6 +6,7 @@ import os
 import shutil
 import tempfile
 import zipfile
+from contextlib import contextmanager
 from datetime import datetime, timezone
 
 from chipseeker.paths import CONTENT_PACK_EXPORT_DIR, CONTENT_PACK_STATE_FILE
@@ -31,6 +32,16 @@ PACK_DIRS = ["sources", "cache"]
 
 class ContentPackInstallError(RuntimeError):
     pass
+
+
+@contextmanager
+def _safe_temporary_directory(prefix, parent_dir):
+    os.makedirs(parent_dir, exist_ok=True)
+    temp_dir = tempfile.mkdtemp(prefix=prefix, dir=parent_dir)
+    try:
+        yield temp_dir
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 def _read_papers(db_file):
@@ -173,7 +184,13 @@ def _pack_manifest(content_status, pack_kind="full", paper_delta_count=0):
     }
 
 
-def build_content_pack(data_dir, db_file, cache_dir, manifest_path, schema_state=None, output_dir=CONTENT_PACK_EXPORT_DIR, pack_name=None, state_path=None):
+def refresh_content_pack_baseline(data_dir, db_file, cache_dir, state_path=None):
+    state_path = _default_state_path(data_dir, state_path)
+    _save_pack_state(_content_pack_state(data_dir, db_file, cache_dir), state_path=state_path)
+    return state_path
+
+
+def build_content_pack(data_dir, db_file, cache_dir, manifest_path, schema_state=None, output_dir=CONTENT_PACK_EXPORT_DIR, pack_name=None, state_path=None, save_state=True):
     os.makedirs(output_dir, exist_ok=True)
     content_status = detect_content_pack_status(data_dir, db_file, cache_dir, manifest_path, schema_state=schema_state)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -202,7 +219,8 @@ def build_content_pack(data_dir, db_file, cache_dir, manifest_path, schema_state
                     included_files.append(arcname)
         archive.writestr("content_pack_manifest.json", json.dumps(_pack_manifest(content_status, pack_kind="full"), indent=2, ensure_ascii=False))
 
-    _save_pack_state(_content_pack_state(data_dir, db_file, cache_dir), state_path=_default_state_path(data_dir, state_path))
+    if save_state:
+        refresh_content_pack_baseline(data_dir, db_file, cache_dir, state_path=state_path)
 
     return {
         "zip_path": zip_path,
@@ -222,6 +240,7 @@ def build_content_update_pack(
     output_dir=CONTENT_PACK_EXPORT_DIR,
     pack_name=None,
     state_path=None,
+    save_state=True,
 ):
     state_path = _default_state_path(data_dir, state_path)
     baseline = load_json(state_path, {})
@@ -255,7 +274,9 @@ def build_content_update_pack(
     baseline_caches = baseline.get("caches", {}) if isinstance(baseline.get("caches"), dict) else {}
     included_files = []
     cache_delta_count = 0
-    with tempfile.TemporaryDirectory(prefix="chipseeker_update_build_") as temp_dir:
+    temp_parent = os.path.join(output_dir, "_tmp")
+    os.makedirs(temp_parent, exist_ok=True)
+    with _safe_temporary_directory("chipseeker_update_build_", temp_parent) as temp_dir:
         with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
             archive.writestr(
                 f"{PACK_ROOT_NAME}/isscc_papers.delta.json",
@@ -316,7 +337,8 @@ def build_content_update_pack(
 
             archive.writestr("content_pack_manifest.json", json.dumps(_pack_manifest(content_status, pack_kind="update", paper_delta_count=len(delta_papers)), indent=2, ensure_ascii=False))
 
-    _save_pack_state(current_state, state_path=state_path)
+    if save_state:
+        _save_pack_state(current_state, state_path=state_path)
     return {
         "zip_path": zip_path,
         "paper_count": content_status["paper_count"],
@@ -396,7 +418,7 @@ def install_content_pack(uploaded_file, data_dir):
     staging_parent = os.path.dirname(data_dir)
     os.makedirs(staging_parent, exist_ok=True)
     try:
-        with tempfile.TemporaryDirectory(prefix="chipseeker_content_pack_", dir=staging_parent) as temp_dir:
+        with _safe_temporary_directory("chipseeker_content_pack_", staging_parent) as temp_dir:
             with zipfile.ZipFile(io.BytesIO(payload), "r") as archive:
                 member_names = archive.namelist()
                 _validate_zip_members(member_names)
@@ -536,7 +558,7 @@ def install_content_update_pack(uploaded_file, data_dir):
     staging_parent = os.path.dirname(data_dir)
     os.makedirs(staging_parent, exist_ok=True)
     try:
-        with tempfile.TemporaryDirectory(prefix="chipseeker_update_pack_", dir=staging_parent) as temp_dir:
+        with _safe_temporary_directory("chipseeker_update_pack_", staging_parent) as temp_dir:
             with zipfile.ZipFile(io.BytesIO(payload), "r") as archive:
                 member_names = archive.namelist()
                 _validate_zip_members(member_names)
