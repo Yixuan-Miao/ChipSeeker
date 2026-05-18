@@ -5,6 +5,8 @@ local_data/
 __pycache__/
 *.pyc
 .pytest_cache/
+.pytest_cache_clean*/
+.test-tmp*/
 pytest-cache-files-*/
 pytest_tmp_runtime/
 manual_verify_csv_dedupe_*/

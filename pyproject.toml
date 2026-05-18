@@ -1,6 +1,6 @@
 [project]
 name = "chipseeker"
-version = "0.1.0"
+version = "2.3.1"
 description = "Local embedding-based paper search for chip, circuit, RF, and quantum hardware literature."
 requires-python = ">=3.10"
 dependencies = [
