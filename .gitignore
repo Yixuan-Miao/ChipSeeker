@@ -9,6 +9,7 @@ __pycache__/
 .test-tmp*/
 pytest-cache-files-*/
 pytest_tmp_runtime/
+_pytest_tmp_safe/
 manual_verify_csv_dedupe_*/
 manual_verify_early_access_*/
 manual_verify_junk_filter_*/
