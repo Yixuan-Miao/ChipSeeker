@@ -319,10 +319,11 @@ class PaperSearcher:
         if self.log_callback:
             self.log_callback(message)
 
-    def _remote_embed_batch(self, batch, batch_index, total_batches, stage_message, start_idx, total):
+    def _remote_embed_batch(self, batch, batch_index, total_batches, stage_message, start_idx, total, max_attempts=3):
         batch_label = f"batch {batch_index}/{total_batches}"
         batch_range = f"{start_idx + 1}-{start_idx + len(batch)}/{total}"
-        for attempt in range(1, 4):
+        max_attempts = max(1, int(max_attempts or 1))
+        for attempt in range(1, max_attempts + 1):
             batch_start = time.perf_counter()
             self._log(f"{stage_message}: starting {batch_label} items {batch_range} attempt {attempt}")
             try:
@@ -335,7 +336,7 @@ class PaperSearcher:
             except Exception as exc:
                 elapsed = time.perf_counter() - batch_start
                 self._log(f"{stage_message}: failed {batch_label} attempt {attempt} after {elapsed:.1f}s error={exc}")
-                if attempt >= 3:
+                if attempt >= max_attempts:
                     raise
                 sleep_s = min(6.0, 1.5 * attempt)
                 self._log(f"{stage_message}: retrying {batch_label} after {sleep_s:.1f}s")
@@ -346,10 +347,15 @@ class PaperSearcher:
             return result
         raise RuntimeError(f"Unreachable retry state for {batch_label}")
 
-    def _embed(self, texts, stage_message="Embedding papers"):
+    def _embed(self, texts, stage_message="Embedding papers", max_attempts=None):
         total = max(1, len(texts))
         overall_start = time.perf_counter()
         self._log(f"{stage_message}: total_items={len(texts)} scope={self.scope_key} model={self.mn}")
+        # User-facing query searches should fail fast and fall back instead of
+        # blocking the UI on repeated network retries. Cache build/repair stages
+        # keep retries because they are long-running maintenance tasks.
+        if max_attempts is None:
+            max_attempts = 1 if stage_message == "Embedding query" else 3
         if self.mt == 'l':
             rows = []
             batch_size = 64
@@ -375,7 +381,7 @@ class PaperSearcher:
         total_batches = max(1, (len(texts) + batch_size - 1) // batch_size)
         for batch_index, i in enumerate(range(0, len(texts), batch_size), start=1):
             batch = texts[i:i + batch_size]
-            result = self._remote_embed_batch(batch, batch_index, total_batches, stage_message, i, total)
+            result = self._remote_embed_batch(batch, batch_index, total_batches, stage_message, i, total, max_attempts=max_attempts)
             rows.extend(result)
             done = min(i + len(batch), total)
             total_elapsed = time.perf_counter() - overall_start
@@ -440,9 +446,7 @@ class PaperSearcher:
         return embeddings
 
     def search(self, query, top_k=50):
-        qe = self._embed([query], stage_message="Embedding query") if self.mt != 'l' else self.md.encode(query, convert_to_numpy=True)
-        if self.mt != 'l':
-            qe = np.array(qe).reshape(1, -1)
+        qe = np.array(self._embed([query], stage_message="Embedding query")).reshape(1, -1)
         hits = _semantic_search(qe, self.eb, top_k=top_k)
         return [{"similarity": x['score'], "paper": self.dt[x['corpus_id']]} for x in hits]
 
@@ -468,9 +472,7 @@ class PaperSearcher:
         if not candidate_indexes:
             return []
 
-        qe = self._embed([query], stage_message="Embedding query") if self.mt != 'l' else self.md.encode(query, convert_to_numpy=True)
-        if self.mt != 'l':
-            qe = np.array(qe).reshape(1, -1)
+        qe = np.array(self._embed([query], stage_message="Embedding query")).reshape(1, -1)
         subset_embeddings = self.eb[candidate_indexes]
         hits = _semantic_search(qe, subset_embeddings, top_k=min(int(top_k), len(candidate_indexes)))
         return [

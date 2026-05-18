@@ -64,7 +64,7 @@ def test_search_runtime_repairs_only_changed_fingerprints(tmp_path):
     assert status["cached_papers"] == 1
     assert status["new_papers"] == 1
 
-    searcher = DummySearcher(str(db_file), model_name="voyage-4-large")
+    searcher = DummySearcher(str(db_file), model_name="all-MiniLM-L6-v2")
     assert DummySearcher.embed_history[-1] == ["Paper B Gamma"]
     assert np.array_equal(searcher.eb, np.array([[13.0], [13.0]], dtype=np.float32))
 
