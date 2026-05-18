@@ -362,6 +362,23 @@ def build_search_results_html(results, search_query, current_year, analyze_venue
             }.get(rating_value, rating_value)
         )
         search_count = int(user_data.get("search_count", len(user_data.get("matched_queries", []))))
+        llm_score = item.get("llm_score")
+        llm_delta_html = ""
+        llm_reason_html = ""
+        if llm_score is not None:
+            try:
+                llm_score_value = float(llm_score)
+                llm_delta = llm_score_value - (similarity * 100.0)
+                llm_delta_class = "llm-delta-up" if llm_delta >= 0 else "llm-delta-down"
+                llm_delta_html = (
+                    f'<span class="llm-arrow">&rarr;</span> '
+                    f'<span class="llm-score">LLM {llm_score_value:.0f}%</span> '
+                    f'<span class="llm-delta {llm_delta_class}">{llm_delta:+.1f}</span>'
+                )
+            except (TypeError, ValueError):
+                llm_delta_html = f'<span class="llm-score">LLM {html.escape(str(llm_score))}</span>'
+        if item.get("llm_reason"):
+            llm_reason_html = f'<div class="llm-match-note"><strong>LLM match:</strong> {html.escape(str(item.get("llm_reason")))}</div>'
 
         cards.append(
             f"""
@@ -369,6 +386,7 @@ def build_search_results_html(results, search_query, current_year, analyze_venue
               <div class="result-banner" style="border-left-color:{color};">
                 <div class="banner-left">
                   <span class="relevance" style="color:{color};">Relevance: {similarity * 100:.1f}%</span>
+                  {llm_delta_html}
                   <span class="badge" style="background:{color};">{html.escape(badge)}</span>
                 </div>
                 <div class="banner-right">
@@ -390,6 +408,7 @@ def build_search_results_html(results, search_query, current_year, analyze_venue
                     <strong>Tier:</strong>
                     <span class="tier" style="background:{tier_color};">{html.escape(venue_data.get("t", "N/A"))}</span>
                   </div>
+                  {llm_reason_html}
                   <details class="abstract-box">
                     <summary>Read Abstract</summary>
                     <div class="abstract-text">{abstract_block}</div>
@@ -481,6 +500,40 @@ def build_search_results_html(results, search_query, current_year, analyze_venue
     .relevance {{
       font-size: 1.08rem;
       font-weight: 900;
+    }}
+    .llm-arrow {{
+      color: #9c27b0;
+      font-weight: 950;
+      font-size: 1.08rem;
+    }}
+    .llm-score {{
+      color: #9c27b0;
+      font-size: 1.08rem;
+      font-weight: 950;
+    }}
+    .llm-delta {{
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 0.82rem;
+      font-weight: 900;
+    }}
+    .llm-delta-up {{
+      color: #15803d;
+      background: #dcfce7;
+    }}
+    .llm-delta-down {{
+      color: #b91c1c;
+      background: #fee2e2;
+    }}
+    .llm-match-note {{
+      margin: 9px 0;
+      border: 1px solid #bfdbfe;
+      background: #eff6ff;
+      color: #1e3a8a;
+      border-radius: 12px;
+      padding: 10px 12px;
+      line-height: 1.55;
+      font-size: 0.94rem;
     }}
     .badge {{
       color: white;
