@@ -12,7 +12,7 @@ import streamlit.components.v1 as components
 
 from chipseeker.config_store import UserDataStore, load_app_config
 from chipseeker.cloud_access import build_cloud_token, cloud_access_configured
-from chipseeker.content_pack import ContentPackInstallError, build_content_pack, build_content_update_pack, detect_content_pack_status, install_bundled_demo_csv, install_content_pack, install_content_update_pack, refresh_content_pack_baseline
+from chipseeker.content_pack import ContentPackInstallError, build_content_pack, build_content_update_pack, describe_content_update_status, detect_content_pack_status, install_bundled_demo_csv, install_content_pack, install_content_update_pack, refresh_content_pack_baseline
 from chipseeker.content_release import ContentReleaseError, content_release_configured, load_content_release_config, publish_content_pack_to_release
 from chipseeker.conflict_review import collect_source_records, detect_conflicts, dismiss_conflict, load_conflict_resolutions, restore_conflicts
 from chipseeker.data_sync import (
@@ -537,6 +537,17 @@ def install_bundled_demo_library():
     st.rerun()
 
 
+def format_content_pack_time(value):
+    value = str(value or "").strip()
+    if not value:
+        return "N/A"
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return parsed.astimezone().strftime("%Y-%m-%d %H:%M")
+    except Exception:
+        return value
+
+
 def render_content_pack_sidebar(content_status, ui_language):
     with st.sidebar.expander(tr(ui_language, "Content Pack", "内容包"), expanded=False):
         status_text = "Ready" if content_status["pack_ready"] else "Not installed"
@@ -544,6 +555,19 @@ def render_content_pack_sidebar(content_status, ui_language):
             f"Status: {status_text} | Papers: {content_status['paper_count']} | "
             f"Sources: {content_status['source_count']} | Cache files: {content_status['cache_count']}"
         )
+        update_status = describe_content_update_status(DATA_DIR, DB_FILE)
+        if update_status["baseline_ready"]:
+            baseline_kind = str(update_status.get("baseline_kind") or "baseline").title()
+            st.caption(
+                f"Last {baseline_kind}: {format_content_pack_time(update_status['baseline_created_at_utc'])} | "
+                f"Baseline papers: {update_status['baseline_paper_count']} | "
+                f"Current: {update_status['current_paper_count']} | "
+                f"Incremental papers: {update_status['paper_delta_count']}"
+            )
+        else:
+            st.caption(
+                "No local baseline yet. Build one local full pack once; later update ZIPs only include incremental papers."
+            )
         if st.button(tr(ui_language, "Open Quick Start", "打开快速开始"), use_container_width=True):
             st.session_state["show_quick_start"] = True
             st.rerun()
@@ -601,39 +625,13 @@ def render_content_pack_sidebar(content_status, ui_language):
                         release_config,
                         asset_name=release_config.update_asset_name,
                     )
-                    refresh_content_pack_baseline(DATA_DIR, DB_FILE, CACHE_DIR)
+                    refresh_content_pack_baseline(DATA_DIR, DB_FILE, CACHE_DIR, baseline_kind="update")
                     st.success(
                         "Uploaded private update pack: "
                         f"{publish_result['asset_name']} ({publish_result['size_bytes'] / 1024 / 1024:.1f} MB)"
                     )
                 except (ContentPackInstallError, ContentReleaseError) as exc:
                     st.error(str(exc))
-            with st.expander("Internal full pack upload", expanded=False):
-                st.caption("Use this only when creating a new baseline for a new server or buyer.")
-                if st.button("Build & Upload Private Full Pack", use_container_width=True):
-                    try:
-                        full_result = build_content_pack(
-                            DATA_DIR,
-                            DB_FILE,
-                            CACHE_DIR,
-                            SOURCE_MANIFEST_FILE,
-                            schema_state=load_json(LOCAL_DATA_STATE_FILE, {}),
-                            output_dir=CONTENT_PACK_EXPORT_DIR,
-                            pack_name=release_config.full_asset_name,
-                            save_state=False,
-                        )
-                        publish_result = publish_content_pack_to_release(
-                            full_result["zip_path"],
-                            release_config,
-                            asset_name=release_config.full_asset_name,
-                        )
-                        refresh_content_pack_baseline(DATA_DIR, DB_FILE, CACHE_DIR)
-                        st.success(
-                            "Uploaded private full pack: "
-                            f"{publish_result['asset_name']} ({publish_result['size_bytes'] / 1024 / 1024:.1f} MB)"
-                        )
-                    except (ContentPackInstallError, ContentReleaseError) as exc:
-                        st.error(str(exc))
         st.caption(tr(ui_language, "Large ZIP files are supported locally.", "本地支持较大的 ZIP 内容包。"))
         uploaded_pack = st.file_uploader(tr(ui_language, "Install Content Pack ZIP", "安装内容包 ZIP"), type=["zip"], key="sidebar_content_pack_upload")
         if uploaded_pack is not None and st.button(tr(ui_language, "Install Uploaded Pack", "安装上传内容包"), use_container_width=True):

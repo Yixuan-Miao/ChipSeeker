@@ -112,7 +112,7 @@ def _cache_state(cache_dir):
     return files
 
 
-def _content_pack_state(data_dir, db_file, cache_dir):
+def _content_pack_state(data_dir, db_file, cache_dir, baseline_kind="snapshot"):
     papers = _read_papers(db_file)
     paper_entries = {}
     ordered_papers = []
@@ -127,6 +127,7 @@ def _content_pack_state(data_dir, db_file, cache_dir):
         "state_version": 1,
         "app_version": APP_VERSION,
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
+        "baseline_kind": baseline_kind,
         "db_file": os.path.abspath(db_file),
         "paper_count": len(papers),
         "papers": paper_entries,
@@ -184,10 +185,42 @@ def _pack_manifest(content_status, pack_kind="full", paper_delta_count=0):
     }
 
 
-def refresh_content_pack_baseline(data_dir, db_file, cache_dir, state_path=None):
+def refresh_content_pack_baseline(data_dir, db_file, cache_dir, state_path=None, baseline_kind="full"):
     state_path = _default_state_path(data_dir, state_path)
-    _save_pack_state(_content_pack_state(data_dir, db_file, cache_dir), state_path=state_path)
+    _save_pack_state(_content_pack_state(data_dir, db_file, cache_dir, baseline_kind=baseline_kind), state_path=state_path)
     return state_path
+
+
+def describe_content_update_status(data_dir, db_file, state_path=None):
+    """Return a lightweight summary for deciding whether an update ZIP is needed."""
+    state_path = _default_state_path(data_dir, state_path)
+    baseline = load_json(state_path, {})
+    papers = _read_papers(db_file)
+    current_paper_count = len(papers)
+    if not isinstance(baseline, dict) or not baseline.get("papers"):
+        return {
+            "baseline_ready": False,
+            "baseline_kind": "",
+            "baseline_created_at_utc": "",
+            "baseline_paper_count": 0,
+            "current_paper_count": current_paper_count,
+            "paper_delta_count": current_paper_count,
+        }
+
+    baseline_papers = baseline.get("papers", {}) if isinstance(baseline.get("papers"), dict) else {}
+    delta_count = 0
+    for paper in papers:
+        key = _paper_identity_key(paper)
+        if key and baseline_papers.get(key) != _paper_fingerprint(paper):
+            delta_count += 1
+    return {
+        "baseline_ready": True,
+        "baseline_kind": baseline.get("baseline_kind", "baseline"),
+        "baseline_created_at_utc": baseline.get("created_at_utc", ""),
+        "baseline_paper_count": int(baseline.get("paper_count", 0) or 0),
+        "current_paper_count": current_paper_count,
+        "paper_delta_count": delta_count,
+    }
 
 
 def build_content_pack(data_dir, db_file, cache_dir, manifest_path, schema_state=None, output_dir=CONTENT_PACK_EXPORT_DIR, pack_name=None, state_path=None, save_state=True):
@@ -220,7 +253,7 @@ def build_content_pack(data_dir, db_file, cache_dir, manifest_path, schema_state
         archive.writestr("content_pack_manifest.json", json.dumps(_pack_manifest(content_status, pack_kind="full"), indent=2, ensure_ascii=False))
 
     if save_state:
-        refresh_content_pack_baseline(data_dir, db_file, cache_dir, state_path=state_path)
+        refresh_content_pack_baseline(data_dir, db_file, cache_dir, state_path=state_path, baseline_kind="full")
 
     return {
         "zip_path": zip_path,
@@ -249,7 +282,7 @@ def build_content_update_pack(
 
     os.makedirs(output_dir, exist_ok=True)
     content_status = detect_content_pack_status(data_dir, db_file, cache_dir, manifest_path, schema_state=schema_state)
-    current_state = _content_pack_state(data_dir, db_file, cache_dir)
+    current_state = _content_pack_state(data_dir, db_file, cache_dir, baseline_kind="update")
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = pack_name or f"ChipSeeker_ContentUpdate_{timestamp}.zip"
     if not filename.lower().endswith(".zip"):
