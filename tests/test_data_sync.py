@@ -1,5 +1,6 @@
 import csv
 import json
+from pathlib import Path
 
 from chipseeker.data_sync import enrich_bibliographic_metadata, is_junk_paper, list_source_csv_files, scan_and_import_csvs
 
@@ -117,6 +118,109 @@ def test_scan_and_import_uses_multilevel_keys_and_preserves_cache_for_repair(tmp
     assert "10.1000/update" in db_text
     assert db_text.count('"title": "Same Title"') == 1
     assert db_text.count('"title": "Updater Paper"') == 1
+
+
+def test_scan_preserves_database_when_previous_source_becomes_invalid(tmp_path):
+    source_root = tmp_path / "sources"
+    source_root.mkdir()
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    db_file = tmp_path / "papers.json"
+    manifest_path = tmp_path / "source_manifest.json"
+
+    source_csv = source_root / "manual.csv"
+    write_csv(
+        source_csv,
+        [
+            {
+                "Document Title": "Temporary Source Paper",
+                "Abstract": "A" * 120,
+                "Authors": "Alice",
+                "Publication Year": "2026",
+                "Publication Title": "JSSC",
+                "DOI": "10.1000/temp",
+            }
+        ],
+    )
+    db_file.write_text("[]", encoding="utf-8")
+
+    added_count, _, removed_count, _ = scan_and_import_csvs(
+        str(db_file),
+        str(cache_dir),
+        source_root=str(source_root),
+        manifest_path=str(manifest_path),
+    )
+    assert added_count == 1
+    assert removed_count == 0
+
+    valid_files = list_source_csv_files(str(source_root), str(manifest_path))
+    assert len(valid_files) == 1
+    Path(valid_files[0]).write_text("Bad Header\nnot a paper source\n", encoding="utf-8")
+
+    added_count, updated_count, removed_count, summaries = scan_and_import_csvs(
+        str(db_file),
+        str(cache_dir),
+        source_root=str(source_root),
+        manifest_path=str(manifest_path),
+    )
+
+    papers = json.loads(db_file.read_text(encoding="utf-8"))
+    assert added_count == 0
+    assert updated_count == 0
+    assert removed_count == 0
+    assert len(papers) == 1
+    assert papers[0]["doi"] == "10.1000/temp"
+    assert any("Removals skipped" in summary for summary in summaries)
+
+
+def test_scan_removes_database_rows_when_source_is_deleted(tmp_path):
+    source_root = tmp_path / "sources"
+    source_root.mkdir()
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    db_file = tmp_path / "papers.json"
+    manifest_path = tmp_path / "source_manifest.json"
+
+    write_csv(
+        source_root / "manual.csv",
+        [
+            {
+                "Document Title": "Deleted Source Paper",
+                "Abstract": "A" * 120,
+                "Authors": "Alice",
+                "Publication Year": "2026",
+                "Publication Title": "JSSC",
+                "DOI": "10.1000/deleted",
+            }
+        ],
+    )
+    db_file.write_text("[]", encoding="utf-8")
+
+    added_count, _, removed_count, _ = scan_and_import_csvs(
+        str(db_file),
+        str(cache_dir),
+        source_root=str(source_root),
+        manifest_path=str(manifest_path),
+    )
+    assert added_count == 1
+    assert removed_count == 0
+
+    valid_files = list_source_csv_files(str(source_root), str(manifest_path))
+    assert len(valid_files) == 1
+    Path(valid_files[0]).unlink()
+
+    added_count, updated_count, removed_count, summaries = scan_and_import_csvs(
+        str(db_file),
+        str(cache_dir),
+        source_root=str(source_root),
+        manifest_path=str(manifest_path),
+    )
+
+    assert added_count == 0
+    assert updated_count == 0
+    assert removed_count == 1
+    assert json.loads(db_file.read_text(encoding="utf-8")) == []
+    assert not any("Removals skipped" in summary for summary in summaries)
 
 
 def test_metadata_only_refresh_preserves_embedding_cache(tmp_path):

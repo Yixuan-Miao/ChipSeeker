@@ -206,7 +206,7 @@ def _llm_powered_search(task_id, payload):
     active_scope_years = list(payload.get("active_scope_years") or [])
     active_scope_key = payload.get("active_scope_key") or build_scope_key(active_scope_years)
 
-    update_progress(task_id, 0.05, "Preparing LLM powered search")
+    update_progress(task_id, 0.05, "Preparing ChipSeeker Pro Search")
     all_papers = load_json(payload["db_file"], [])
     scoped_papers = filter_papers_by_years(all_papers, active_scope_years) if active_scope_years else None
     _raise_if_cancelled(task_id)
@@ -220,7 +220,7 @@ def _llm_powered_search(task_id, payload):
     )
     _raise_if_cancelled(task_id)
 
-    update_progress(task_id, 0.28, "Loading semantic cache")
+    update_progress(task_id, 0.28, "Loading ChipSeeker Lite cache")
     searcher = PaperSearcher(
         payload["db_file"],
         model_name=payload["embedding_model"],
@@ -240,7 +240,7 @@ def _llm_powered_search(task_id, payload):
     initial_scan_count = len(exact_first_hits) if must_have or selected_ui_venues else len(all_papers)
     _raise_if_cancelled(task_id)
 
-    update_progress(task_id, 0.48, "Running semantic retrieval")
+    update_progress(task_id, 0.48, "Running ChipSeeker Lite retrieval")
     candidate_top_k = min(max(display_limit, 120), 400)
     if must_have or selected_ui_venues:
         filtered_results = searcher.search_candidates(
@@ -275,7 +275,7 @@ def _llm_powered_search(task_id, payload):
 
     if len(filtered_results) > display_limit:
         filtered_results = filtered_results[:display_limit]
-    update_progress(task_id, 1.0, "LLM powered search finished")
+    update_progress(task_id, 1.0, "ChipSeeker Pro Search finished")
     return {
         "results": filtered_results,
         "initial_count": initial_scan_count,

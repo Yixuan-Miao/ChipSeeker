@@ -138,16 +138,16 @@ def render_help_panel(ui_language):
             tr(ui_language, "Step 2", "第 2 步"),
             tr(
                 ui_language,
-                "Use the build buttons in Search Mode to prepare the newest-year, newest-three-year, or full-library semantic cache. Search will automatically use the largest ready cache.",
-                "在 Search Mode 里用构建按钮准备“最新一年 / 最新三年 / 全库”的语义缓存。搜索会自动使用当前已就绪的最大缓存范围。",
+                "Use the build buttons in Search Mode to prepare the newest-year, newest-three-year, or full-library ChipSeeker Lite cache. Search will automatically use the largest ready cache.",
+                "在 Search Mode 里用构建按钮准备“最新一年 / 最新三年 / 全库”的 ChipSeeker Lite 缓存。搜索会自动使用当前已就绪的最大缓存范围。",
             ),
         ),
         (
             tr(ui_language, "Step 3", "第 3 步"),
             tr(
                 ui_language,
-                "Use Semantic Query for meaning-based retrieval, then optionally add Exact Match terms to hard-filter titles and abstracts.",
-                "先用 Semantic Query 做语义检索，再按需用 Exact Match 对标题和摘要做硬关键词过滤。",
+                "Use the ChipSeeker Lite query box for meaning-based retrieval, then optionally add Exact Match terms to hard-filter titles and abstracts.",
+                "先用 ChipSeeker Lite query 做含义检索，再按需用 Exact Match 对标题和摘要做硬关键词过滤。",
             ),
         ),
         (
@@ -595,7 +595,8 @@ def render_content_pack_sidebar(content_status, ui_language):
                     f"Created: {update_result['zip_path']} | "
                     f"papers: {update_result['paper_delta_count']} | "
                     f"sources: {update_result['source_delta_count']} | "
-                    f"cache rows: {update_result['cache_delta_count']}"
+                    f"cache rows: {update_result['cache_delta_count']} | "
+                    f"full caches: {update_result.get('cache_full_count', 0)}"
                 )
             except ContentPackInstallError as exc:
                 st.error(str(exc))
@@ -1436,7 +1437,7 @@ def run():
         st.sidebar.markdown(
             tr(
                 ui_language,
-                "Recommended strongest semantic model: **voyage-4-large**. Get an API key from [Voyage AI](https://dash.voyageai.com/).",
+                "Recommended strongest ChipSeeker Lite Search model: **voyage-4-large**. Get an API key from [Voyage AI](https://dash.voyageai.com/).",
                 "推荐最强语义模型：**voyage-4-large**。可在 [Voyage AI](https://dash.voyageai.com/) 申请 API key。",
             )
         )
@@ -1519,7 +1520,7 @@ def run():
     )
     active_scope_years = scope_status_map[active_scope_id]["years"] if active_scope_id else []
     active_scope_key = scope_status_map[active_scope_id]["scope_key"] if active_scope_id else "all"
-    active_scope_text = scope_status_map[active_scope_id]["scope_text"] if active_scope_id else tr(ui_language, "No semantic cache ready", "还没有可用的语义缓存")
+    active_scope_text = scope_status_map[active_scope_id]["scope_text"] if active_scope_id else tr(ui_language, "No ChipSeeker Lite cache ready", "还没有可用的 ChipSeeker Lite 缓存")
     other_ready_caches = ready_cache_suggestions(
         DB_FILE,
         CACHE_DIR,
@@ -1550,12 +1551,12 @@ def run():
     )
 
     st.markdown("---")
-    st.markdown(f"### {tr(ui_language, 'Semantic Cache Builder', '语义缓存构建器')}")
+    st.markdown(f"### {tr(ui_language, 'ChipSeeker Lite Cache Builder', 'ChipSeeker Lite 缓存构建器')}")
     st.caption(
         tr(
             ui_language,
-            "Build a small scope first for fast onboarding. Semantic search will automatically use the largest ready cache.",
-            "建议先构建一个较小范围快速上手。语义搜索会自动使用当前已就绪的最大缓存范围。",
+            "Build a small scope first for fast onboarding. ChipSeeker Lite Search will automatically use the largest ready cache.",
+            "建议先构建一个较小范围快速上手。ChipSeeker Lite Search 会自动使用当前已就绪的最大缓存范围。",
         )
     )
     if active_scope_id:
@@ -1563,12 +1564,12 @@ def run():
         st.info(
             tr(
                 ui_language,
-                f"Current semantic search coverage: {active_scope_label} ({active_scope_text})",
-                f"当前语义搜索覆盖范围：{tr(ui_language, active_scope_label, {'Latest Year': '最新一年', 'Latest 3 Years': '最新三年', 'Full Library': '全库'}[active_scope_label])}（{active_scope_text}）",
+                f"Current ChipSeeker Lite Search coverage: {active_scope_label} ({active_scope_text})",
+                f"当前 ChipSeeker Lite Search 覆盖范围：{tr(ui_language, active_scope_label, {'Latest Year': '最新一年', 'Latest 3 Years': '最新三年', 'Full Library': '全库'}[active_scope_label])}（{active_scope_text}）",
             )
         )
     else:
-        st.warning(tr(ui_language, "No semantic cache is ready yet. Build one of the ranges below first.", "目前还没有可用的语义缓存，请先构建下面的任一范围。"))
+        st.warning(tr(ui_language, "No ChipSeeker Lite cache is ready yet. Build one of the ranges below first.", "目前还没有可用的 ChipSeeker Lite 缓存，请先构建下面的任一范围。"))
 
     if other_ready_caches and (not active_scope_id or (embedding_model_requires_api(selected_emb_model) and not embedding_api_ready)):
         st.info(
@@ -1666,8 +1667,8 @@ def run():
     st.caption(
         tr(
             ui_language,
-            f"Current semantic search coverage: {active_scope_text}",
-            f"当前语义搜索覆盖范围：{active_scope_text}",
+            f"Current ChipSeeker Lite Search coverage: {active_scope_text}",
+            f"当前 ChipSeeker Lite Search 覆盖范围：{active_scope_text}",
         )
     )
 
@@ -1710,16 +1711,16 @@ def run():
     search_btn_col1, search_btn_col2 = st.columns([1, 1])
     with search_btn_col1:
         semantic_search_clicked = st.button(
-            tr(ui_language, "Semantic Search", "语义搜索"),
+            tr(ui_language, "ChipSeeker Lite Search", "ChipSeeker Lite 搜索"),
             type="primary",
             use_container_width=True,
             help=tr(ui_language, "Fast search with your direct query.", "使用原始输入快速搜索。"),
         )
     with search_btn_col2:
         llm_powered_clicked = st.button(
-            tr(ui_language, "LLM Powered Search", "LLM 增强搜索"),
+            tr(ui_language, "ChipSeeker Pro Search", "ChipSeeker Pro 搜索"),
             use_container_width=True,
-            help=tr(ui_language, "LLM expands your query, runs semantic search, then reranks the top candidates. Shortcut: Ctrl+Enter.", "LLM 先扩展搜索词，再语义搜索并重排候选结果。快捷键：Ctrl+Enter。"),
+            help=tr(ui_language, "DeepSeek expands your query, runs ChipSeeker Lite Search, then reranks the top candidates. Shortcut: Ctrl+Enter.", "DeepSeek 先扩展搜索词，再运行 ChipSeeker Lite Search 并重排候选结果。快捷键：Ctrl+Enter。"),
         )
     components.html(
         """
@@ -1790,15 +1791,15 @@ def run():
           const subtitle = overlay.querySelector('.chipseeker-progress-subtitle');
           const steps = overlay.querySelector('.chipseeker-progress-steps');
           if (mode === 'llm_powered') {
-            title.textContent = 'LLM Powered Search is running...';
+            title.textContent = 'ChipSeeker Pro Search is running...';
             subtitle.textContent = 'DeepSeek is expanding your topic, ChipSeeker is retrieving candidates, then DeepSeek reranks the top papers.';
             steps.innerHTML = [
               '<div><span class="chipseeker-progress-dot"></span>1. Expanding your query with DeepSeek</div>',
-              '<div><span class="chipseeker-progress-dot"></span>2. Searching the semantic paper cache</div>',
+              '<div><span class="chipseeker-progress-dot"></span>2. Searching the ChipSeeker Lite paper cache</div>',
               '<div><span class="chipseeker-progress-dot"></span>3. Reranking top candidates with LLM</div>'
             ].join('');
           } else {
-            title.textContent = 'Semantic Search is running...';
+            title.textContent = 'ChipSeeker Lite Search is running...';
             subtitle.textContent = 'ChipSeeker is scanning the paper library and preparing ranked result cards.';
             steps.innerHTML = '<div><span class="chipseeker-progress-dot"></span>Searching and ranking papers</div>';
           }
@@ -1809,10 +1810,10 @@ def run():
           buttons.forEach((button) => {
             const text = button.innerText || '';
             if (button.dataset.chipseekerSearchOverlayBound === '1') return;
-            if (text.includes('LLM Powered Search') || text.includes('LLM ')) {
+            if (text.includes('ChipSeeker Pro Search') || text.includes('ChipSeeker Pro 搜索')) {
               button.dataset.chipseekerSearchOverlayBound = '1';
               button.addEventListener('click', () => showChipSeekerSearchOverlay('llm_powered'), {capture: true});
-            } else if (text.includes('Semantic Search')) {
+            } else if (text.includes('ChipSeeker Lite Search') || text.includes('ChipSeeker Lite 搜索')) {
               button.dataset.chipseekerSearchOverlayBound = '1';
               button.addEventListener('click', () => showChipSeekerSearchOverlay('semantic'), {capture: true});
             }
@@ -1826,7 +1827,7 @@ def run():
           doc.addEventListener('keydown', (event) => {
             if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
               const buttons = Array.from(doc.querySelectorAll('button'));
-              const target = buttons.find((button) => button.innerText.includes('LLM Powered Search') || button.innerText.includes('LLM 增强搜索'));
+              const target = buttons.find((button) => button.innerText.includes('ChipSeeker Pro Search') || button.innerText.includes('ChipSeeker Pro 搜索'));
               if (target) {
                 event.preventDefault();
                 showChipSeekerSearchOverlay('llm_powered');
@@ -1901,14 +1902,15 @@ def run():
     trigger_search = bool(search_query or selected_ui_venues or must_have)
     query_state_key = ""
     if trigger_search:
-        query_state_key = f"{search_query}_must{must_have}_limit{display_limit_val}_{selected_emb_model}_v{selected_ui_venues}_y{selected_years}_csv{hash(current_csv_state)}"
+        source_token = current_source_snapshot.get("token", "")
+        query_state_key = f"{search_query}_must{must_have}_limit{display_limit_val}_{selected_emb_model}_v{selected_ui_venues}_y{selected_years}_csv{source_token}"
 
     llm_task_id = st.session_state.get("llm_search_task_id")
     if llm_task_id:
         llm_task = get_task(llm_task_id)
         if llm_task and llm_task.get("status") in {"queued", "running"}:
             llm_task_active = True
-            st.info(f"LLM Powered Search: {llm_task.get('message', llm_task.get('status', 'running'))}")
+            st.info(f"ChipSeeker Pro Search: {llm_task.get('message', llm_task.get('status', 'running'))}")
             task_cols = st.columns([5, 1, 1])
             task_cols[0].progress(float(llm_task.get("progress", 0.0)) or 0.01)
             if task_cols[1].button("Refresh", use_container_width=True):
@@ -1916,7 +1918,7 @@ def run():
             if task_cols[2].button("Cancel", use_container_width=True, type="primary"):
                 cancel_task(llm_task_id)
                 st.session_state.pop("llm_search_task_id", None)
-                st.warning("LLM Powered Search canceled. Any late DeepSeek response will be ignored.")
+                st.warning("ChipSeeker Pro Search canceled. Any late DeepSeek response will be ignored.")
                 st.rerun()
             with st.expander("LLM Search Console", expanded=False):
                 st.code(format_task_history(llm_task), language="text")
@@ -1929,16 +1931,16 @@ def run():
                 "llm_powered",
                 result.get("effective_query", search_query),
             )
-            st.success(f"LLM Powered Search finished. Reranked top {result.get('rerank_limit', 20)} papers.")
+            st.success(f"ChipSeeker Pro Search finished. Reranked top {result.get('rerank_limit', 20)} papers.")
             cleanup_task(llm_task_id)
             st.session_state.pop("llm_search_task_id", None)
             st.rerun()
         elif llm_task and llm_task.get("status") == "canceled":
-            st.warning("LLM Powered Search was canceled.")
+            st.warning("ChipSeeker Pro Search was canceled.")
             cleanup_task(llm_task_id)
             st.session_state.pop("llm_search_task_id", None)
         elif llm_task and llm_task.get("status") == "failed":
-            st.error(f"LLM Powered Search failed: {llm_task.get('error', 'unknown error')}")
+            st.error(f"ChipSeeker Pro Search failed: {llm_task.get('error', 'unknown error')}")
             cleanup_task(llm_task_id)
             st.session_state.pop("llm_search_task_id", None)
         else:
@@ -1952,13 +1954,13 @@ def run():
             st.session_state.citations_map = {}
             if llm_powered_clicked:
                 if not search_query:
-                    st.error("LLM Powered Search needs a Step 1 semantic query.")
+                    st.error("ChipSeeker Pro Search needs a Step 1 search query.")
                     st.stop()
                 if not llm_runtime_key:
                     st.error(tr(ui_language, "LLM API key or Cloud Access is missing.", "缺少 LLM API key 或云端访问。"))
                     st.stop()
                 if not active_scope_id:
-                    st.error("Semantic cache is not ready. Build a cache first.")
+                    st.error("ChipSeeker Lite cache is not ready. Build a cache first.")
                     st.stop()
                 st.session_state["llm_search_task_id"] = submit_llm_powered_search(
                     DB_FILE,
@@ -2009,9 +2011,9 @@ def run():
                 if search_query:
                     if not searcher:
                         if embedding_model_requires_api(selected_emb_model) and not embedding_api_ready:
-                            st.warning(tr(ui_language, "Semantic query search is disabled because the selected embedding model requires an API key. Switch to MiniLM or add a key first.", "语义搜索当前不可用，因为所选 embedding 模型需要 API key。你可以先切回 MiniLM，或者先填写 key。"))
+                            st.warning(tr(ui_language, "ChipSeeker Lite Search is disabled because the selected embedding model requires an API key. Switch to MiniLM or add a key first.", "ChipSeeker Lite Search 当前不可用，因为所选 embedding 模型需要 API key。你可以先切回 MiniLM，或者先填写 key。"))
                         else:
-                            st.warning(tr(ui_language, "Current semantic cache is not ready. Build one of the ranges above first, or keep using metadata filters for now.", "当前语义缓存还没准备好。请先构建上面的任一范围，或者暂时只使用元数据过滤。"))
+                            st.warning(tr(ui_language, "Current ChipSeeker Lite cache is not ready. Build one of the ranges above first, or keep using metadata filters for now.", "当前 ChipSeeker Lite 缓存还没准备好。请先构建上面的任一范围，或者暂时只使用元数据过滤。"))
                         filtered_results = exact_first_hits[:display_limit_val] if (must_have or selected_ui_venues) else []
                     elif must_have or selected_ui_venues:
                         candidate_top_k = display_limit_val
@@ -2040,7 +2042,7 @@ def run():
         bucket_counts = result_bucket_counts(results, search_query)
         st.success(f"Extracted {len(results)} matches. Rare/All: {bucket_counts['rare']} | Perfect: {bucket_counts['perfect']} | Valuable: {bucket_counts['valuable']} | Relevant: {bucket_counts['relevant']}")
         if st.session_state.get("current_search_mode") == "llm_powered":
-            st.caption(f"LLM powered search | expanded query: {st.session_state.get('last_effective_search_query', search_query)}")
+            st.caption(f"ChipSeeker Pro Search | expanded query: {st.session_state.get('last_effective_search_query', search_query)}")
         year_counts = collect_year_counts(results, extract_year)
         if year_counts:
             with st.expander(tr(ui_language, "Optional analytics: Publication Trend", "可选分析：发表年份趋势"), expanded=False):

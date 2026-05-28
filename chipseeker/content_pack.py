@@ -307,6 +307,7 @@ def build_content_update_pack(
     baseline_caches = baseline.get("caches", {}) if isinstance(baseline.get("caches"), dict) else {}
     included_files = []
     cache_delta_count = 0
+    cache_full_count = 0
     temp_parent = os.path.join(output_dir, "_tmp")
     os.makedirs(temp_parent, exist_ok=True)
     with _safe_temporary_directory("chipseeker_update_build_", temp_parent) as temp_dir:
@@ -329,6 +330,7 @@ def build_content_update_pack(
                 baseline_cache = baseline_caches.get(cache_name) or {}
                 old_fingerprints = baseline_cache.get("fingerprints", [])
                 new_fingerprints = cache_info.get("fingerprints", [])
+                cache_payload_written = False
                 if (
                     old_fingerprints
                     and new_fingerprints
@@ -361,12 +363,29 @@ def build_content_update_pack(
                         )
                         cache_delta_count += len(new_fingerprints) - len(old_fingerprints)
                         included_files.append(f"cache_delta/{delta_name}")
-                elif cache_name not in baseline_caches and os.path.exists(source_cache):
+                        cache_payload_written = True
+                if not cache_payload_written and cache_name not in baseline_caches and os.path.exists(source_cache):
                     archive.write(source_cache, arcname=f"{PACK_ROOT_NAME}/cache/{cache_name}")
                     included_files.append(f"cache/{cache_name}")
                     if os.path.exists(source_meta):
                         archive.write(source_meta, arcname=f"{PACK_ROOT_NAME}/cache/{os.path.basename(source_meta)}")
                         included_files.append(f"cache/{os.path.basename(source_meta)}")
+                    cache_full_count += 1
+                elif (
+                    not cache_payload_written
+                    and baseline_cache
+                    and os.path.exists(source_cache)
+                    and (
+                        baseline_cache.get("fingerprints", []) != new_fingerprints
+                        or baseline_cache.get("sha1", "") != cache_info.get("sha1", "")
+                    )
+                ):
+                    archive.write(source_cache, arcname=f"{PACK_ROOT_NAME}/cache/{cache_name}")
+                    included_files.append(f"cache/{cache_name}")
+                    if os.path.exists(source_meta):
+                        archive.write(source_meta, arcname=f"{PACK_ROOT_NAME}/cache/{os.path.basename(source_meta)}")
+                        included_files.append(f"cache/{os.path.basename(source_meta)}")
+                    cache_full_count += 1
 
             archive.writestr("content_pack_manifest.json", json.dumps(_pack_manifest(content_status, pack_kind="update", paper_delta_count=len(delta_papers)), indent=2, ensure_ascii=False))
 
@@ -378,6 +397,7 @@ def build_content_update_pack(
         "paper_delta_count": len(delta_papers),
         "source_delta_count": len(changed_sources),
         "cache_delta_count": cache_delta_count,
+        "cache_full_count": cache_full_count,
         "included_count": len(included_files),
     }
 
@@ -437,6 +457,53 @@ def _clear_existing_targets(data_dir):
             shutil.rmtree(target_dir)
 
 
+def _move_existing_targets_to_backup(data_dir, backup_dir):
+    os.makedirs(backup_dir, exist_ok=True)
+    for relative_name in PACK_FILES:
+        target_file = os.path.join(data_dir, relative_name)
+        if os.path.exists(target_file):
+            backup_file = os.path.join(backup_dir, relative_name)
+            os.makedirs(os.path.dirname(backup_file), exist_ok=True)
+            shutil.move(target_file, backup_file)
+    for relative_dir in PACK_DIRS:
+        target_dir = os.path.join(data_dir, relative_dir)
+        if os.path.isdir(target_dir):
+            backup_target = os.path.join(backup_dir, relative_dir)
+            os.makedirs(os.path.dirname(backup_target), exist_ok=True)
+            shutil.move(target_dir, backup_target)
+
+
+def _backup_contains_targets(backup_dir):
+    if not os.path.isdir(backup_dir):
+        return False
+    for relative_name in PACK_FILES:
+        if os.path.exists(os.path.join(backup_dir, relative_name)):
+            return True
+    for relative_dir in PACK_DIRS:
+        if os.path.isdir(os.path.join(backup_dir, relative_dir)):
+            return True
+    return False
+
+
+def _restore_existing_targets_from_backup(data_dir, backup_dir, clear_existing=True):
+    if not _backup_contains_targets(backup_dir):
+        return
+    if clear_existing:
+        _clear_existing_targets(data_dir)
+    for relative_name in PACK_FILES:
+        backup_file = os.path.join(backup_dir, relative_name)
+        if os.path.exists(backup_file):
+            target_file = os.path.join(data_dir, relative_name)
+            os.makedirs(os.path.dirname(target_file), exist_ok=True)
+            shutil.move(backup_file, target_file)
+    for relative_dir in PACK_DIRS:
+        backup_dir_path = os.path.join(backup_dir, relative_dir)
+        if os.path.isdir(backup_dir_path):
+            target_dir = os.path.join(data_dir, relative_dir)
+            os.makedirs(os.path.dirname(target_dir), exist_ok=True)
+            shutil.move(backup_dir_path, target_dir)
+
+
 def _uploaded_bytes(uploaded_file):
     if hasattr(uploaded_file, "getvalue"):
         return uploaded_file.getvalue()
@@ -459,19 +526,26 @@ def install_content_pack(uploaded_file, data_dir):
                 archive.extractall(temp_dir)
             pack_root = _locate_pack_root(temp_dir)
             os.makedirs(data_dir, exist_ok=True)
-            _clear_existing_targets(data_dir)
+            backup_dir = os.path.join(temp_dir, "previous_local_data")
+            backup_complete = False
+            try:
+                _move_existing_targets_to_backup(data_dir, backup_dir)
+                backup_complete = True
 
-            copied_files = 0
-            for relative_name in PACK_FILES:
-                source_file = os.path.join(pack_root, relative_name)
-                if os.path.exists(source_file):
-                    shutil.move(source_file, os.path.join(data_dir, relative_name))
-                    copied_files += 1
-            for relative_dir in PACK_DIRS:
-                source_dir = os.path.join(pack_root, relative_dir)
-                if os.path.isdir(source_dir):
-                    copied_files += sum(len(files) for _, _, files in os.walk(source_dir))
-                    shutil.move(source_dir, os.path.join(data_dir, relative_dir))
+                copied_files = 0
+                for relative_name in PACK_FILES:
+                    source_file = os.path.join(pack_root, relative_name)
+                    if os.path.exists(source_file):
+                        shutil.move(source_file, os.path.join(data_dir, relative_name))
+                        copied_files += 1
+                for relative_dir in PACK_DIRS:
+                    source_dir = os.path.join(pack_root, relative_dir)
+                    if os.path.isdir(source_dir):
+                        copied_files += sum(len(files) for _, _, files in os.walk(source_dir))
+                        shutil.move(source_dir, os.path.join(data_dir, relative_dir))
+            except Exception:
+                _restore_existing_targets_from_backup(data_dir, backup_dir, clear_existing=backup_complete)
+                raise
     except OSError as exc:
         if exc.errno == errno.ENOSPC:
             free_bytes = shutil.disk_usage(staging_parent).free
@@ -494,7 +568,12 @@ def _merge_tree(source_dir, target_dir):
         target_root = target_dir if relative_root == "." else os.path.join(target_dir, relative_root)
         os.makedirs(target_root, exist_ok=True)
         for file_name in files:
-            shutil.move(os.path.join(root, file_name), os.path.join(target_root, file_name))
+            source_path = os.path.join(root, file_name)
+            target_path = os.path.join(target_root, file_name)
+            if os.path.exists(target_path):
+                os.replace(source_path, target_path)
+            else:
+                shutil.move(source_path, target_path)
             copied_files += 1
     return copied_files
 

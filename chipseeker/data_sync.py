@@ -637,15 +637,40 @@ def is_junk_paper(title, abstract, row=None):
 
 
 def scan_and_import_csvs(db_file, cache_dir, source_root=SOURCE_CSV_DIR, manifest_path=SOURCE_MANIFEST_FILE, logger=None):
+    previous_manifest_entries = load_source_manifest_entries(manifest_path)
+    previous_valid_paths = {
+        str(entry.get("relative_path", "")).replace("\\", "/")
+        for entry in previous_manifest_entries
+        if entry.get("valid_source") and entry.get("relative_path")
+    }
     csv_files = list_source_csv_files(source_root=source_root, manifest_path=manifest_path, logger=logger)
+    current_manifest_entries = load_source_manifest_entries(manifest_path)
+    current_paths = {
+        str(entry.get("relative_path", "")).replace("\\", "/")
+        for entry in current_manifest_entries
+        if entry.get("relative_path")
+    }
+    current_valid_paths = {
+        str(entry.get("relative_path", "")).replace("\\", "/")
+        for entry in current_manifest_entries
+        if entry.get("valid_source") and entry.get("relative_path")
+    }
+    formerly_valid_now_invalid = sorted((previous_valid_paths & current_paths) - current_valid_paths)
+    removal_skip_reasons = []
+    if formerly_valid_now_invalid:
+        removal_skip_reasons.append(
+            "previously valid source(s) are now invalid: " + ", ".join(formerly_valid_now_invalid[:5])
+        )
     current_keys = set()
     ordered_keys = []
     new_files_info = {}
     updated_files_info = {}
     cache_invalidating_update_count = 0
+    failed_files = []
 
     all_papers = load_json(db_file, [])
     existing_papers = {}
+    original_ordered_keys = []
     lookup = {}
     ambiguous_keys = set()
 
@@ -664,6 +689,7 @@ def scan_and_import_csvs(db_file, cache_dir, source_root=SOURCE_CSV_DIR, manifes
         key = paper_identity_key(paper)
         if key and key not in existing_papers:
             existing_papers[key] = paper
+            original_ordered_keys.append(key)
             register_lookup_keys(key, paper)
     original_keys = set(existing_papers.keys())
 
@@ -722,10 +748,26 @@ def scan_and_import_csvs(db_file, cache_dir, source_root=SOURCE_CSV_DIR, manifes
             if updated_in_file > 0:
                 updated_files_info[os.path.relpath(file, source_root)] = updated_in_file
         except Exception as exc:
+            failed_files.append(os.path.relpath(file, source_root).replace("\\", "/"))
             if logger:
                 logger.warning("Error reading CSV %s: %s", file, exc)
 
-    removed_count = len(original_keys - current_keys)
+    if failed_files:
+        removal_skip_reasons.append("source read failed: " + ", ".join(failed_files[:5]))
+
+    if removal_skip_reasons:
+        if logger:
+            logger.warning(
+                "Skipping paper removals because this source scan may be incomplete: %s",
+                "; ".join(removal_skip_reasons),
+            )
+        for paper_key in original_ordered_keys:
+            if paper_key not in current_keys:
+                ordered_keys.append(paper_key)
+                current_keys.add(paper_key)
+        removed_count = 0
+    else:
+        removed_count = len(original_keys - current_keys)
     added_count = sum(new_files_info.values())
     updated_count = sum(updated_files_info.values())
     final_papers = [existing_papers[paper_key] for paper_key in ordered_keys]
@@ -737,6 +779,8 @@ def scan_and_import_csvs(db_file, cache_dir, source_root=SOURCE_CSV_DIR, manifes
 
     file_summaries = [f"{path} (+{count} added)" for path, count in new_files_info.items()]
     file_summaries.extend([f"{path} ({count} updated)" for path, count in updated_files_info.items()])
+    if removal_skip_reasons:
+        file_summaries.append("Removals skipped: " + "; ".join(removal_skip_reasons))
     refresh_source_manifest(source_root=source_root, manifest_path=manifest_path, logger=logger)
     return added_count, updated_count, removed_count, file_summaries
 

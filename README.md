@@ -40,7 +40,7 @@ streamlit run app.py
 
 **ChipSeeker** is a localized, intelligent paper repository tailored specifically for **IC design engineers and researchers**.
 
-Tired of incomplete or inaccurate keyword searches and the hassle of filtering out low-quality papers on IEEE Xplore or other academic search engines? ChipSeeker leverages high-dimensional vector semantic retrieval to build a fast, localized, and highly accurate personal knowledge base.
+Tired of incomplete or inaccurate keyword searches and the hassle of filtering out low-quality papers on IEEE Xplore or other academic search engines? ChipSeeker leverages high-dimensional vector retrieval to build a fast, localized, and highly accurate personal knowledge base.
 
 ---
 <img width="1703" height="936" alt="45ab0a5d948316db7a7896ffe000673b" src="https://github.com/user-attachments/assets/e886569a-a144-48eb-8a27-cc83e67ffba4" />
@@ -48,7 +48,7 @@ Tired of incomplete or inaccurate keyword searches and the hassle of filtering o
 
 ## Key Features
 
-* **Semantic High-Dimensional Retrieval** Powered by top-tier academic LLMs like Voyage-4 and OpenAI. Break free from rigid keyword matching; perform deep semantic searches based on circuit architectures and specifications. This ensures you never miss highly relevant, high-quality papers, even if they lack exact keyword matches.
+* **ChipSeeker Lite Search** Powered by top-tier academic embedding models like Voyage-4 and OpenAI. Break free from rigid keyword matching; perform deep vector searches based on circuit architectures and specifications. This ensures you never miss highly relevant, high-quality papers, even if they lack exact keyword matches.
 * **IC-Specific Scoring System** Features a comprehensive ranking of top IC conferences and journals, assigning exclusive tags like S+ or AA to premier venues (e.g., ISSCC, JSSC). It scientifically quantifies a paper's value by combining real-time citation counts from Semantic Scholar with publication years.
 * **LLM Integration** Seamlessly connects with DeepSeek, Kimi, and other leading LLM APIs.
 * **One-Click Export** Instantly open PDFs or seamlessly generate CSV databases, standard IEEE BibTeX citations, and Markdown knowledge packs optimized for NotebookLM.
@@ -91,7 +91,7 @@ Open the web page, configure your DeepSeek or OpenAI API Key in the left sidebar
 1. Open ChipSeeker.
 2. In `Quick Start` or the sidebar `Content Pack` panel, import the ZIP file you received.
 3. Wait for the library sync to finish.
-4. If the pack already contains precomputed `.npy` cache files, semantic search can be used directly without rebuilding them.
+4. If the pack already contains precomputed `.npy` cache files, ChipSeeker Lite Search can be used directly without rebuilding them.
 
 ## Uninstall
 
@@ -169,7 +169,7 @@ streamlit run app.py
 1. 打开 ChipSeeker。
 2. 在 `Quick Start` 或侧边栏 `Content Pack` 面板中导入你收到的 ZIP。
 3. 等待文库同步完成。
-4. 如果这个包已经包含跑好的 `.npy` 缓存，那么导入后可以直接使用语义搜索，不需要重新构建。
+4. 如果这个包已经包含跑好的 `.npy` 缓存，那么导入后可以直接使用 ChipSeeker Lite Search，不需要重新构建。
 
 ## Uninstall / 卸载
 
