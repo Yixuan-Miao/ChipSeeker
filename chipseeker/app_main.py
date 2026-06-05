@@ -77,6 +77,7 @@ from search_runtime import PaperSearcher, describe_cache_status, get_cache_paths
 
 
 CURRENT_YEAR = datetime.now().year
+SEARCH_MAX_EXACT_CANDIDATES = 5000
 LANGUAGE_OPTIONS = ["English", "简体中文"]
 NATURE_JOURNAL_OPTIONS = [
     ("", "All Nature journals"),
@@ -1805,6 +1806,10 @@ def run():
           }
           overlay.classList.add('is-active');
         }
+        function hideChipSeekerSearchOverlay() {
+          const overlay = doc.getElementById('chipseeker-local-search-overlay');
+          if (overlay) overlay.classList.remove('is-active');
+        }
         function attachChipSeekerSearchOverlayButtons() {
           const buttons = Array.from(doc.querySelectorAll('button'));
           buttons.forEach((button) => {
@@ -1819,6 +1824,7 @@ def run():
             }
           });
         }
+        hideChipSeekerSearchOverlay();
         attachChipSeekerSearchOverlayButtons();
         setTimeout(attachChipSeekerSearchOverlayButtons, 500);
         setTimeout(attachChipSeekerSearchOverlayButtons, 1500);
@@ -1997,7 +2003,12 @@ def run():
                     st.session_state["last_effective_search_query"] = effective_query
                     st.info(f"LLM expanded query: `{effective_query}`")
 
-                exact_first_hits = [{"similarity": 1.0, "paper": paper} for paper in all_papers_in_db]
+                exact_source_papers = all_papers_in_db
+                if search_query and searcher and (must_have or selected_ui_venues):
+                    # Keep the exact-first candidate pool aligned with the ready embedding cache.
+                    # Exact-only searches still scan the full library because they do not need embeddings.
+                    exact_source_papers = getattr(searcher, "dt", all_papers_in_db)
+                exact_first_hits = [{"similarity": 1.0, "paper": paper} for paper in exact_source_papers]
                 exact_first_hits = filter_search_results(
                     exact_first_hits,
                     selected_years,
@@ -2006,7 +2017,7 @@ def run():
                     analyze_venue,
                     extract_year,
                 )
-                initial_scan_count = len(exact_first_hits) if must_have or selected_ui_venues else len(all_papers_in_db)
+                initial_scan_count = len(exact_first_hits) if must_have or selected_ui_venues else len(exact_source_papers)
 
                 if search_query:
                     if not searcher:
@@ -2017,6 +2028,15 @@ def run():
                         filtered_results = exact_first_hits[:display_limit_val] if (must_have or selected_ui_venues) else []
                     elif must_have or selected_ui_venues:
                         candidate_top_k = display_limit_val
+                        if len(exact_first_hits) > SEARCH_MAX_EXACT_CANDIDATES:
+                            st.warning(
+                                tr(
+                                    ui_language,
+                                    f"Step 2 matched {len(exact_first_hits)} papers. ChipSeeker limits the semantic candidate pool to {SEARCH_MAX_EXACT_CANDIDATES} to keep Pro/Lite search responsive. Use a more specific keyword if needed.",
+                                    f"步骤 2 命中 {len(exact_first_hits)} 篇。为了避免 Pro/Lite 搜索卡死，ChipSeeker 会把语义候选池限制在 {SEARCH_MAX_EXACT_CANDIDATES} 篇。需要更准时请把关键词写得更具体。",
+                                )
+                            )
+                            exact_first_hits = exact_first_hits[:SEARCH_MAX_EXACT_CANDIDATES]
                         filtered_results = searcher.search_candidates(
                             effective_query,
                             [item["paper"] for item in exact_first_hits],

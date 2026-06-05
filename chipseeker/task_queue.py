@@ -20,6 +20,7 @@ _TASKS = {}
 _LOCK = threading.Lock()
 _MAX_HISTORY = 200
 DEFAULT_LLM_RERANK_LIMIT = 20
+LLM_SEARCH_MAX_EXACT_CANDIDATES = 5000
 
 
 def _log(message):
@@ -209,6 +210,7 @@ def _llm_powered_search(task_id, payload):
     update_progress(task_id, 0.05, "Preparing ChipSeeker Pro Search")
     all_papers = load_json(payload["db_file"], [])
     scoped_papers = filter_papers_by_years(all_papers, active_scope_years) if active_scope_years else None
+    search_papers = scoped_papers if scoped_papers is not None else all_papers
     _raise_if_cancelled(task_id)
 
     update_progress(task_id, 0.12, "Expanding query with LLM")
@@ -225,10 +227,10 @@ def _llm_powered_search(task_id, payload):
         payload["db_file"],
         model_name=payload["embedding_model"],
         api_key=payload.get("embedding_api_key", ""),
-        papers_override=scoped_papers,
+        papers_override=search_papers,
         scope_key=active_scope_key,
     )
-    exact_first_hits = [{"similarity": 1.0, "paper": paper} for paper in all_papers]
+    exact_first_hits = [{"similarity": 1.0, "paper": paper} for paper in search_papers]
     exact_first_hits = filter_search_results(
         exact_first_hits,
         selected_years,
@@ -237,12 +239,19 @@ def _llm_powered_search(task_id, payload):
         analyze_venue,
         extract_year,
     )
-    initial_scan_count = len(exact_first_hits) if must_have or selected_ui_venues else len(all_papers)
+    initial_scan_count = len(exact_first_hits) if must_have or selected_ui_venues else len(search_papers)
     _raise_if_cancelled(task_id)
 
     update_progress(task_id, 0.48, "Running ChipSeeker Lite retrieval")
     candidate_top_k = min(max(display_limit, 120), 400)
     if must_have or selected_ui_venues:
+        if len(exact_first_hits) > LLM_SEARCH_MAX_EXACT_CANDIDATES:
+            append_history(
+                task_id,
+                f"Exact filter matched {len(exact_first_hits)} papers; limiting semantic candidate pool to {LLM_SEARCH_MAX_EXACT_CANDIDATES}.",
+                level="warning",
+            )
+            exact_first_hits = exact_first_hits[:LLM_SEARCH_MAX_EXACT_CANDIDATES]
         filtered_results = searcher.search_candidates(
             effective_query,
             [item["paper"] for item in exact_first_hits],
