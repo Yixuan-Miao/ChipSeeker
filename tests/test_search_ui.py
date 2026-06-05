@@ -11,7 +11,7 @@ def extract_year(value):
     return int(value or 0)
 
 
-def test_exact_match_expands_domain_synonyms():
+def test_exact_match_is_literal_not_domain_synonym_expansion():
     raw_hits = [
         {
             "similarity": 0.8,
@@ -26,8 +26,10 @@ def test_exact_match_expands_domain_synonyms():
     ]
 
     results = filter_search_results(raw_hits, (2020, 2026), [], "adc", analyze_venue, extract_year)
+    expanded_phrase_results = filter_search_results(raw_hits, (2020, 2026), [], "analog-to-digital converter", analyze_venue, extract_year)
 
-    assert len(results) == 1
+    assert results == []
+    assert len(expanded_phrase_results) == 1
 
 
 def test_exact_match_searches_full_author_list():
@@ -104,10 +106,16 @@ def test_exact_match_supports_author_venue_year_combo():
 def test_exact_match_uses_slash_for_or_not_spaces():
     slash_group = build_and_groups("adc/pll")[0]
     assert "adc" in slash_group
-    assert "analog-to-digital converter" in slash_group
     assert "pll" in slash_group
-    assert "phase-locked loop" in slash_group
     assert build_and_groups("adc pll")[0][0] == "adc pll"
+
+
+def test_exact_match_inp_does_not_expand_to_device_or_material_synonyms():
+    group = build_and_groups("InP")[0]
+    highlighted = highlight_text("Pulsed HEMT LNA with GaN devices", group)
+
+    assert group == ["inp"]
+    assert "background-color" not in highlighted
 
 
 def test_exact_match_comma_means_and():

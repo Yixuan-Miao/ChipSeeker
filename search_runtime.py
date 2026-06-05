@@ -23,9 +23,28 @@ def _load_sentence_transformer(model_name):
 
 
 def _semantic_search(query_embedding, corpus_embeddings, top_k):
-    from sentence_transformers import util
+    query = np.asarray(query_embedding, dtype=np.float32)
+    corpus = np.asarray(corpus_embeddings, dtype=np.float32)
+    if query.ndim == 2:
+        query = query[0]
+    if corpus.ndim != 2 or corpus.shape[0] == 0:
+        return []
 
-    return util.semantic_search(query_embedding, corpus_embeddings, top_k=top_k)[0]
+    query_norm = float(np.linalg.norm(query))
+    if query_norm <= 0:
+        return []
+    corpus_norms = np.linalg.norm(corpus, axis=1)
+    denom = corpus_norms * query_norm
+    scores = np.divide(corpus @ query, denom, out=np.zeros(corpus.shape[0], dtype=np.float32), where=denom > 0)
+    top_k = max(0, min(int(top_k), scores.shape[0]))
+    if top_k <= 0:
+        return []
+    if top_k == scores.shape[0]:
+        indexes = np.argsort(-scores)
+    else:
+        indexes = np.argpartition(-scores, top_k - 1)[:top_k]
+        indexes = indexes[np.argsort(-scores[indexes])]
+    return [{"corpus_id": int(index), "score": float(scores[index])} for index in indexes]
 
 
 def _format_eta(seconds):
@@ -87,6 +106,37 @@ def _load_meta_file(meta_file):
     with open(meta_file, 'r', encoding='utf-8') as f:
         payload = json.load(f)
     return payload if isinstance(payload, dict) else {}
+
+
+def _db_signature(db_file):
+    try:
+        stat = os.stat(db_file)
+    except OSError:
+        return {}
+    return {
+        "path": os.path.abspath(db_file),
+        "size": int(stat.st_size),
+        "mtime_ns": int(stat.st_mtime_ns),
+        "embedding_text_mode": EMBEDDING_TEXT_MODE,
+    }
+
+
+def _fast_exact_cache_match(cache_file, meta_file, db_file, model_name, scope_key):
+    if not os.path.exists(cache_file):
+        return "", 0
+    try:
+        meta = _load_meta_file(meta_file)
+        if meta.get("db_signature") != _db_signature(db_file):
+            return "", 0
+        if meta.get("model_name") != model_name or meta.get("scope_key") != (scope_key or "all"):
+            return "", 0
+        fingerprints = meta.get("fingerprints", [])
+        embeddings = np.load(cache_file, mmap_mode="r")
+        if embeddings.shape[0] == len(fingerprints):
+            return "exact", embeddings.shape[0]
+    except Exception:
+        return "", 0
+    return "", 0
 
 
 def _cache_matches_fingerprints(cache_file, meta_file, fingerprints):
@@ -155,6 +205,20 @@ def _migrate_cache_if_needed(source_cache, source_meta, target_cache, target_met
     return target_cache, target_meta
 
 
+def _save_cache_meta(meta_file, db_file, model_name, scope_key, fingerprints):
+    payload = {
+        "cache_schema": 2,
+        "embedding_text_mode": EMBEDDING_TEXT_MODE,
+        "db_signature": _db_signature(db_file),
+        "db_name": os.path.basename(db_file),
+        "model_name": model_name,
+        "scope_key": scope_key or "all",
+        "fingerprints": fingerprints,
+    }
+    with open(meta_file, 'w', encoding='utf-8') as f:
+        json.dump(payload, f, indent=2, ensure_ascii=False)
+
+
 def resolve_portable_cache(db_file, model_name, scope_key, fingerprints):
     primary_cache, primary_meta = get_cache_paths(db_file, model_name, scope_key)
     state, cached_count = _cache_matches_fingerprints(primary_cache, primary_meta, fingerprints) if os.path.exists(primary_cache) else ("", 0)
@@ -218,10 +282,14 @@ def describe_cache_status(db_file, model_name, scope_key="all", papers_override=
         with open(db_file, 'r', encoding='utf-8') as f:
             papers = json.load(f)
     cache_file, meta_file = get_cache_paths(db_file, model_name, scope_key)
-    fingerprints = _dataset_fingerprints(papers)
-    resolved_cache, resolved_meta, cache_state, cached_count = resolve_portable_cache(
-        db_file, model_name, scope_key, fingerprints
-    )
+    cache_state, cached_count = _fast_exact_cache_match(cache_file, meta_file, db_file, model_name, scope_key)
+    resolved_cache, resolved_meta = cache_file, meta_file
+    fingerprints = []
+    if not cache_state:
+        fingerprints = _dataset_fingerprints(papers)
+        resolved_cache, resolved_meta, cache_state, cached_count = resolve_portable_cache(
+            db_file, model_name, scope_key, fingerprints
+        )
     status = {
         "cache_file": resolved_cache or cache_file,
         "meta_file": resolved_meta or meta_file,
@@ -234,6 +302,9 @@ def describe_cache_status(db_file, model_name, scope_key="all", papers_override=
         "new_papers": len(papers),
     }
     if cache_state == "exact":
+        meta = _load_meta_file(resolved_meta)
+        if not meta.get("db_signature"):
+            _save_cache_meta(resolved_meta, db_file, model_name, scope_key, fingerprints)
         status["cached_papers"] = cached_count
         status["up_to_date"] = True
         status["needs_build"] = False
@@ -264,7 +335,7 @@ class PaperSearcher:
         self.cf, self.mf = get_cache_paths(self.jp, self.mn, self.scope_key)
 
         self._log(f"init model={self.mn} mode={self.mt} scope={self.scope_key} cache={self.cf}")
-        self.md = self._init_model()
+        self.md = None
         self.eb = self._load_cache()
 
     def _init_model(self):
@@ -277,6 +348,12 @@ class PaperSearcher:
             from openai import OpenAI
             return OpenAI(api_key=self.ak)
         return _load_sentence_transformer(self.mn)
+
+    def _ensure_model(self):
+        if self.md is None:
+            self._log(f"initializing embedding backend model={self.mn} mode={self.mt}")
+            self.md = self._init_model()
+        return self.md
 
     def _load_db(self):
         with open(self.jp, 'r', encoding='utf-8') as f:
@@ -299,16 +376,7 @@ class PaperSearcher:
             return None
 
     def _save_meta(self, fingerprints):
-        payload = {
-            "cache_schema": 2,
-            "embedding_text_mode": EMBEDDING_TEXT_MODE,
-            "db_name": os.path.basename(self.jp),
-            "model_name": self.mn,
-            "scope_key": self.scope_key,
-            "fingerprints": fingerprints,
-        }
-        with open(self.mf, 'w', encoding='utf-8') as f:
-            json.dump(payload, f, indent=2, ensure_ascii=False)
+        _save_cache_meta(self.mf, self.jp, self.mn, self.scope_key, fingerprints)
 
     def _emit_progress(self, done, total, message):
         if self.progress_callback:
@@ -330,8 +398,10 @@ class PaperSearcher:
                 if self.mt == 'c':
                     result = cloud_embed(self.ak, self.mn, batch)
                 elif self.mt == 'v':
+                    self._ensure_model()
                     result = self.md.embed(batch, model=self.mn).embeddings
                 else:
+                    self._ensure_model()
                     result = [x.embedding for x in self.md.embeddings.create(input=batch, model=self.mn).data]
             except Exception as exc:
                 elapsed = time.perf_counter() - batch_start
@@ -357,6 +427,7 @@ class PaperSearcher:
         if max_attempts is None:
             max_attempts = 1 if stage_message == "Embedding query" else 3
         if self.mt == 'l':
+            self._ensure_model()
             rows = []
             batch_size = 64
             total_batches = max(1, (len(texts) + batch_size - 1) // batch_size)
@@ -394,8 +465,12 @@ class PaperSearcher:
         return np.array(rows, dtype=np.float32)
 
     def _load_cache(self):
+        fast_state, fast_cached_count = _fast_exact_cache_match(self.cf, self.mf, self.jp, self.mn, self.scope_key)
+        if fast_state == "exact":
+            self._log(f"cache hit {self.cf}")
+            return np.load(self.cf, mmap_mode="r")
+
         current_fingerprints = self._dataset_fingerprints()
-        texts = [self._paper_text(paper) for paper in self.dt]
         resolved_cache, resolved_meta, cache_state, cached_count = resolve_portable_cache(
             self.jp, self.mn, self.scope_key, current_fingerprints
         )
@@ -403,11 +478,14 @@ class PaperSearcher:
 
         if cache_state:
             try:
-                embeddings = np.load(self.cf)
-
                 if cache_state == "exact":
+                    embeddings = np.load(self.cf, mmap_mode="r")
                     self._log(f"cache hit {self.cf}")
+                    self._save_meta(current_fingerprints)
                     return embeddings
+
+                embeddings = np.load(self.cf)
+                texts = [self._paper_text(paper) for paper in self.dt]
 
                 if cache_state == "append_only":
                     self._log(f"append-only update {cached_count} -> {len(current_fingerprints)}")
@@ -440,6 +518,7 @@ class PaperSearcher:
         elif os.path.exists(self.cf):
             self._log("cache invalidated because paper order/content changed")
 
+        texts = [self._paper_text(paper) for paper in self.dt]
         embeddings = self._embed(texts)
         np.save(self.cf, embeddings)
         self._save_meta(current_fingerprints)

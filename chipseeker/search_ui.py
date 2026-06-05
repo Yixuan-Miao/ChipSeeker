@@ -1,7 +1,4 @@
-import math
 import re
-
-from chipseeker.domain_synonyms import expand_exact_term
 
 
 def get_paper_id(paper):
@@ -39,9 +36,7 @@ def build_and_groups(must_have):
     if must_have:
         for group in re.split(r"\s*(?:,|&|\band\b)\s*", must_have, flags=re.IGNORECASE):
             raw_words = [word.strip().lower().strip('"') for word in re.split(r"\s*/\s*", group) if word.strip()]
-            or_words = []
-            for word in raw_words:
-                or_words.extend(expand_exact_term(word))
+            or_words = raw_words
             if or_words:
                 and_groups.append(list(dict.fromkeys(or_words)))
     return and_groups

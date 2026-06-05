@@ -8,7 +8,6 @@ import webbrowser
 from datetime import date, datetime, timezone
 
 import streamlit as st
-import streamlit.components.v1 as components
 
 from chipseeker.config_store import UserDataStore, load_app_config
 from chipseeker.cloud_access import build_cloud_token, cloud_access_configured
@@ -77,7 +76,10 @@ from search_runtime import PaperSearcher, describe_cache_status, get_cache_paths
 
 
 CURRENT_YEAR = datetime.now().year
-SEARCH_MAX_EXACT_CANDIDATES = 5000
+SEMANTIC_PREFILTER_MULTIPLIER = 20
+SEMANTIC_PREFILTER_MIN = 1000
+SEMANTIC_PREFILTER_MAX = 5000
+LLM_SEARCH_UI_TIMEOUT_SECONDS = 240
 LANGUAGE_OPTIONS = ["English", "简体中文"]
 NATURE_JOURNAL_OPTIONS = [
     ("", "All Nature journals"),
@@ -1721,132 +1723,8 @@ def run():
         llm_powered_clicked = st.button(
             tr(ui_language, "ChipSeeker Pro Search", "ChipSeeker Pro 搜索"),
             use_container_width=True,
-            help=tr(ui_language, "DeepSeek expands your query, runs ChipSeeker Lite Search, then reranks the top candidates. Shortcut: Ctrl+Enter.", "DeepSeek 先扩展搜索词，再运行 ChipSeeker Lite Search 并重排候选结果。快捷键：Ctrl+Enter。"),
+            help=tr(ui_language, "DeepSeek expands your query, runs ChipSeeker Lite Search, then reranks the top candidates.", "DeepSeek 先扩展搜索词，再运行 ChipSeeker Lite Search 并重排候选结果。"),
         )
-    components.html(
-        """
-        <script>
-        const doc = window.parent.document;
-        function ensureChipSeekerSearchOverlay() {
-          let overlay = doc.getElementById('chipseeker-local-search-overlay');
-          if (overlay) return overlay;
-          const style = doc.createElement('style');
-          style.id = 'chipseeker-local-search-overlay-style';
-          style.textContent = `
-            #chipseeker-local-search-overlay {
-              position: fixed; inset: 0; z-index: 999999; display: none;
-              align-items: center; justify-content: center; padding: 24px;
-              background: rgba(15,23,42,0.42); backdrop-filter: blur(3px);
-            }
-            #chipseeker-local-search-overlay.is-active { display: flex; }
-            #chipseeker-local-search-overlay .chipseeker-progress-card {
-              width: min(620px, 100%); background: white; border-radius: 24px;
-              border: 1px solid #dbe5f0; box-shadow: 0 32px 80px rgba(15,23,42,0.28);
-              padding: 26px 28px; font-family: "Segoe UI", Arial, sans-serif;
-            }
-            #chipseeker-local-search-overlay .chipseeker-progress-title {
-              font-size: 24px; font-weight: 950; margin: 0 0 8px; color: #0f172a;
-              letter-spacing: -0.03em;
-            }
-            #chipseeker-local-search-overlay .chipseeker-progress-subtitle {
-              color: #627182; line-height: 1.55; margin-bottom: 18px; font-size: 15px;
-            }
-            #chipseeker-local-search-overlay .chipseeker-progress-bar {
-              height: 10px; border-radius: 999px; background: #e2e8f0; overflow: hidden;
-            }
-            #chipseeker-local-search-overlay .chipseeker-progress-bar span {
-              display: block; width: 38%; height: 100%; border-radius: 999px;
-              background: linear-gradient(90deg,#ff4545,#1664ff,#16a34a);
-              animation: chipseekerProgressSlide 1.35s ease-in-out infinite alternate;
-            }
-            #chipseeker-local-search-overlay .chipseeker-progress-steps {
-              margin-top: 16px; display: grid; gap: 8px; color: #334155; font-weight: 800;
-            }
-            #chipseeker-local-search-overlay .chipseeker-progress-dot {
-              display: inline-block; width: 9px; height: 9px; border-radius: 999px;
-              background: #1664ff; box-shadow: 0 0 0 6px rgba(22,100,255,0.12);
-              margin-right: 8px;
-            }
-            @keyframes chipseekerProgressSlide {
-              from { transform: translateX(-35%); } to { transform: translateX(165%); }
-            }
-          `;
-          doc.head.appendChild(style);
-          overlay = doc.createElement('div');
-          overlay.id = 'chipseeker-local-search-overlay';
-          overlay.setAttribute('aria-live', 'polite');
-          overlay.innerHTML = `
-            <div class="chipseeker-progress-card">
-              <h2 class="chipseeker-progress-title">Searching ChipSeeker...</h2>
-              <div class="chipseeker-progress-subtitle">Please keep this page open. Large-library search can take a moment.</div>
-              <div class="chipseeker-progress-bar"><span></span></div>
-              <div class="chipseeker-progress-steps"></div>
-            </div>
-          `;
-          doc.body.appendChild(overlay);
-          return overlay;
-        }
-        function showChipSeekerSearchOverlay(mode) {
-          const overlay = ensureChipSeekerSearchOverlay();
-          const title = overlay.querySelector('.chipseeker-progress-title');
-          const subtitle = overlay.querySelector('.chipseeker-progress-subtitle');
-          const steps = overlay.querySelector('.chipseeker-progress-steps');
-          if (mode === 'llm_powered') {
-            title.textContent = 'ChipSeeker Pro Search is running...';
-            subtitle.textContent = 'DeepSeek is expanding your topic, ChipSeeker is retrieving candidates, then DeepSeek reranks the top papers.';
-            steps.innerHTML = [
-              '<div><span class="chipseeker-progress-dot"></span>1. Expanding your query with DeepSeek</div>',
-              '<div><span class="chipseeker-progress-dot"></span>2. Searching the ChipSeeker Lite paper cache</div>',
-              '<div><span class="chipseeker-progress-dot"></span>3. Reranking top candidates with LLM</div>'
-            ].join('');
-          } else {
-            title.textContent = 'ChipSeeker Lite Search is running...';
-            subtitle.textContent = 'ChipSeeker is scanning the paper library and preparing ranked result cards.';
-            steps.innerHTML = '<div><span class="chipseeker-progress-dot"></span>Searching and ranking papers</div>';
-          }
-          overlay.classList.add('is-active');
-        }
-        function hideChipSeekerSearchOverlay() {
-          const overlay = doc.getElementById('chipseeker-local-search-overlay');
-          if (overlay) overlay.classList.remove('is-active');
-        }
-        function attachChipSeekerSearchOverlayButtons() {
-          const buttons = Array.from(doc.querySelectorAll('button'));
-          buttons.forEach((button) => {
-            const text = button.innerText || '';
-            if (button.dataset.chipseekerSearchOverlayBound === '1') return;
-            if (text.includes('ChipSeeker Pro Search') || text.includes('ChipSeeker Pro 搜索')) {
-              button.dataset.chipseekerSearchOverlayBound = '1';
-              button.addEventListener('click', () => showChipSeekerSearchOverlay('llm_powered'), {capture: true});
-            } else if (text.includes('ChipSeeker Lite Search') || text.includes('ChipSeeker Lite 搜索')) {
-              button.dataset.chipseekerSearchOverlayBound = '1';
-              button.addEventListener('click', () => showChipSeekerSearchOverlay('semantic'), {capture: true});
-            }
-          });
-        }
-        hideChipSeekerSearchOverlay();
-        attachChipSeekerSearchOverlayButtons();
-        setTimeout(attachChipSeekerSearchOverlayButtons, 500);
-        setTimeout(attachChipSeekerSearchOverlayButtons, 1500);
-        if (!doc.__chipseekerSearchHotkeys) {
-          doc.__chipseekerSearchHotkeys = true;
-          doc.addEventListener('keydown', (event) => {
-            if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
-              const buttons = Array.from(doc.querySelectorAll('button'));
-              const target = buttons.find((button) => button.innerText.includes('ChipSeeker Pro Search') || button.innerText.includes('ChipSeeker Pro 搜索'));
-              if (target) {
-                event.preventDefault();
-                showChipSeekerSearchOverlay('llm_powered');
-                target.click();
-              }
-            }
-          });
-        }
-        </script>
-        """,
-        height=0,
-    )
-
     selected_ui_venues = []
     selected_years = (2000, CURRENT_YEAR)
     with st.expander(tr(ui_language, "Optional helpers and filters", "可选辅助工具和过滤器"), expanded=False):
@@ -1857,7 +1735,14 @@ def run():
             tr(ui_language, "Describe a topic to generate keywords", "描述一个主题来生成关键词"),
             key="user_idea_input",
         )
-        if user_idea and user_idea != st.session_state.get("last_idea"):
+        generate_keywords_clicked = st.button(
+            tr(ui_language, "Generate Keywords", "生成关键词"),
+            use_container_width=True,
+        )
+        if generate_keywords_clicked:
+            if not user_idea.strip():
+                st.warning(tr(ui_language, "Enter a topic first.", "请先输入主题。"))
+                st.stop()
             if not llm_runtime_key:
                 st.error(tr(ui_language, "Please configure an LLM API key or ChipSeeker Cloud Access first.", "请先配置 LLM API key 或 ChipSeeker 云端访问。"))
             else:
@@ -1906,6 +1791,7 @@ def run():
 
     llm_task_active = False
     trigger_search = bool(search_query or selected_ui_venues or must_have)
+    search_requested = bool(semantic_search_clicked or llm_powered_clicked)
     query_state_key = ""
     if trigger_search:
         source_token = current_source_snapshot.get("token", "")
@@ -1915,6 +1801,14 @@ def run():
     if llm_task_id:
         llm_task = get_task(llm_task_id)
         if llm_task and llm_task.get("status") in {"queued", "running"}:
+            started_at = float(llm_task.get("started_at") or llm_task.get("created_at") or time.time())
+            elapsed = max(0.0, time.time() - started_at)
+            if elapsed > LLM_SEARCH_UI_TIMEOUT_SECONDS:
+                cancel_task(llm_task_id, "Canceled automatically after UI timeout")
+                cleanup_task(llm_task_id)
+                st.session_state.pop("llm_search_task_id", None)
+                st.warning("ChipSeeker Pro Search timed out. The old running job was cleared; please try again with a narrower query or faster DeepSeek model.")
+                st.rerun()
             llm_task_active = True
             st.info(f"ChipSeeker Pro Search: {llm_task.get('message', llm_task.get('status', 'running'))}")
             task_cols = st.columns([5, 1, 1])
@@ -1928,6 +1822,8 @@ def run():
                 st.rerun()
             with st.expander("LLM Search Console", expanded=False):
                 st.code(format_task_history(llm_task), language="text")
+            time.sleep(2.5)
+            st.rerun()
         elif llm_task and llm_task.get("status") == "completed":
             result = llm_task.get("result", {})
             apply_search_results(
@@ -1952,9 +1848,11 @@ def run():
         else:
             st.session_state.pop("llm_search_task_id", None)
 
-    if trigger_search and not llm_task_active:
-        force_search = semantic_search_clicked or llm_powered_clicked
-        if st.session_state.get("current_query") != query_state_key or force_search:
+    if search_requested and not llm_task_active:
+        if not trigger_search:
+            st.warning(tr(ui_language, "Enter a Step 1 query, Step 2 exact keyword, or metadata filter first.", "请先输入步骤 1 查询、步骤 2 精确关键词，或选择元数据过滤。"))
+            st.stop()
+        if search_requested:
             search_mode = "llm_powered" if llm_powered_clicked else "semantic"
             st.session_state.citations_fetched = False
             st.session_state.citations_map = {}
@@ -2003,50 +1901,46 @@ def run():
                     st.session_state["last_effective_search_query"] = effective_query
                     st.info(f"LLM expanded query: `{effective_query}`")
 
-                exact_source_papers = all_papers_in_db
-                if search_query and searcher and (must_have or selected_ui_venues):
-                    # Keep the exact-first candidate pool aligned with the ready embedding cache.
-                    # Exact-only searches still scan the full library because they do not need embeddings.
-                    exact_source_papers = getattr(searcher, "dt", all_papers_in_db)
-                exact_first_hits = [{"similarity": 1.0, "paper": paper} for paper in exact_source_papers]
-                exact_first_hits = filter_search_results(
-                    exact_first_hits,
-                    selected_years,
-                    selected_ui_venues,
-                    must_have,
-                    analyze_venue,
-                    extract_year,
-                )
-                initial_scan_count = len(exact_first_hits) if must_have or selected_ui_venues else len(exact_source_papers)
-
                 if search_query:
                     if not searcher:
                         if embedding_model_requires_api(selected_emb_model) and not embedding_api_ready:
                             st.warning(tr(ui_language, "ChipSeeker Lite Search is disabled because the selected embedding model requires an API key. Switch to MiniLM or add a key first.", "ChipSeeker Lite Search 当前不可用，因为所选 embedding 模型需要 API key。你可以先切回 MiniLM，或者先填写 key。"))
                         else:
                             st.warning(tr(ui_language, "Current ChipSeeker Lite cache is not ready. Build one of the ranges above first, or keep using metadata filters for now.", "当前 ChipSeeker Lite 缓存还没准备好。请先构建上面的任一范围，或者暂时只使用元数据过滤。"))
-                        filtered_results = exact_first_hits[:display_limit_val] if (must_have or selected_ui_venues) else []
+                        filtered_results = []
+                        initial_scan_count = 0
                     elif must_have or selected_ui_venues:
-                        candidate_top_k = display_limit_val
-                        if len(exact_first_hits) > SEARCH_MAX_EXACT_CANDIDATES:
-                            st.warning(
-                                tr(
-                                    ui_language,
-                                    f"Step 2 matched {len(exact_first_hits)} papers. ChipSeeker limits the semantic candidate pool to {SEARCH_MAX_EXACT_CANDIDATES} to keep Pro/Lite search responsive. Use a more specific keyword if needed.",
-                                    f"步骤 2 命中 {len(exact_first_hits)} 篇。为了避免 Pro/Lite 搜索卡死，ChipSeeker 会把语义候选池限制在 {SEARCH_MAX_EXACT_CANDIDATES} 篇。需要更准时请把关键词写得更具体。",
-                                )
-                            )
-                            exact_first_hits = exact_first_hits[:SEARCH_MAX_EXACT_CANDIDATES]
-                        filtered_results = searcher.search_candidates(
-                            effective_query,
-                            [item["paper"] for item in exact_first_hits],
-                            top_k=candidate_top_k,
+                        semantic_top_k = min(
+                            max(int(display_limit_val) * SEMANTIC_PREFILTER_MULTIPLIER, SEMANTIC_PREFILTER_MIN),
+                            SEMANTIC_PREFILTER_MAX,
+                        )
+                        semantic_hits = searcher.search(query=effective_query, top_k=semantic_top_k)
+                        initial_scan_count = len(semantic_hits)
+                        filtered_results = filter_search_results(
+                            semantic_hits,
+                            selected_years,
+                            selected_ui_venues,
+                            must_have,
+                            analyze_venue,
+                            extract_year,
                         )
                     else:
                         candidate_top_k = display_limit_val
                         filtered_results = searcher.search(query=effective_query, top_k=candidate_top_k)
                         filtered_results = filter_search_results(filtered_results, selected_years, selected_ui_venues, "", analyze_venue, extract_year)
+                        initial_scan_count = len(filtered_results)
                 else:
+                    exact_source_papers = all_papers_in_db
+                    exact_first_hits = [{"similarity": 1.0, "paper": paper} for paper in exact_source_papers]
+                    exact_first_hits = filter_search_results(
+                        exact_first_hits,
+                        selected_years,
+                        selected_ui_venues,
+                        must_have,
+                        analyze_venue,
+                        extract_year,
+                    )
+                    initial_scan_count = len(exact_first_hits)
                     filtered_results = exact_first_hits[:display_limit_val]
                 if len(filtered_results) > display_limit_val:
                     filtered_results = filtered_results[:display_limit_val]
@@ -2055,7 +1949,12 @@ def run():
     results = st.session_state.get("raw_results", [])
     initial_count = st.session_state.get("initial_count", 0)
     required_words_hl = required_words_from_query(must_have)
-    if trigger_search:
+    show_current_results = bool(trigger_search and st.session_state.get("current_query") == query_state_key)
+    if not show_current_results:
+        results = []
+        initial_count = 0
+        required_words_hl = []
+    if show_current_results:
         if not results:
             st.warning(f"{initial_count} records scanned, but all were eliminated by your filters.")
             st.stop()

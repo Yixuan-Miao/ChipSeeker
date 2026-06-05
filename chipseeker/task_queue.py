@@ -20,7 +20,9 @@ _TASKS = {}
 _LOCK = threading.Lock()
 _MAX_HISTORY = 200
 DEFAULT_LLM_RERANK_LIMIT = 20
-LLM_SEARCH_MAX_EXACT_CANDIDATES = 5000
+SEMANTIC_PREFILTER_MULTIPLIER = 20
+SEMANTIC_PREFILTER_MIN = 1000
+SEMANTIC_PREFILTER_MAX = 5000
 
 
 def _log(message):
@@ -230,32 +232,24 @@ def _llm_powered_search(task_id, payload):
         papers_override=search_papers,
         scope_key=active_scope_key,
     )
-    exact_first_hits = [{"similarity": 1.0, "paper": paper} for paper in search_papers]
-    exact_first_hits = filter_search_results(
-        exact_first_hits,
-        selected_years,
-        selected_ui_venues,
-        must_have,
-        analyze_venue,
-        extract_year,
-    )
-    initial_scan_count = len(exact_first_hits) if must_have or selected_ui_venues else len(search_papers)
     _raise_if_cancelled(task_id)
 
     update_progress(task_id, 0.48, "Running ChipSeeker Lite retrieval")
     candidate_top_k = min(max(display_limit, 120), 400)
     if must_have or selected_ui_venues:
-        if len(exact_first_hits) > LLM_SEARCH_MAX_EXACT_CANDIDATES:
-            append_history(
-                task_id,
-                f"Exact filter matched {len(exact_first_hits)} papers; limiting semantic candidate pool to {LLM_SEARCH_MAX_EXACT_CANDIDATES}.",
-                level="warning",
-            )
-            exact_first_hits = exact_first_hits[:LLM_SEARCH_MAX_EXACT_CANDIDATES]
-        filtered_results = searcher.search_candidates(
-            effective_query,
-            [item["paper"] for item in exact_first_hits],
-            top_k=candidate_top_k,
+        semantic_top_k = min(
+            max(int(display_limit) * SEMANTIC_PREFILTER_MULTIPLIER, SEMANTIC_PREFILTER_MIN),
+            SEMANTIC_PREFILTER_MAX,
+        )
+        semantic_hits = searcher.search(query=effective_query, top_k=semantic_top_k)
+        initial_scan_count = len(semantic_hits)
+        filtered_results = filter_search_results(
+            semantic_hits,
+            selected_years,
+            selected_ui_venues,
+            must_have,
+            analyze_venue,
+            extract_year,
         )
     else:
         filtered_results = searcher.search(query=effective_query, top_k=candidate_top_k)
@@ -267,6 +261,7 @@ def _llm_powered_search(task_id, payload):
             analyze_venue,
             extract_year,
         )
+        initial_scan_count = len(filtered_results)
     _raise_if_cancelled(task_id)
 
     actual_rerank_limit = min(rerank_limit, len(filtered_results))
