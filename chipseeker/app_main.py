@@ -554,6 +554,19 @@ def install_bundled_demo_library():
     st.rerun()
 
 
+def latest_content_update_pack(output_dir):
+    if not os.path.isdir(output_dir):
+        return ""
+    candidates = [
+        os.path.join(output_dir, name)
+        for name in os.listdir(output_dir)
+        if name.lower().startswith("chipseeker_contentupdate_") and name.lower().endswith(".zip")
+    ]
+    if not candidates:
+        return ""
+    return max(candidates, key=lambda path: os.path.getmtime(path))
+
+
 def format_content_pack_time(value):
     value = str(value or "").strip()
     if not value:
@@ -607,13 +620,15 @@ def render_content_pack_sidebar(content_status, ui_language):
                     SOURCE_MANIFEST_FILE,
                     schema_state=load_json(LOCAL_DATA_STATE_FILE, {}),
                     output_dir=CONTENT_PACK_EXPORT_DIR,
+                    save_state=False,
                 )
                 st.success(
                     f"Created: {update_result['zip_path']} | "
                     f"papers: {update_result['paper_delta_count']} | "
                     f"sources: {update_result['source_delta_count']} | "
                     f"cache rows: {update_result['cache_delta_count']} | "
-                    f"full caches: {update_result.get('cache_full_count', 0)}"
+                    f"full caches: {update_result.get('cache_full_count', 0)} | "
+                    "Baseline not advanced until upload succeeds."
                 )
             except ContentPackInstallError as exc:
                 st.error(str(exc))
@@ -650,6 +665,23 @@ def render_content_pack_sidebar(content_status, ui_language):
                     )
                 except (ContentPackInstallError, ContentReleaseError) as exc:
                     st.error(str(exc))
+            latest_update_pack = latest_content_update_pack(CONTENT_PACK_EXPORT_DIR)
+            if latest_update_pack:
+                st.caption(f"Latest local update ZIP: `{os.path.basename(latest_update_pack)}`")
+                if st.button("Upload Latest Existing Update Pack", use_container_width=True):
+                    try:
+                        publish_result = publish_content_pack_to_release(
+                            latest_update_pack,
+                            release_config,
+                            asset_name=release_config.update_asset_name,
+                        )
+                        refresh_content_pack_baseline(DATA_DIR, DB_FILE, CACHE_DIR, baseline_kind="update")
+                        st.success(
+                            "Uploaded existing private update pack: "
+                            f"{publish_result['asset_name']} ({publish_result['size_bytes'] / 1024 / 1024:.1f} MB)"
+                        )
+                    except ContentReleaseError as exc:
+                        st.error(str(exc))
         st.caption(tr(ui_language, "Large ZIP files are supported locally.", "本地支持较大的 ZIP 内容包。"))
         uploaded_pack = st.file_uploader(tr(ui_language, "Install Content Pack ZIP", "安装内容包 ZIP"), type=["zip"], key="sidebar_content_pack_upload")
         if uploaded_pack is not None and st.button(tr(ui_language, "Install Uploaded Pack", "安装上传内容包"), use_container_width=True):
