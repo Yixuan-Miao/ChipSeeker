@@ -205,6 +205,29 @@ def _migrate_cache_if_needed(source_cache, source_meta, target_cache, target_met
     return target_cache, target_meta
 
 
+def _save_npy_atomic(cache_file, array):
+    """Write an npy cache through a temp file so partial writes never corrupt the target."""
+    cache_dir = os.path.dirname(os.path.abspath(cache_file))
+    os.makedirs(cache_dir, exist_ok=True)
+    temp_file = os.path.join(cache_dir, f".{os.path.basename(cache_file)}.{os.getpid()}.tmp.npy")
+    try:
+        np.save(temp_file, np.asarray(array, dtype=np.float32))
+        try:
+            os.replace(temp_file, cache_file)
+        except OSError as exc:
+            raise OSError(
+                f"Could not replace embedding cache {cache_file}. "
+                "On Windows this usually means the cache is still open by a running ChipSeeker/Streamlit process; "
+                "close the app once and retry the build."
+            ) from exc
+    finally:
+        if os.path.exists(temp_file):
+            try:
+                os.remove(temp_file)
+            except OSError:
+                pass
+
+
 def _save_cache_meta(meta_file, db_file, model_name, scope_key, fingerprints):
     payload = {
         "cache_schema": 2,
@@ -495,7 +518,7 @@ class PaperSearcher:
         fast_state, fast_cached_count = _fast_exact_cache_match(self.cf, self.mf, self.jp, self.mn, self.scope_key)
         if fast_state == "exact":
             self._log(f"cache hit {self.cf}")
-            return np.load(self.cf, mmap_mode="r")
+            return np.load(self.cf)
 
         current_fingerprints = self._dataset_fingerprints()
         resolved_cache, resolved_meta, cache_state, cached_count = resolve_portable_cache(
@@ -512,12 +535,12 @@ class PaperSearcher:
         if cache_state:
             try:
                 if cache_state == "exact":
-                    embeddings = np.load(source_cache, mmap_mode="r")
+                    embeddings = np.load(source_cache)
                     self._log(f"cache hit {self.cf}")
                     if os.path.abspath(source_cache) != os.path.abspath(self.cf):
-                        np.save(self.cf, np.asarray(embeddings, dtype=np.float32))
+                        _save_npy_atomic(self.cf, embeddings)
                     self._save_meta(current_fingerprints)
-                    return np.load(self.cf, mmap_mode="r")
+                    return np.load(self.cf)
 
                 embeddings = np.load(source_cache)
                 texts = [self._paper_text(paper) for paper in self.dt]
@@ -526,7 +549,7 @@ class PaperSearcher:
                     self._log(f"append-only update {cached_count} -> {len(current_fingerprints)}")
                     new_embeddings = self._embed(texts[cached_count:], stage_message="Appending embeddings")
                     embeddings = np.vstack((embeddings, new_embeddings))
-                    np.save(self.cf, embeddings)
+                    _save_npy_atomic(self.cf, embeddings)
                     self._save_meta(current_fingerprints)
                     return embeddings
 
@@ -549,7 +572,7 @@ class PaperSearcher:
                             new_embeddings = self._embed(missing_texts, stage_message="Repairing changed embeddings")
                         for row_index, embedding in zip(missing_indexes, new_embeddings):
                             reused_embeddings[row_index] = embedding
-                    np.save(self.cf, reused_embeddings)
+                    _save_npy_atomic(self.cf, reused_embeddings)
                     self._save_meta(current_fingerprints)
                     return reused_embeddings
             except Exception as exc:
@@ -565,7 +588,7 @@ class PaperSearcher:
 
         texts = [self._paper_text(paper) for paper in self.dt]
         embeddings = self._embed(texts)
-        np.save(self.cf, embeddings)
+        _save_npy_atomic(self.cf, embeddings)
         self._save_meta(current_fingerprints)
         return embeddings
 
