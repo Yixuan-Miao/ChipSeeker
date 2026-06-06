@@ -7,7 +7,7 @@ import uuid
 from datetime import date
 from concurrent.futures import ThreadPoolExecutor
 
-from chipseeker.data_sync import scan_and_import_csvs
+from chipseeker.data_sync import import_csv_files_incremental, scan_and_import_csvs
 from chipseeker.embedding_scope import build_scope_key, filter_papers_by_years
 from chipseeker.paths import CACHE_DIR, DB_FILE, SOURCE_CSV_DIR, SOURCE_MANIFEST_FILE
 from chipseeker.update_manager import default_incremental_start_date, find_source, load_source_registry, save_incremental_run_result, save_source_registry
@@ -476,9 +476,11 @@ def _run_provider_incremental(task_id, payload):
     import_result = None
     if payload.get("import_after") and completed_ids:
         update_progress(task_id, 0.92, "Importing fetched CSV files into the paper library")
-        added, updated, removed, file_summaries = scan_and_import_csvs(
+        successful_files = [item["output_file"] for item in written_files if item.get("output_file") and not item.get("error")]
+        added, updated, removed, file_summaries = import_csv_files_incremental(
             payload.get("db_file") or DB_FILE,
             payload.get("cache_dir") or CACHE_DIR,
+            successful_files,
             source_root=payload.get("source_root") or SOURCE_CSV_DIR,
             manifest_path=payload.get("manifest_path") or SOURCE_MANIFEST_FILE,
         )

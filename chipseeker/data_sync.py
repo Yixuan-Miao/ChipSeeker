@@ -785,6 +785,115 @@ def scan_and_import_csvs(db_file, cache_dir, source_root=SOURCE_CSV_DIR, manifes
     return added_count, updated_count, removed_count, file_summaries
 
 
+def import_csv_files_incremental(db_file, cache_dir, csv_files, source_root=SOURCE_CSV_DIR, manifest_path=SOURCE_MANIFEST_FILE, logger=None):
+    """Merge a known set of newly fetched CSV files without rescanning the whole library."""
+    del cache_dir  # Cache repair is fingerprint-based; this merge only updates JSON/source manifest.
+    csv_files = [os.path.abspath(path) for path in (csv_files or []) if path]
+    if not csv_files:
+        refresh_source_manifest(source_root=source_root, manifest_path=manifest_path, logger=logger)
+        return 0, 0, 0, []
+
+    all_papers = load_json(db_file, [])
+    existing_papers = {}
+    ordered_keys = []
+    lookup = {}
+    ambiguous_keys = set()
+
+    def register_lookup_keys(canonical_key, paper):
+        for lookup_key in paper_lookup_keys(paper):
+            if not lookup_key:
+                continue
+            current = lookup.get(lookup_key)
+            if current and current != canonical_key:
+                ambiguous_keys.add(lookup_key)
+                lookup.pop(lookup_key, None)
+            elif lookup_key not in ambiguous_keys:
+                lookup[lookup_key] = canonical_key
+
+    for paper in all_papers:
+        key = paper_identity_key(paper)
+        if key and key not in existing_papers:
+            existing_papers[key] = paper
+            ordered_keys.append(key)
+            register_lookup_keys(key, paper)
+
+    new_files_info = {}
+    updated_files_info = {}
+    failed_files = []
+    cache_invalidating_update_count = 0
+
+    for file in csv_files:
+        new_in_file = 0
+        updated_in_file = 0
+        try:
+            with open(file, mode="r", encoding="utf-8-sig", errors="ignore") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    title = normalize_text(row.get("Document Title", ""))
+                    abstract = normalize_text(row.get("Abstract", ""))
+                    if is_junk_paper(title, abstract, row):
+                        continue
+                    if not title or not abstract or abstract.upper() == "NA":
+                        continue
+
+                    paper_obj = build_paper_from_row(row)
+                    paper_key = paper_identity_key(paper_obj)
+                    if not paper_key:
+                        continue
+
+                    canonical_key = None
+                    for lookup_key in paper_lookup_keys(paper_obj):
+                        if lookup_key in lookup:
+                            canonical_key = lookup[lookup_key]
+                            break
+                    if canonical_key is None:
+                        canonical_key = paper_key
+
+                    existing_paper = existing_papers.get(canonical_key)
+                    if existing_paper is None:
+                        existing_papers[canonical_key] = paper_obj
+                        ordered_keys.append(canonical_key)
+                        register_lookup_keys(canonical_key, paper_obj)
+                        new_in_file += 1
+                    else:
+                        merged_paper, changed, embedding_changed = _merge_paper_from_source(
+                            existing_paper,
+                            paper_obj,
+                            allow_core_updates=True,
+                        )
+                        if not changed:
+                            continue
+                        if embedding_changed:
+                            cache_invalidating_update_count += 1
+                        existing_papers[canonical_key] = merged_paper
+                        register_lookup_keys(canonical_key, merged_paper)
+                        updated_in_file += 1
+
+            relative = os.path.relpath(file, source_root).replace("\\", "/")
+            if new_in_file > 0:
+                new_files_info[relative] = new_in_file
+            if updated_in_file > 0:
+                updated_files_info[relative] = updated_in_file
+        except Exception as exc:
+            failed_files.append(os.path.relpath(file, source_root).replace("\\", "/"))
+            if logger:
+                logger.warning("Error reading incremental CSV %s: %s", file, exc)
+
+    added_count = sum(new_files_info.values())
+    updated_count = sum(updated_files_info.values())
+    if added_count > 0 or updated_count > 0:
+        save_json(db_file, [existing_papers[paper_key] for paper_key in ordered_keys])
+        if cache_invalidating_update_count > 0 and logger:
+            logger.info("Embedding cache preserved; changed papers will be repaired by fingerprint reuse.")
+
+    file_summaries = [f"{path} (+{count} added)" for path, count in new_files_info.items()]
+    file_summaries.extend([f"{path} ({count} updated)" for path, count in updated_files_info.items()])
+    if failed_files:
+        file_summaries.append("Incremental import failed: " + ", ".join(failed_files[:5]))
+    refresh_source_manifest(source_root=source_root, manifest_path=manifest_path, logger=logger)
+    return added_count, updated_count, 0, file_summaries
+
+
 def enrich_bibliographic_metadata(db_file, source_root=SOURCE_CSV_DIR, manifest_path=SOURCE_MANIFEST_FILE, logger=None):
     csv_files = list_source_csv_files(source_root=source_root, manifest_path=manifest_path, logger=logger)
     all_papers = load_json(db_file, [])

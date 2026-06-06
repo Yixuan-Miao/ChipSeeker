@@ -898,11 +898,14 @@ def render_one_click_literature_update(nature_sources, science_sources):
     def success_message(result):
         imported = result.get("import_result") or {}
         failed = [item for item in result.get("written_files", []) if item.get("error")]
+        failed_names = ", ".join(item.get("source_id", "") for item in failed[:5] if item.get("source_id"))
+        failed_hint = f" Failed sources still need update: {failed_names}." if failed_names else ""
         return (
             "One-click literature update completed. "
             f"Sources: {len(result.get('source_ids', []))}; "
             f"added {imported.get('added', 0)}, updated {imported.get('updated', 0)}, removed {imported.get('removed', 0)}; "
             f"failed {len(failed)}."
+            f"{failed_hint}"
         )
 
     nature_task = render_task_status(

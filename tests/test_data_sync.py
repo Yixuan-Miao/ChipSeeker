@@ -2,7 +2,7 @@ import csv
 import json
 from pathlib import Path
 
-from chipseeker.data_sync import enrich_bibliographic_metadata, is_junk_paper, list_source_csv_files, scan_and_import_csvs
+from chipseeker.data_sync import enrich_bibliographic_metadata, import_csv_files_incremental, is_junk_paper, list_source_csv_files, scan_and_import_csvs
 
 
 def write_csv(path, rows):
@@ -118,6 +118,79 @@ def test_scan_and_import_uses_multilevel_keys_and_preserves_cache_for_repair(tmp
     assert "10.1000/update" in db_text
     assert db_text.count('"title": "Same Title"') == 1
     assert db_text.count('"title": "Updater Paper"') == 1
+
+
+def test_incremental_import_only_counts_explicit_new_csv_files(tmp_path):
+    source_root = tmp_path / "sources"
+    source_root.mkdir()
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    db_file = tmp_path / "papers.json"
+    manifest_path = tmp_path / "source_manifest.json"
+
+    old_csv = source_root / "old_source.csv"
+    new_csv = source_root / "nature_updates" / "new_source.csv"
+    new_csv.parent.mkdir()
+    write_csv(
+        old_csv,
+        [
+            {
+                "Document Title": "Old Source Paper",
+                "Abstract": "A" * 140,
+                "Authors": "Old Author",
+                "Publication Year": "2025",
+                "Publication Title": "Nature",
+                "DOI": "10.1038/old",
+            }
+        ],
+    )
+    write_csv(
+        new_csv,
+        [
+            {
+                "Document Title": "New Incremental Paper",
+                "Abstract": "B" * 140,
+                "Authors": "New Author",
+                "Publication Year": "2026",
+                "Publication Title": "Nature Electronics",
+                "DOI": "10.1038/new",
+            }
+        ],
+    )
+    db_file.write_text(
+        json.dumps(
+            [
+                {
+                    "title": "Old Source Paper",
+                    "abstract": "Old abstract",
+                    "year": "2025",
+                    "venue": "Nature",
+                    "doi": "10.1038/old",
+                    "authors": ["Old Author"],
+                    "first_author": "Old Author",
+                    "last_author": "Old Author",
+                    "keywords": [],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    added_count, updated_count, removed_count, summaries = import_csv_files_incremental(
+        str(db_file),
+        str(cache_dir),
+        [str(new_csv)],
+        source_root=str(source_root),
+        manifest_path=str(manifest_path),
+    )
+
+    papers = json.loads(db_file.read_text(encoding="utf-8"))
+    assert added_count == 1
+    assert updated_count == 0
+    assert removed_count == 0
+    assert len(papers) == 2
+    assert any(paper["doi"] == "10.1038/new" for paper in papers)
+    assert not any("old_source.csv" in summary for summary in summaries)
 
 
 def test_scan_preserves_database_when_previous_source_becomes_invalid(tmp_path):
