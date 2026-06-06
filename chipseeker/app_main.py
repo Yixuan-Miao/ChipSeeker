@@ -351,7 +351,7 @@ def render_taxonomy_matrix(total_papers, db_stats, active_years):
         st.markdown(table_md, unsafe_allow_html=True)
 
 
-def render_task_status(task_id, label, success_message=None, container=st):
+def render_task_status(task_id, label, success_message=None, container=st, cleanup_on_complete=True, auto_refresh=False, show_history=False):
     if not task_id:
         return None
     task = get_task(task_id)
@@ -361,16 +361,30 @@ def render_task_status(task_id, label, success_message=None, container=st):
     status = task.get("status")
     message = task.get("message", "")
     progress = float(task.get("progress", 0.0))
+    started_at = float(task.get("started_at") or task.get("created_at") or time.time())
+    updated_at = float(task.get("updated_at") or started_at)
+    elapsed = max(0.0, time.time() - started_at)
+    updated_label = time.strftime("%H:%M:%S", time.localtime(updated_at))
     if status in {"queued", "running"}:
-        container.info(f"{label}: {message or status}")
+        container.info(f"{label}: {message or status} | elapsed {elapsed:.0f}s | last update {updated_label}")
         container.progress(progress if progress > 0 else 0.01)
+        if show_history:
+            container.code(format_task_history(task, limit=12), language="text")
+        if auto_refresh:
+            time.sleep(1.0)
+            st.rerun()
     elif status == "completed":
         if success_message:
             container.success(success_message(task.get("result", {})))
-        cleanup_task(task_id)
-        return None
+        if show_history:
+            container.code(format_task_history(task, limit=12), language="text")
+        if cleanup_on_complete:
+            cleanup_task(task_id)
+            return None
     elif status == "failed":
         container.error(f"{label} failed: {task.get('error', 'unknown error')}")
+        if show_history:
+            container.code(format_task_history(task, limit=12), language="text")
     return task
 
 
@@ -891,8 +905,22 @@ def render_one_click_literature_update(nature_sources, science_sources):
             f"failed {len(failed)}."
         )
 
-    nature_task = render_task_status(nature_task_id, "One-click Nature/NE/NC update", success_message=success_message)
-    science_task = render_task_status(science_task_id, "One-click Science update", success_message=success_message)
+    nature_task = render_task_status(
+        nature_task_id,
+        "One-click Nature/NE/NC update",
+        success_message=success_message,
+        cleanup_on_complete=False,
+        auto_refresh=True,
+        show_history=True,
+    )
+    science_task = render_task_status(
+        science_task_id,
+        "One-click Science update",
+        success_message=success_message,
+        cleanup_on_complete=False,
+        auto_refresh=True,
+        show_history=True,
+    )
     if nature_task is None and nature_task_id:
         st.session_state.pop(nature_task_key, None)
         st.session_state["csv_state"] = ()
@@ -1171,6 +1199,9 @@ def render_update_manager(source_csv_files, all_papers):
             nature_task_id,
             "Nature incremental update",
             success_message=lambda result: f"Nature incremental update finished for {len(result.get('source_ids', []))} source(s).",
+            cleanup_on_complete=False,
+            auto_refresh=True,
+            show_history=True,
         )
         if task is None and nature_task_id:
             st.session_state.pop(nature_task_key, None)
@@ -1191,6 +1222,7 @@ def render_update_manager(source_csv_files, all_papers):
                     manifest_path=SOURCE_MANIFEST_FILE,
                 )
                 st.success("Nature incremental update queued in the background. New CSVs will be imported automatically.")
+                st.rerun()
 
         st.markdown("---")
         st.markdown("### Manual Nature Grabber")
@@ -1285,6 +1317,9 @@ def render_update_manager(source_csv_files, all_papers):
             arxiv_task_id,
             "arXiv incremental update",
             success_message=lambda result: f"arXiv incremental update finished for {len(result.get('source_ids', []))} source(s).",
+            cleanup_on_complete=False,
+            auto_refresh=True,
+            show_history=True,
         )
         if task is None and arxiv_task_id:
             st.session_state.pop(arxiv_task_key, None)
@@ -1296,6 +1331,7 @@ def render_update_manager(source_csv_files, all_papers):
             else:
                 st.session_state[arxiv_task_key] = submit_arxiv_incremental(SOURCE_REGISTRY_FILE, selected_arxiv_ids, ARXIV_UPDATE_DIR)
                 st.success("arXiv incremental update queued in the background.")
+                st.rerun()
 
 
 def run():

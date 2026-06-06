@@ -47,6 +47,7 @@ def _summarize_payload(payload):
 def _set_task(task_id, **updates):
     with _LOCK:
         task = _TASKS.setdefault(task_id, {})
+        updates.setdefault("updated_at", time.time())
         task.update(updates)
 
 
@@ -457,8 +458,15 @@ def _run_provider_incremental(task_id, payload):
                 raise ValueError(f"Unsupported provider: {provider}")
         except Exception as exc:
             written_files.append({"source_id": source_id, "output_file": output_file, "rows": 0, "start_date": source_start_date, "error": str(exc)})
+            append_history(task_id, f"{provider} source failed: {source.get('name', source_id)} | {exc}", level="error")
             continue
         written_files.append({"source_id": source_id, "output_file": output_file, "rows": len(rows), "start_date": source_start_date})
+        update_progress(
+            task_id,
+            ((index + 1) / source_count) * 0.88,
+            f"Fetched {provider} source {source.get('name', source_id)}: {len(rows)} rows",
+        )
+        append_history(task_id, f"Wrote {len(rows)} rows to {output_file}")
         completed_ids.append(source_id)
 
     if completed_ids:
