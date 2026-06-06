@@ -238,6 +238,29 @@ def resolve_portable_cache(db_file, model_name, scope_key, fingerprints):
     return primary_cache, primary_meta, "", 0
 
 
+def resolve_broader_cache_for_scope(db_file, model_name, scope_key, fingerprints):
+    """Find a full-library cache that can seed a smaller scope without re-embedding."""
+    if (scope_key or "all") == "all":
+        return None
+
+    primary_cache, primary_meta = get_cache_paths(db_file, model_name, scope_key)
+    candidates = [get_cache_paths(db_file, model_name, "all")]
+    candidates.extend(_legacy_cache_candidates(db_file, model_name, "all"))
+
+    best_partial = None
+    for candidate_cache, candidate_meta in candidates:
+        if not os.path.exists(candidate_cache):
+            continue
+        state, cached_count = _cache_matches_fingerprints(candidate_cache, candidate_meta, fingerprints)
+        if state == "exact":
+            cache_file, meta_file = _migrate_cache_if_needed(candidate_cache, candidate_meta, primary_cache, primary_meta)
+            return cache_file, meta_file, state, cached_count
+        if state == "partial" and (best_partial is None or cached_count > best_partial[3]):
+            best_partial = (candidate_cache, candidate_meta, state, cached_count)
+
+    return best_partial
+
+
 def _list_text(value):
     if isinstance(value, (list, tuple)):
         return " ".join(str(item) for item in value if str(item).strip())
@@ -290,6 +313,9 @@ def describe_cache_status(db_file, model_name, scope_key="all", papers_override=
         resolved_cache, resolved_meta, cache_state, cached_count = resolve_portable_cache(
             db_file, model_name, scope_key, fingerprints
         )
+        broader = resolve_broader_cache_for_scope(db_file, model_name, scope_key, fingerprints)
+        if broader and (not cache_state or broader[3] > cached_count):
+            resolved_cache, resolved_meta, cache_state, cached_count = broader
     status = {
         "cache_file": resolved_cache or cache_file,
         "meta_file": resolved_meta or meta_file,
@@ -417,7 +443,7 @@ class PaperSearcher:
             return result
         raise RuntimeError(f"Unreachable retry state for {batch_label}")
 
-    def _embed(self, texts, stage_message="Embedding papers", max_attempts=None):
+    def _embed(self, texts, stage_message="Embedding papers", max_attempts=None, batch_size_override=None):
         total = max(1, len(texts))
         overall_start = time.perf_counter()
         self._log(f"{stage_message}: total_items={len(texts)} scope={self.scope_key} model={self.mn}")
@@ -448,7 +474,8 @@ class PaperSearcher:
             return np.array(rows, dtype=np.float32)
 
         rows = []
-        batch_size = 100 if self.mt == 'v' else 400
+        batch_size = int(batch_size_override or (100 if self.mt == 'v' else 400))
+        batch_size = max(1, batch_size)
         total_batches = max(1, (len(texts) + batch_size - 1) // batch_size)
         for batch_index, i in enumerate(range(0, len(texts), batch_size), start=1):
             batch = texts[i:i + batch_size]
@@ -474,17 +501,25 @@ class PaperSearcher:
         resolved_cache, resolved_meta, cache_state, cached_count = resolve_portable_cache(
             self.jp, self.mn, self.scope_key, current_fingerprints
         )
+        source_cache, source_meta = resolved_cache, resolved_meta
+        broader = resolve_broader_cache_for_scope(self.jp, self.mn, self.scope_key, current_fingerprints)
+        if broader and (not cache_state or broader[3] > cached_count):
+            source_cache, source_meta, cache_state, cached_count = broader
+            resolved_cache, resolved_meta = get_cache_paths(self.jp, self.mn, self.scope_key)
+            self._log(f"using broader cache for scope {self.scope_key}: reused={cached_count}/{len(current_fingerprints)} source={source_cache}")
         self.cf, self.mf = resolved_cache, resolved_meta
 
         if cache_state:
             try:
                 if cache_state == "exact":
-                    embeddings = np.load(self.cf, mmap_mode="r")
+                    embeddings = np.load(source_cache, mmap_mode="r")
                     self._log(f"cache hit {self.cf}")
+                    if os.path.abspath(source_cache) != os.path.abspath(self.cf):
+                        np.save(self.cf, np.asarray(embeddings, dtype=np.float32))
                     self._save_meta(current_fingerprints)
-                    return embeddings
+                    return np.load(self.cf, mmap_mode="r")
 
-                embeddings = np.load(self.cf)
+                embeddings = np.load(source_cache)
                 texts = [self._paper_text(paper) for paper in self.dt]
 
                 if cache_state == "append_only":
@@ -496,13 +531,22 @@ class PaperSearcher:
                     return embeddings
 
                 if cache_state == "partial":
-                    self._log(f"partial cache reuse {cached_count}/{len(current_fingerprints)} from {self.cf}")
-                    reused_embeddings, missing_indexes = _partial_reuse_embeddings(self.cf, self.mf, current_fingerprints)
+                    self._log(f"partial cache reuse {cached_count}/{len(current_fingerprints)} from {source_cache}")
+                    reused_embeddings, missing_indexes = _partial_reuse_embeddings(source_cache, source_meta, current_fingerprints)
                     if reused_embeddings is None:
                         raise RuntimeError("partial cache metadata does not match embedding rows")
                     if missing_indexes:
                         missing_texts = [texts[index] for index in missing_indexes]
-                        new_embeddings = self._embed(missing_texts, stage_message="Repairing changed embeddings")
+                        repair_batch_size = 32 if self.mt == 'v' else None
+                        self._log(f"repairing changed embeddings missing={len(missing_indexes)} batch_size={repair_batch_size or 'default'}")
+                        if repair_batch_size:
+                            new_embeddings = self._embed(
+                                missing_texts,
+                                stage_message="Repairing changed embeddings",
+                                batch_size_override=repair_batch_size,
+                            )
+                        else:
+                            new_embeddings = self._embed(missing_texts, stage_message="Repairing changed embeddings")
                         for row_index, embedding in zip(missing_indexes, new_embeddings):
                             reused_embeddings[row_index] = embedding
                     np.save(self.cf, reused_embeddings)
@@ -513,7 +557,8 @@ class PaperSearcher:
                 if cache_state in ("append_only", "partial"):
                     raise RuntimeError(
                         "Reusable embedding cache was found, but repairing the small changed subset failed. "
-                        "Full-library rebuild was intentionally skipped; fix the network/API issue and retry."
+                        "Full-library rebuild was intentionally skipped; fix the network/API issue and retry. "
+                        f"Last error: {exc}"
                     ) from exc
         elif os.path.exists(self.cf):
             self._log("cache invalidated because paper order/content changed")
