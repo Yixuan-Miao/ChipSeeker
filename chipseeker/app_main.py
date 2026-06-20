@@ -52,6 +52,7 @@ from chipseeker.paths import (
     USER_DATA_FILE,
 )
 from chipseeker.search_ui import collect_year_counts, filter_search_results, get_paper_id, highlight_text, required_words_from_query, result_bucket_counts, sort_results
+from chipseeker.scoring import compute_paper_score
 from chipseeker.task_queue import cancel_task, cleanup_task, get_task, submit_arxiv_incremental, submit_embedding_build, submit_llm_powered_search, submit_nature_incremental, submit_pdf_download, submit_science_incremental
 from chipseeker.update_notices import load_update_notices
 from chipseeker.update_manager import (
@@ -108,13 +109,9 @@ DEEPSEEK_MODEL_OPTIONS = {
 
 
 def _vx_auth():
-    import base64
-    import hashlib
-
-    _x = hashlib.sha256(b"MiaoYixuan_ChipSeeker_PRO").hexdigest()
-    _y = base64.b64encode(b"guangeofaisa@gmail.com").decode()
-    if not _x or not _y:
-        raise SystemExit("ERR_LICENSE: Integrity check failed.")
+    # Placeholder license check — reserved for future activation.
+    # If a real license check is needed, validate against a signed token here.
+    pass
 
 
 def tr(ui_language, english, chinese=None):
@@ -1757,7 +1754,7 @@ def run():
         key="semantic_query_input",
     )
 
-    col_s2, col_s3 = st.columns([3, 1])
+    col_s2, col_s3, col_s4 = st.columns([2.5, 1, 1])
     with col_s2:
         must_have = st.text_input(
             tr(
@@ -1780,6 +1777,15 @@ def run():
             value=50,
             step=50,
             help=tr(ui_language, "Controls how many final results are displayed. Exact Match still scans the full library.", "只控制最终展示多少条结果；Exact Match 仍然扫描全库。"),
+        )
+    with col_s4:
+        rerank_limit_val = st.number_input(
+            tr(ui_language, "LLM Rerank Limit", "LLM 重排篇数"),
+            min_value=5,
+            max_value=100,
+            value=30,
+            step=5,
+            help=tr(ui_language, "How many top papers are reranked by DeepSeek LLM in Pro Search. More papers = slower but better coverage.", "Pro Search 中用 DeepSeek LLM 重排多少篇候选论文。越多越慢但覆盖更全。"),
         )
 
     search_btn_col1, search_btn_col2 = st.columns([1, 1])
@@ -1866,7 +1872,7 @@ def run():
     query_state_key = ""
     if trigger_search:
         source_token = current_source_snapshot.get("token", "")
-        query_state_key = f"{search_query}_must{must_have}_limit{display_limit_val}_{selected_emb_model}_v{selected_ui_venues}_y{selected_years}_csv{source_token}"
+        query_state_key = f"{search_query}_must{must_have}_limit{display_limit_val}_rerank{rerank_limit_val}_{selected_emb_model}_v{selected_ui_venues}_y{selected_years}_csv{source_token}"
 
     llm_task_id = st.session_state.get("llm_search_task_id")
     if llm_task_id:
@@ -1951,7 +1957,7 @@ def run():
                     llm_api_key=llm_runtime_key,
                     llm_base_url=base_url,
                     llm_model=model_name,
-                    rerank_limit=20,
+                    rerank_limit=rerank_limit_val,
                     query_state_key=query_state_key,
                 )
                 st.rerun()
@@ -1959,18 +1965,6 @@ def run():
                 effective_query = search_query
                 st.session_state["last_effective_search_query"] = search_query
                 st.session_state["last_search_mode"] = search_mode
-                if search_mode == "llm_powered" and search_query:
-                    if not llm_runtime_key:
-                        st.error(tr(ui_language, "LLM API key or Cloud Access is missing.", "缺少 LLM API key 或云端访问。"))
-                        st.stop()
-                    with st.spinner("LLM is expanding your query..."):
-                        try:
-                            effective_query = expand_search_query_with_llm(search_query, llm_runtime_key, base_url, model_name)
-                        except Exception as exc:
-                            st.error(str(exc))
-                            st.stop()
-                    st.session_state["last_effective_search_query"] = effective_query
-                    st.info(f"LLM expanded query: `{effective_query}`")
 
                 if search_query:
                     if not searcher:
@@ -2179,11 +2173,11 @@ def run():
         venue_display = get_venue_display_str(venue_data)
         highlighted_venue = highlight_text(venue_display, required_words_hl)
         highlighted_year = highlight_text(str(year), required_words_hl)
-        year = highlighted_year
+        year_display = highlighted_year
         highlighted_abstract = highlight_text(abstract, required_words_hl)
         citations = st.session_state.citations_map.get(doi.upper(), 0) if st.session_state.citations_fetched else 0
         citation_bonus = min(15, math.log10(citations + 1) * 6) if citations > 0 else 0
-        final_score = item.get("comp_score", base_score + year_bonus + citation_bonus)
+        final_score = item.get("comp_score", compute_paper_score(venue_data, year_value, citations, CURRENT_YEAR))
         relevance_html = f"Relevance: {similarity * 100:.1f}%"
         if item.get("llm_score") is not None:
             try:
@@ -2221,7 +2215,7 @@ def run():
                 st.markdown(f"<span style='font-size:1.1em; font-weight:bold;'>{highlighted_title}</span>", unsafe_allow_html=True)
             st.markdown(f"**{tr(ui_language, 'Authors', '作者')}:** {highlighted_author}", unsafe_allow_html=True)
             st.markdown(
-                f"**{tr(ui_language, 'Venue', '期刊/会议')}:** <span style='color:{domain_color}; font-weight:bold;'>{highlighted_venue}</span> ({year}) &nbsp;&nbsp;|&nbsp;&nbsp; **Tier:** <span style='background-color:{tier_color}; color:white; padding:2px 6px; border-radius:4px; font-size:0.85em; font-weight:bold;'>{venue_data['t']}</span>",
+                f"**{tr(ui_language, 'Venue', '期刊/会议')}:** <span style='color:{domain_color}; font-weight:bold;'>{highlighted_venue}</span> ({year_display}) &nbsp;&nbsp;|&nbsp;&nbsp; **Tier:** <span style='background-color:{tier_color}; color:white; padding:2px 6px; border-radius:4px; font-size:0.85em; font-weight:bold;'>{venue_data['t']}</span>",
                 unsafe_allow_html=True,
             )
             if item.get("llm_score") is not None:

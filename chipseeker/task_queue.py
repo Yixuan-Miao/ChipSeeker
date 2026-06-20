@@ -7,7 +7,7 @@ import uuid
 from datetime import date
 from concurrent.futures import ThreadPoolExecutor
 
-from chipseeker.data_sync import import_csv_files_incremental, scan_and_import_csvs
+from chipseeker.data_sync import import_csv_files_incremental
 from chipseeker.embedding_scope import build_scope_key, filter_papers_by_years
 from chipseeker.paths import CACHE_DIR, DB_FILE, SOURCE_CSV_DIR, SOURCE_MANIFEST_FILE
 from chipseeker.update_manager import default_incremental_start_date, find_source, load_source_registry, save_incremental_run_result, save_source_registry
@@ -15,11 +15,11 @@ from chipseeker.utils import load_json
 from search_runtime import PaperSearcher
 
 
-_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="chipseeker")
+_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="chipseeker")
 _TASKS = {}
 _LOCK = threading.Lock()
 _MAX_HISTORY = 200
-DEFAULT_LLM_RERANK_LIMIT = 20
+DEFAULT_LLM_RERANK_LIMIT = 30
 SEMANTIC_PREFILTER_MULTIPLIER = 20
 SEMANTIC_PREFILTER_MIN = 1000
 SEMANTIC_PREFILTER_MAX = 5000
@@ -33,7 +33,7 @@ def _log(message):
 def _summarize_payload(payload):
     summary = {}
     for key, value in payload.items():
-        if key in {"api_key"} or key.endswith("_api_key"):
+        if key in {"api_key", "access_code"} or key.endswith("_api_key") or key.endswith("_token"):
             summary[key] = "***"
         elif key == "papers":
             summary[key] = f"{len(value)} papers"
