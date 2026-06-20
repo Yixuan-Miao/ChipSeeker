@@ -169,7 +169,7 @@ def _build_embeddings(task_id, payload):
 
     _log(f"{task_id} embedding setup model={payload['model_name']} scope={scope_key} papers={len(scoped_papers)} db={payload['db_file']}")
     update_progress(task_id, 0.01, f"Loading library for scope {scope_key}")
-    PaperSearcher(
+    searcher = PaperSearcher(
         payload["db_file"],
         model_name=payload["model_name"],
         api_key=payload.get("api_key", ""),
@@ -178,6 +178,9 @@ def _build_embeddings(task_id, payload):
         progress_callback=progress,
         log_callback=log_callback,
     )
+    _raise_if_cancelled(task_id)
+    update_progress(task_id, 0.05, "Building/repairing embedding cache (this may take minutes for large libraries)")
+    searcher._ensure_embeddings()
     update_progress(task_id, 1.0, "Embedding cache is ready")
     return {"model_name": payload["model_name"], "scope_key": scope_key, "paper_count": len(scoped_papers), "years": years}
 
