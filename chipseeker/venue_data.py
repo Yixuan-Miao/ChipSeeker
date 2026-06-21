@@ -4,8 +4,16 @@ import re
 from chipseeker.paths import VENUE_RULES_FILE
 
 
-with open(VENUE_RULES_FILE, "r", encoding="utf-8") as f:
-    _VENUE_RULES = json.load(f)
+try:
+    with open(VENUE_RULES_FILE, "r", encoding="utf-8") as f:
+        _VENUE_RULES = json.load(f)
+except (FileNotFoundError, json.JSONDecodeError, OSError):
+    _VENUE_RULES = {
+        "domain_colors": {},
+        "tier_colors": {},
+        "default_venue": {"n": "Other", "t": "C", "d": [], "s": 0, "u": "", "ty": "Journal"},
+        "venues": [],
+    }
 
 
 DOMAIN_COLORS = _VENUE_RULES["domain_colors"]

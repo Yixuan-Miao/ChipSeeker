@@ -30,13 +30,25 @@ def get_batch_citations(dois, logger=None):
     return {}
 
 
+_client_cache = {}
+
+
+def _get_openai_client(api_key, base_url):
+    """Return a cached OpenAI client keyed by (api_key, base_url)."""
+    cache_key = (str(api_key or ""), str(base_url or ""))
+    if cache_key not in _client_cache:
+        from openai import OpenAI
+        _client_cache[cache_key] = OpenAI(
+            api_key=api_key, base_url=base_url, timeout=180.0, max_retries=0
+        )
+    return _client_cache[cache_key]
+
+
 def call_llm_api(prompt, api_key, base_url, model_name, temp=0.3):
     if is_cloud_token(api_key):
         return cloud_chat(api_key, prompt, model_name=model_name or "deepseek-chat", temperature=temp)
 
-    from openai import OpenAI
-
-    client = OpenAI(api_key=api_key, base_url=base_url, timeout=180.0, max_retries=0)
+    client = _get_openai_client(api_key, base_url)
     try:
         response = client.chat.completions.create(
             model=model_name,
@@ -72,10 +84,13 @@ def expand_search_query_with_llm(description, api_key, base_url, model_name):
     prompt = f"""Task: Rewrite the user request into one precise English semantic-search query for an IC / AI hardware / quantum hardware paper database.
 
 Rules:
+- **Strictly focus on the specific component, technique, or architecture the user mentions.**
+- **Do NOT expand into other components or subsystems in the same application domain just because they share a context (e.g., searching "attenuator" should NOT pull in "controller", "amplifier", or "qubit readout" unless the user explicitly mentions them).**
 - Keep the user's intent. Do not invent unrelated topics.
 - Expand abbreviations and include equivalent technical phrases when useful.
 - Prefer architecture, circuit block, application, metrics, and device/process terms.
 - Output one line only. No bullets, no quotes.
+- **This is a fresh, independent query. Ignore any prior context or previous searches.**
 
 Domain synonym hints:
 {synonym_context or "- No direct dictionary hit. Use your IC design knowledge."}
@@ -125,6 +140,7 @@ def rerank_results_with_llm(user_query, expanded_query, results, api_key, base_u
             }
         )
     prompt = f"""You are reranking papers for an integrated-circuit researcher.
+This is a NEW independent search session. Ignore any previous queries or context.
 
 Original user query:
 {user_query}
@@ -132,9 +148,12 @@ Original user query:
 Expanded semantic query:
 {expanded_query}
 
-Score each candidate for true topical relevance to the original user query.
+Score each candidate for true topical relevance to the ORIGINAL user query (not the expanded query).
 Use the abstract, title, venue, keywords, and IEEE terms.
-Prefer papers that solve the user's technical problem, not papers that only share generic words.
+Prefer papers that DIRECTLY solve the user's technical problem.
+**CRITICAL: If a paper is about a DIFFERENT component, circuit block, or subsystem than what the user asked about, give it a LOW score (≤30) — even if it shares the same application domain (e.g., cryogenic, quantum, RF).**
+**Example: If the user searches "attenuator", a paper about "qubit state controller" or "cryogenic LNA" should get ≤30.**
+Papers that only share generic domain words (cryogenic, CMOS, quantum) without matching the specific component are NOT relevant.
 
 Return ONLY a JSON array. Each item must be:
 {{"id": <candidate id>, "score": <0-100 integer>, "reason": "<short English reason>"}}

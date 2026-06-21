@@ -385,7 +385,8 @@ class PaperSearcher:
 
         self._log(f"init model={self.mn} mode={self.mt} scope={self.scope_key} cache={self.cf}")
         self.md = None
-        self.eb = self._load_cache()
+        self.eb = None
+        self._embeddings_loaded = False
 
     def _init_model(self):
         if self.mt == 'c':
@@ -510,6 +511,7 @@ class PaperSearcher:
             eta_text = _format_eta(eta_seconds)
             self._log(f"{stage_message}: progress batch {batch_index}/{total_batches} cumulative={done}/{total} elapsed={total_elapsed:.1f}s eta={eta_text}")
             self._emit_progress(done, total, f"{stage_message}: batch {batch_index}/{total_batches} ({done}/{total}) elapsed {total_elapsed:.1f}s | ETA {eta_text}")
+            # Rate-limit sleep for remote API calls (local models return early at line 497).
             time.sleep(0.6)
         self._log(f"{stage_message}: completed {total}/{total} in {time.perf_counter() - overall_start:.1f}s")
         return np.array(rows, dtype=np.float32)
@@ -592,12 +594,19 @@ class PaperSearcher:
         self._save_meta(current_fingerprints)
         return embeddings
 
+    def _ensure_embeddings(self):
+        if not self._embeddings_loaded:
+            self.eb = self._load_cache()
+            self._embeddings_loaded = True
+
     def search(self, query, top_k=50):
+        self._ensure_embeddings()
         qe = np.array(self._embed([query], stage_message="Embedding query")).reshape(1, -1)
         hits = _semantic_search(qe, self.eb, top_k=top_k)
         return [{"similarity": x['score'], "paper": self.dt[x['corpus_id']]} for x in hits]
 
     def search_candidates(self, query, candidate_papers, top_k=50):
+        self._ensure_embeddings()
         candidate_papers = list(candidate_papers or [])
         if not candidate_papers:
             return []

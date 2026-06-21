@@ -7,7 +7,9 @@ import os
 import re
 from datetime import datetime
 
+from chipseeker.scoring import compute_paper_score
 from chipseeker.utils import extract_year
+from chipseeker.venue_data import TIER_COLORS
 
 
 def _normalize_author_items(value):
@@ -142,6 +144,32 @@ def _plain_report_line(label, value):
     return f"- {label}: {value}\n" if value else ""
 
 
+# Shared field definitions for build_annual_conference_report.
+_REPORT_FIELDS = [
+    ("Authors", lambda p: paper_authors_display(p)),
+    ("Venue", lambda p: p.get("venue", "")),
+    ("Year", lambda p: p.get("year", "")),
+    ("DOI", lambda p: p.get("doi", "")),
+    ("PDF Link", lambda p: p.get("pdf_link", "")),
+    ("Volume", lambda p: p.get("volume", "")),
+    ("Issue/Number", lambda p: p.get("number", "") or p.get("issue", "")),
+    ("Pages", _paper_pages),
+    ("Article Number", lambda p: p.get("article_number", "")),
+    ("Online Date", lambda p: p.get("online_date", "")),
+    ("Issue Date", lambda p: p.get("issue_date", "")),
+    ("Date Added To Xplore", lambda p: p.get("date_added_to_xplore", "")),
+    ("Author Keywords", _paper_keywords_display),
+    ("IEEE Terms", _paper_ieee_terms_display),
+    ("Funding", lambda p: p.get("funding_information", "")),
+    ("Article Citations", lambda p: p.get("article_citation_count", "")),
+    ("Patent Citations", lambda p: p.get("patent_citation_count", "")),
+    ("Reference Count", lambda p: p.get("reference_count", "")),
+    ("License", lambda p: p.get("license", "")),
+    ("Publisher", lambda p: p.get("publisher", "")),
+    ("Document Identifier", lambda p: p.get("document_identifier", "")),
+]
+
+
 def build_annual_conference_report(papers, venue_label, year_label, output_format="md"):
     output_format = (output_format or "md").lower()
     is_markdown = output_format == "md"
@@ -180,53 +208,16 @@ def build_annual_conference_report(papers, venue_label, year_label, output_forma
         pages = _paper_pages(paper)
         keyword_text = _paper_keywords_display(paper)
         ieee_terms_text = _paper_ieee_terms_display(paper)
+        formatter = _report_line if is_markdown else _plain_report_line
         if is_markdown:
             content += f"## {index}. {title}\n\n"
-            content += _report_line("Authors", paper_authors_display(paper))
-            content += _report_line("Venue", paper.get("venue", ""))
-            content += _report_line("Year", paper.get("year", ""))
-            content += _report_line("DOI", paper.get("doi", ""))
-            content += _report_line("PDF Link", paper.get("pdf_link", ""))
-            content += _report_line("Volume", paper.get("volume", ""))
-            content += _report_line("Issue/Number", paper.get("number", "") or paper.get("issue", ""))
-            content += _report_line("Pages", pages)
-            content += _report_line("Article Number", paper.get("article_number", ""))
-            content += _report_line("Online Date", paper.get("online_date", ""))
-            content += _report_line("Issue Date", paper.get("issue_date", ""))
-            content += _report_line("Date Added To Xplore", paper.get("date_added_to_xplore", ""))
-            content += _report_line("Author Keywords", keyword_text)
-            content += _report_line("IEEE Terms", ieee_terms_text)
-            content += _report_line("Funding", paper.get("funding_information", ""))
-            content += _report_line("Article Citations", paper.get("article_citation_count", ""))
-            content += _report_line("Patent Citations", paper.get("patent_citation_count", ""))
-            content += _report_line("Reference Count", paper.get("reference_count", ""))
-            content += _report_line("License", paper.get("license", ""))
-            content += _report_line("Publisher", paper.get("publisher", ""))
-            content += _report_line("Document Identifier", paper.get("document_identifier", ""))
-            content += f"\n### Abstract\n{abstract or 'No abstract available.'}\n\n---\n\n"
         else:
             content += f"{index}. {title}\n"
-            content += _plain_report_line("Authors", paper_authors_display(paper))
-            content += _plain_report_line("Venue", paper.get("venue", ""))
-            content += _plain_report_line("Year", paper.get("year", ""))
-            content += _plain_report_line("DOI", paper.get("doi", ""))
-            content += _plain_report_line("PDF Link", paper.get("pdf_link", ""))
-            content += _plain_report_line("Volume", paper.get("volume", ""))
-            content += _plain_report_line("Issue/Number", paper.get("number", "") or paper.get("issue", ""))
-            content += _plain_report_line("Pages", pages)
-            content += _plain_report_line("Article Number", paper.get("article_number", ""))
-            content += _plain_report_line("Online Date", paper.get("online_date", ""))
-            content += _plain_report_line("Issue Date", paper.get("issue_date", ""))
-            content += _plain_report_line("Date Added To Xplore", paper.get("date_added_to_xplore", ""))
-            content += _plain_report_line("Author Keywords", keyword_text)
-            content += _plain_report_line("IEEE Terms", ieee_terms_text)
-            content += _plain_report_line("Funding", paper.get("funding_information", ""))
-            content += _plain_report_line("Article Citations", paper.get("article_citation_count", ""))
-            content += _plain_report_line("Patent Citations", paper.get("patent_citation_count", ""))
-            content += _plain_report_line("Reference Count", paper.get("reference_count", ""))
-            content += _plain_report_line("License", paper.get("license", ""))
-            content += _plain_report_line("Publisher", paper.get("publisher", ""))
-            content += _plain_report_line("Document Identifier", paper.get("document_identifier", ""))
+        for label, getter in _REPORT_FIELDS:
+            content += formatter(label, getter(paper))
+        if is_markdown:
+            content += f"\n### Abstract\n{abstract or 'No abstract available.'}\n\n---\n\n"
+        else:
             content += f"\nAbstract:\n{abstract or 'No abstract available.'}\n\n{'-' * 72}\n\n"
 
     return content
@@ -323,24 +314,16 @@ def build_search_results_html(results, search_query, current_year, analyze_venue
         venue_display = venue_data.get("n", venue)
         base_score = float(venue_data.get("s", 0))
         year_value = extract_year(year)
-        if year_value > 1900 and (current_year - year_value) < 10:
-            year_bonus = max(0, 10 - (current_year - year_value))
-        elif year_value > 1900 and (current_year - year_value) <= 0:
-            year_bonus = 10
-        else:
-            year_bonus = 0
+        year_bonus = (
+            max(0, 10 - (current_year - year_value))
+            if year_value > 1900 and (current_year - year_value) < 10
+            else (10 if year_value > 1900 and (current_year - year_value) <= 0 else 0)
+        )
         citations = int(citations_map.get(str(doi).upper(), 0)) if citations_fetched else 0
         citation_bonus = min(15, math.log10(citations + 1) * 6) if citations > 0 else 0
-        final_score = float(item.get("comp_score", base_score + year_bonus + citation_bonus))
+        final_score = float(item.get("comp_score", compute_paper_score(venue_data, year_value, citations, current_year)))
         color, badge = _result_badge(similarity, bool(search_query))
-        tier_color = {
-            "S+": "#E53935",
-            "S": "#FB8C00",
-            "AA": "#1E88E5",
-            "A": "#43A047",
-            "B": "#8E24AA",
-            "C": "#757575",
-        }.get(venue_data.get("t", ""), "#9E9E9E")
+        tier_color = TIER_COLORS.get(venue_data.get("t", ""), "#9E9E9E")
         citation_text = f"{citations} (Fetched)" if citations_fetched else "Pending (Manual Fetch)"
         links = []
         if doi:

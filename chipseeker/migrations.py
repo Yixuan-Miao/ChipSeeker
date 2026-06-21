@@ -72,7 +72,8 @@ def _migrate_to_v3(state):
     _record_state(state, 3, "Initialized source registry for IEEE and Nature incremental updates.")
 
 
-def _migrate_to_v4(state):
+def _merge_template_sources(state, version, note):
+    """Merge new source templates from the bundled template file into the registry."""
     registry = load_json(SOURCE_REGISTRY_FILE, {"sources": [], "pending_ieee_batch": None})
     template = load_json(SOURCE_REGISTRY_TEMPLATE_FILE, {"sources": [], "pending_ieee_batch": None})
     if not isinstance(registry, dict):
@@ -83,36 +84,20 @@ def _migrate_to_v4(state):
         if template_source.get("id") not in existing_ids:
             registry["sources"].append(template_source)
     save_json(SOURCE_REGISTRY_FILE, registry)
-    _record_state(state, 4, "Merged new default update sources into source registry.")
+    _record_state(state, version, note)
+
+
+def _migrate_to_v4(state):
+    _merge_template_sources(state, 4, "Merged new default update sources into source registry.")
 
 
 def _migrate_to_v5(state):
-    registry = load_json(SOURCE_REGISTRY_FILE, {"sources": [], "pending_ieee_batch": None})
-    template = load_json(SOURCE_REGISTRY_TEMPLATE_FILE, {"sources": [], "pending_ieee_batch": None})
-    if not isinstance(registry, dict):
-        registry = {"sources": [], "pending_ieee_batch": None}
-    registry.setdefault("sources", [])
-    existing_ids = {source.get("id") for source in registry["sources"]}
-    for template_source in template.get("sources", []):
-        if template_source.get("id") not in existing_ids:
-            registry["sources"].append(template_source)
-    save_json(SOURCE_REGISTRY_FILE, registry)
     state.setdefault("library_sync", {})
-    _record_state(state, 5, "Expanded default update sources and initialized product-pack state.")
+    _merge_template_sources(state, 5, "Expanded default update sources and initialized product-pack state.")
 
 
 def _migrate_to_v6(state):
-    registry = load_json(SOURCE_REGISTRY_FILE, {"sources": [], "pending_ieee_batch": None})
-    template = load_json(SOURCE_REGISTRY_TEMPLATE_FILE, {"sources": [], "pending_ieee_batch": None})
-    if not isinstance(registry, dict):
-        registry = {"sources": [], "pending_ieee_batch": None}
-    registry.setdefault("sources", [])
-    existing_ids = {source.get("id") for source in registry["sources"]}
-    for template_source in template.get("sources", []):
-        if template_source.get("id") not in existing_ids:
-            registry["sources"].append(template_source)
-    save_json(SOURCE_REGISTRY_FILE, registry)
-    _record_state(state, 6, "Expanded Nature-family source templates and refreshed registry defaults.")
+    _merge_template_sources(state, 6, "Expanded Nature-family source templates and refreshed registry defaults.")
 
 
 def _migrate_to_v7(state):

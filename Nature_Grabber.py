@@ -1,5 +1,6 @@
 import argparse
 import csv
+import logging
 import os
 import re
 import time
@@ -7,6 +8,8 @@ from urllib.parse import urljoin
 
 import requests
 from chipseeker.paths import MANUAL_SOURCE_DIR
+
+logger = logging.getLogger(__name__)
 
 try:
     from bs4 import BeautifulSoup
@@ -158,7 +161,7 @@ def grab_nature(query, output_file, journal="", year_from=2015, start_date=None,
                 if row["Document Title"] and row["Abstract"]:
                     rows.append(row)
             except Exception as exc:
-                print(f"[Nature_Grabber] skip {article_url}: {exc}")
+                logger.warning("skip %s: %s", article_url, exc)
             time.sleep(sleep_seconds)
 
     with open(output_path, "w", encoding="utf-8-sig", newline="") as f:
@@ -166,7 +169,7 @@ def grab_nature(query, output_file, journal="", year_from=2015, start_date=None,
         writer.writeheader()
         writer.writerows(rows)
 
-    print(f"[Nature_Grabber] wrote {len(rows)} rows to {output_path}")
+    logger.info("wrote %d rows to %s", len(rows), output_path)
     return rows
 
 

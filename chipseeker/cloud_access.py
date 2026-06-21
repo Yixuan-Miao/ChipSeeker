@@ -13,6 +13,10 @@ def cloud_access_configured(email, access_code):
     return bool(str(email or "").strip() and str(access_code or "").strip())
 
 
+# NOTE: The cloud token uses Base64 encoding for transport convenience only.
+# It encodes the cloud service URL, email, and access code as a portable
+# opaque string. Base64 is NOT encryption — the payload is reversible.
+# Security relies on HTTPS transport and server-side access_code validation.
 def build_cloud_token(base_url, email, access_code):
     payload = {
         "base_url": str(base_url or DEFAULT_CLOUD_BASE_URL).strip().rstrip("/"),

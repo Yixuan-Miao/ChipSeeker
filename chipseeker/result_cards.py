@@ -1,7 +1,7 @@
-import math
 from datetime import datetime
 
 from chipseeker.exports import paper_authors_display
+from chipseeker.scoring import compute_paper_score
 from chipseeker.search_ui import highlight_text, required_words_from_query
 from chipseeker.utils import extract_year
 from chipseeker.venue_data import TIER_COLORS, analyze_venue, get_venue_display_str
@@ -54,17 +54,9 @@ def build_result_cards(results, query_text="", exact_query="", user_states=None,
         venue_data = analyze_venue(paper.get("venue", ""))
         venue_display = get_venue_display_str(venue_data)
         year_value = extract_year(paper.get("year", ""))
-        if year_value > 1900 and (current_year - year_value) < 10:
-            year_bonus = max(0, 10 - (current_year - year_value))
-        elif year_value > 1900 and (current_year - year_value) <= 0:
-            year_bonus = 10
-        else:
-            year_bonus = 0
-        base_score = float(venue_data.get("s", 0))
         doi = str(paper.get("doi", "")).strip().upper()
         citation_count = int(citations_map.get(doi, 0)) if doi else 0
-        citation_bonus = min(15, math.log10(citation_count + 1) * 6) if citation_count > 0 else 0.0
-        comp_score = float(base_score + year_bonus + citation_bonus)
+        comp_score = compute_paper_score(venue_data, year_value, citation_count, current_year)
         author_display = paper_authors_display(paper)
         state_key = paper_state_key(paper)
         user_state = dict(default_card_state(), **(user_states.get(state_key) or {}))

@@ -1,5 +1,7 @@
 import re
 
+from chipseeker.scoring import compute_paper_score
+
 
 def get_paper_id(paper):
     return str(paper.get("doi") or paper.get("paper_key") or paper.get("title", "unknown"))
@@ -134,12 +136,5 @@ def sort_results(results, sort_option, search_query, citations_map, citations_fe
         year_value = extract_year(paper.get("year", ""))
         citations = citations_map.get(paper.get("doi", "").upper(), 0) if citations_fetched else 0
         venue_data = analyze_venue(paper.get("venue", ""))
-        base_score = venue_data["s"]
-        year_bonus = (
-            max(0, 10 - (current_year - year_value))
-            if year_value > 1900 and (current_year - year_value) < 10
-            else (10 if year_value > 1900 and (current_year - year_value) <= 0 else 0)
-        )
-        citation_bonus = min(15, math.log10(citations + 1) * 6) if citations > 0 else 0
-        item["comp_score"] = base_score + year_bonus + citation_bonus
+        item["comp_score"] = compute_paper_score(venue_data, year_value, citations, current_year)
     return sorted(high_value_results, key=lambda item: item["comp_score"], reverse=True)

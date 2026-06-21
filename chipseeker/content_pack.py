@@ -522,8 +522,20 @@ def install_content_pack(uploaded_file, data_dir):
             with zipfile.ZipFile(io.BytesIO(payload), "r") as archive:
                 member_names = archive.namelist()
                 _validate_zip_members(member_names)
-                _ensure_install_space(staging_parent, _archive_uncompressed_size(archive))
+                declared_size = _archive_uncompressed_size(archive)
+                _ensure_install_space(staging_parent, declared_size)
                 archive.extractall(temp_dir)
+                # ZIP bomb check: actual extracted size must not exceed 2x declared.
+                actual_size = 0
+                for _root, _, _files in os.walk(temp_dir):
+                    for _name in _files:
+                        actual_size += os.path.getsize(os.path.join(_root, _name))
+                if actual_size > declared_size * 2:
+                    raise ContentPackInstallError(
+                        "Content pack extraction exceeded expected size: "
+                        f"declared={_format_bytes(declared_size)}, actual={_format_bytes(actual_size)}. "
+                        "This may indicate a malicious ZIP bomb. Installation aborted."
+                    )
             pack_root = _locate_pack_root(temp_dir)
             os.makedirs(data_dir, exist_ok=True)
             backup_dir = os.path.join(temp_dir, "previous_local_data")
@@ -674,8 +686,20 @@ def install_content_update_pack(uploaded_file, data_dir):
             with zipfile.ZipFile(io.BytesIO(payload), "r") as archive:
                 member_names = archive.namelist()
                 _validate_zip_members(member_names)
-                _ensure_install_space(staging_parent, _archive_uncompressed_size(archive))
+                declared_size = _archive_uncompressed_size(archive)
+                _ensure_install_space(staging_parent, declared_size)
                 archive.extractall(temp_dir)
+                # ZIP bomb check: actual extracted size must not exceed 2x declared.
+                actual_size = 0
+                for _root, _, _files in os.walk(temp_dir):
+                    for _name in _files:
+                        actual_size += os.path.getsize(os.path.join(_root, _name))
+                if actual_size > declared_size * 2:
+                    raise ContentPackInstallError(
+                        "Update pack extraction exceeded expected size: "
+                        f"declared={_format_bytes(declared_size)}, actual={_format_bytes(actual_size)}. "
+                        "This may indicate a malicious ZIP bomb. Installation aborted."
+                    )
             pack_root = _locate_pack_root(temp_dir)
             os.makedirs(data_dir, exist_ok=True)
 

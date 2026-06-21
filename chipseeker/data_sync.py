@@ -184,6 +184,13 @@ def load_source_manifest_entries(manifest_path=SOURCE_MANIFEST_FILE):
 
 
 def refresh_source_manifest(source_root=SOURCE_CSV_DIR, manifest_path=SOURCE_MANIFEST_FILE, logger=None):
+    # Load previous manifest to skip re-hashing unchanged files.
+    previous = {}
+    for entry in load_source_manifest_entries(manifest_path):
+        rel = str(entry.get("relative_path", "")).replace("\\", "/")
+        if rel and entry.get("sha1") and entry.get("size_bytes") is not None:
+            previous[rel] = entry
+
     entries = []
     for root, dirs, files in os.walk(source_root):
         dirs.sort()
@@ -191,23 +198,29 @@ def refresh_source_manifest(source_root=SOURCE_CSV_DIR, manifest_path=SOURCE_MAN
             if not name.lower().endswith(".csv"):
                 continue
             path = os.path.join(root, name)
+            relative = os.path.relpath(path, source_root).replace("\\", "/")
             headers = inspect_csv_headers(path, logger=logger)
             profile = classify_csv_source(headers)
-            try:
-                digest = file_sha1(path)
-            except Exception as exc:
-                digest = ""
-                if logger:
-                    logger.warning("Could not hash CSV %s: %s", path, exc)
+            stat = os.stat(path)
+            size = int(stat.st_size)
+            mtime_iso = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat()
+            prev = previous.get(relative)
+            if prev and prev.get("size_bytes") == size and prev.get("modified_at_utc") == mtime_iso:
+                digest = prev["sha1"]
+            else:
+                try:
+                    digest = file_sha1(path)
+                except Exception as exc:
+                    digest = ""
+                    if logger:
+                        logger.warning("Could not hash CSV %s: %s", path, exc)
             entries.append(
                 {
-                    "relative_path": os.path.relpath(path, source_root).replace("\\", "/"),
+                    "relative_path": relative,
                     "category": classify_source_file(path),
-                    "size_bytes": os.path.getsize(path),
+                    "size_bytes": size,
                     "sha1": digest,
-                    "modified_at_utc": datetime.fromtimestamp(
-                        os.path.getmtime(path), tz=timezone.utc
-                    ).isoformat(),
+                    "modified_at_utc": mtime_iso,
                     "headers": headers,
                     "valid_source": profile["valid_source"],
                     "source_type": profile["source_type"],
@@ -631,7 +644,7 @@ def is_junk_paper(title, abstract, row=None):
     ]
     if _title_has_any(title_lower, soft_junk_keywords):
         return True
-    if len(abstract_lower) < 100 or abstract_lower in no_abstract_values:
+    if len(abstract_lower) < 50 or abstract_lower in no_abstract_values:
         return True
     return False
 

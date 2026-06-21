@@ -15,16 +15,6 @@ DEFAULT_CONFIG = {
     "onboarding_completed": False,
 }
 
-LEGACY_RATING_MAP = {
-    "Unrated": "Unrated",
-    "Masterpiece": "Masterpiece",
-    "Solid": "Solid",
-    "Average": "Average",
-    "Marginal": "Marginal",
-    "Poor": "Poor",
-}
-
-
 def load_app_config(config_paths):
     for path in config_paths:
         loaded = load_json(path, None)
@@ -45,7 +35,6 @@ class UserDataStore:
             title,
             {"rating": "Unrated", "open_count": 0, "comments": "", "matched_queries": [], "search_count": 0},
         )
-        item["rating"] = LEGACY_RATING_MAP.get(item["rating"], item["rating"])
         item.setdefault("matched_queries", [])
         item.setdefault("search_count", len(item.get("matched_queries", [])))
         return item
