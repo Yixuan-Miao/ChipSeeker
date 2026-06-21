@@ -2058,8 +2058,11 @@ def run():
         if st.button(tr(ui_language, "Fetch & Update Scores", "抓取并更新分数"), use_container_width=True):
             with st.spinner(f"Batch fetching citations for top {fetch_limit} papers..."):
                 dois_to_fetch = [result["paper"].get("doi") for result in results if result["paper"].get("doi")][:fetch_limit]
-                st.session_state.citations_map = get_batch_citations(dois_to_fetch)
-                st.session_state.citations_fetched = True
+                try:
+                    st.session_state.citations_map = get_batch_citations(dois_to_fetch)
+                    st.session_state.citations_fetched = True
+                except RuntimeError as exc:
+                    st.error(f"Citation fetch failed: {exc}")
                 st.rerun()
 
     results = sort_results(results, sort_option, search_query, st.session_state.citations_map, st.session_state.citations_fetched, analyze_venue, extract_year, CURRENT_YEAR)
