@@ -24,10 +24,16 @@ def get_batch_citations(dois, logger=None):
                 for item in data
                 if item and item.get("externalIds")
             }
+        elif response.status_code == 429:
+            raise RuntimeError("Semantic Scholar rate limit reached. Wait a few minutes and try again.")
+        else:
+            raise RuntimeError(f"Semantic Scholar API returned HTTP {response.status_code}")
+    except RuntimeError:
+        raise
     except Exception as exc:
         if logger:
             logger.warning("Failed to fetch citations: %s", exc)
-    return {}
+        raise RuntimeError(f"Failed to fetch citations: {exc}") from exc
 
 
 _client_cache = {}
