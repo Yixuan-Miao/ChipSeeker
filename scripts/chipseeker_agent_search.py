@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -31,11 +32,18 @@ def build_parser():
     parser.add_argument("--rerank-limit", type=int, default=30)
     parser.add_argument("--timeout-seconds", type=int, default=300)
     parser.add_argument("--abstract-chars", type=int, default=1600)
+    parser.add_argument("--output", default="", help="Optional UTF-8 JSON file written atomically in addition to stdout.")
     return parser
 
 
-def write_json(payload):
+def write_json(payload, output_path=""):
     encoded = (json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8")
+    if output_path:
+        path = Path(output_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_name(f".{path.name}.tmp")
+        temporary.write_bytes(encoded)
+        os.replace(temporary, path)
     sys.stdout.buffer.write(encoded)
     sys.stdout.buffer.flush()
 
@@ -80,10 +88,10 @@ def main(argv=None):
                     timeout_seconds=args.timeout_seconds,
                 )
     except Exception as exc:
-        write_json({"schema": "chipseeker-agent-search/v1", "error": str(exc)})
+        write_json({"schema": "chipseeker-agent-search/v1", "error": str(exc)}, args.output)
         return 1
 
-    write_json(response)
+    write_json(response, args.output)
     return 0
 
 

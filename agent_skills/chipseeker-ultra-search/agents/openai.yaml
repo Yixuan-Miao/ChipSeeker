@@ -1,4 +1,4 @@
 interface:
   display_name: "ChipSeeker Ultra Search"
-  short_description: "Run evidence-grounded multi-pass ChipSeeker research searches."
-  default_prompt: "Use ChipSeeker Ultra Search to map a research idea into multiple evidence-grounded literature searches."
+  short_description: "Run persistent, evidence-grounded IC research programs."
+  default_prompt: "Use ChipSeeker Ultra Search to collaboratively investigate a new IC research direction, persist every step, and build a paper-ready evidence trail."
