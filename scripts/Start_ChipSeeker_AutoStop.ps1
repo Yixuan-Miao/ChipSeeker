@@ -49,8 +49,10 @@ $procInfo.FileName = $venvPython
 $procInfo.Arguments = "-m streamlit run app.py --server.port $Port --server.headless true"
 $procInfo.WorkingDirectory = $projectRoot
 $procInfo.UseShellExecute = $false
-$procInfo.RedirectStandardOutput = $true
-$procInfo.RedirectStandardError = $true
+# Do not pipe Streamlit logs without draining them. A full redirected pipe can
+# block the child process during long searches and make the UI appear stuck.
+$procInfo.RedirectStandardOutput = $false
+$procInfo.RedirectStandardError = $false
 $procInfo.CreateNoWindow = $false
 
 $serviceProc = New-Object System.Diagnostics.Process

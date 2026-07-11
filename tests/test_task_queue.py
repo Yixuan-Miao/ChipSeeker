@@ -15,6 +15,9 @@ class DummySearcher:
         if progress_callback:
             progress_callback(1, 1, "Dummy embedding finished")
 
+    def _ensure_embeddings(self):
+        return None
+
 
 def test_embedding_task_completes(monkeypatch, tmp_path):
     monkeypatch.setattr(task_queue, "PaperSearcher", DummySearcher)
@@ -31,3 +34,23 @@ def test_embedding_task_completes(monkeypatch, tmp_path):
     assert task["result"]["model_name"] == "all-MiniLM-L6-v2"
     assert task["history"]
     assert any("Dummy searcher booted" in entry["message"] for entry in task["history"])
+
+
+def test_large_task_result_is_summarized_before_completion():
+    task_id = task_queue.submit_task(
+        "test-large-result",
+        {},
+        lambda _task_id, _payload: {"results": [{"abstract": "x" * 10000}], "initial_count": 1},
+    )
+
+    deadline = time.time() + 5
+    task = task_queue.get_task(task_id)
+    while task and task["status"] not in {"completed", "failed"} and time.time() < deadline:
+        time.sleep(0.05)
+        task = task_queue.get_task(task_id)
+
+    assert task is not None
+    assert task["status"] == "completed"
+    completion = next(entry["message"] for entry in task["history"] if entry["message"].startswith("Task completed:"))
+    assert "1 results" in completion
+    assert "x" * 100 not in completion

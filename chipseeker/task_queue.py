@@ -44,6 +44,26 @@ def _summarize_payload(payload):
     return summary
 
 
+def _summarize_result(result):
+    """Keep task logs small so large paper payloads cannot block completion."""
+    if not isinstance(result, dict):
+        return str(result)[:500]
+
+    summary = {}
+    for key, value in result.items():
+        if key == "results" and isinstance(value, list):
+            summary[key] = f"{len(value)} results"
+        elif isinstance(value, (list, tuple, set)):
+            summary[key] = f"{len(value)} items"
+        elif isinstance(value, dict):
+            summary[key] = f"{len(value)} fields"
+        elif isinstance(value, str) and len(value) > 240:
+            summary[key] = f"{value[:237]}..."
+        else:
+            summary[key] = value
+    return summary
+
+
 def _set_task(task_id, **updates):
     with _LOCK:
         task = _TASKS.setdefault(task_id, {})
@@ -85,8 +105,9 @@ def _run_task(task_id, fn, payload):
             append_history(task_id, "Task result discarded because it was canceled.", level="warning")
             _set_task(task_id, status="canceled", message="Canceled", finished_at=time.time())
             return
-        _log(f"{task_id} completed result={result}")
-        append_history(task_id, f"Task completed: {result}", level="success")
+        result_summary = _summarize_result(result)
+        _log(f"{task_id} completed result={result_summary}")
+        append_history(task_id, f"Task completed: {result_summary}", level="success")
         _set_task(task_id, status="completed", result=result, finished_at=time.time())
 
 
