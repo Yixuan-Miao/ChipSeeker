@@ -15,6 +15,7 @@ WORKSPACE_FILES = (
     "04_IDEA_LAB.md",
     "05_PAPER_BLUEPRINT.md",
     "06_REFERENCE_LIBRARY.md",
+    "08_READING_AND_CITATION_PLAN.md",
 )
 
 
@@ -151,6 +152,30 @@ Maintain a deduplicated working bibliography with a short note on why each paper
 
 | Citation Key | Title | Year | Venue | DOI / PDF | Role | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
+""",
+        "08_READING_AND_CITATION_PLAN.md": """# Reading And Citation Plan
+
+Maintain two separate decisions: what must be read in depth to design correctly, and what must be cited to support a paper claim. A paper can be essential to read without becoming a central citation, and vice versa.
+
+## Must Read In Depth
+
+| Priority | Citation Key / Title | Why Read It | Specific Questions To Answer | Status |
+| --- | --- | --- | --- | --- |
+| 1 | [Add paper] | [Circuit or device mechanism critical to the chosen route.] | [What exact topology, equations, assumptions, and limits matter?] | unread |
+
+## Citation Candidates
+
+| Paper | Claim It Supports | Citation Role | Required Before Citing |
+| --- | --- | --- | --- |
+| [Add paper] | [Specific factual or novelty claim.] | direct / enabling / transferable / contradictory | [Verify abstract/full text/metric.] |
+
+## Concepts To Clarify With The Researcher
+
+- [Record misconceptions, missing prerequisites, and the short physical explanation needed before a design decision.]
+
+## Final Reference Set
+
+- Rank the eventual paper references from indispensable to optional. Preserve full title, venue, year, DOI/PDF, and the exact sentence/figure/claim each will support.
 """,
     }
 

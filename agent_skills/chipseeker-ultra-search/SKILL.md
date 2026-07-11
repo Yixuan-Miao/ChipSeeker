@@ -22,6 +22,7 @@ The command returns JSON with a timestamped path under `local_data/ultra_researc
 3. `02_SEARCH_TRACE.md`
 4. `03_EVIDENCE_LEDGER.md`
 5. `04_IDEA_LAB.md`
+6. `08_READING_AND_CITATION_PLAN.md`
 
 Update files as facts are learned. Do not defer documentation until the end. Store each raw search response in `queries/R<round>_<facet>.json`, add its reason and result to `02_SEARCH_TRACE.md`, and extract decision-relevant evidence into `03_EVIDENCE_LEDGER.md` immediately.
 
@@ -47,11 +48,12 @@ Repeat this loop while material evidence gaps remain. There is no fixed number o
 
 1. **Frame**: Separate fixed constraints, desired outcomes, unknown variables, and novelty hypotheses. Record them in `00_PROJECT_BRIEF.md`.
 2. **Map the problem**: Build independent technical facets rather than one giant query: device/process, circuit topology, matching/noise/bandwidth, frequency plan, cryogenic/application system, measurement/packaging, and transferable adjacent fields.
-3. **Search for mechanisms**: Query each facet broadly with Lite. Search direct precedents with Pro only when it can improve precision. Persist every raw result JSON.
-4. **Read and classify**: Deduplicate by DOI then normalized title. Classify each useful paper as `direct`, `enabling`, `transferable`, `background`, or `contradictory`. Extract only evidence that affects a design choice, benchmark, or feasibility claim.
-5. **Find the missing link**: After each round, ask: Which claim in the proposed architecture is still unsupported? What metric cannot yet be benchmarked? What alternative topology could invalidate the current route? Write the answer and the next query in `01_LIVE_STATUS.md`.
-6. **Branch or converge**: Maintain competing architectures in `04_IDEA_LAB.md`. Search both sides until evidence favors one, identifies a hybrid, or shows that the distinction cannot yet be resolved.
-7. **Synthesize continuously**: Update `05_PAPER_BLUEPRINT.md` as soon as there is evidence for a title, contribution, outline, figure plan, abstract sentence, or benchmarking row. Do not wait for a final report.
+3. **Search for mechanisms broadly**: Deliberately search direct work *and* distant source fields: CMOS/MOS, SiGe/HBT, mm-wave, mixers/N-path networks, switched-capacitor circuits, parametric circuits, oscillators, filters, radar, optical/quantum readout, and any field that faces the same physical tradeoff. Do not reject a mechanism because its original frequency, process, or application differs.
+4. **Run a transfer test**: For every promising cross-domain mechanism, record (a) the abstract physical benefit, (b) the source circuit conditions that create it, (c) a concrete target-process mapping, (d) the expected noise, loss, clock/pump, stability, linearity, and power cost, (e) the PDK/model evidence required, and (f) the quickest falsifying simulation. Classify it as `direct`, `enabling`, `transferable-high`, `transferable-speculative`, `background`, or `contradictory`; `transferable-speculative` remains a live route until this test rejects it.
+5. **Read and classify**: Deduplicate by DOI then normalized title. Extract only evidence that affects a design choice, benchmark, or feasibility claim, while preserving the source-field mechanism in `04_IDEA_LAB.md`.
+6. **Find the missing link**: After each round, ask: Which claim in the proposed architecture is still unsupported? What metric cannot yet be benchmarked? What alternative topology could invalidate the current route? Write the answer and the next query in `01_LIVE_STATUS.md`.
+7. **Branch or converge**: Maintain competing architectures in `04_IDEA_LAB.md`. Search both sides until evidence favors one, identifies a hybrid, or shows that the distinction cannot yet be resolved.
+8. **Synthesize continuously**: Update `05_PAPER_BLUEPRINT.md` as soon as there is evidence for a title, contribution, outline, figure plan, abstract sentence, or benchmarking row. Update `08_READING_AND_CITATION_PLAN.md` after every material paper: distinguish required deep reading from likely paper citations. Do not wait for a final report.
 
 Do not stop merely because a planned checklist has been completed. Stop active searching only after the closure test below passes, or after recording a specific external limitation that prevents closure.
 
@@ -66,12 +68,15 @@ Call the research loop substantively closed only when all applicable conditions 
 - At least one defensible route and one credible alternative or risk-mitigation route are documented.
 - The next validation step is concrete: simulation, device characterization, circuit design, measurement, or a narrowly defined missing-literature query.
 - The literature-to-paper story is coherent enough to draft a title, abstract, contribution statement, figure sequence, and reference library.
+- A ranked reading list and a claim-specific, ranked citation set are present, with full title and DOI/PDF for each required paper.
 
 This is evidence closure, not proof that an IC will work. Never claim experimental feasibility until measured or simulated evidence supports it.
 
 ## Interactive Research Behavior
 
 Collaborate with the user during the loop. Ask a focused question when its answer changes a material decision, such as process availability, temperature, qubit/readout protocol, channel count, power budget, target noise, fabrication constraints, or novelty preference. Do not pause for generic clarification: continue searching parallel assumptions and label them clearly.
+
+Act as a technical research mentor as well as a search agent. When the user states a circuit intuition that conflates two quantities, overlooks a loss/noise path, or is physically incomplete, say so clearly and constructively. Explain the missing principle with the smallest useful circuit-level counterexample, distinguish what is known from what must be simulated, and record the gap in `08_READING_AND_CITATION_PLAN.md`. Do not merely correct the user: connect the correction to a concrete research decision or testbench.
 
 When an answer changes a route, record the decision and rationale in `04_IDEA_LAB.md`; revise the brief, benchmark table, and next search gap. Offer concrete alternatives rather than only asking what the user wants.
 
@@ -90,5 +95,6 @@ On a later session, reopen the workspace and resume from `Next Concrete Action`.
 - Never invent papers, metrics, citations, or experimental outcomes.
 - Attach DOI/PDF links to paper-specific claims and distinguish fact, inference, and proposal.
 - State corpus, query scope, and unresolved evidence gaps; never call a result exhaustive.
-- Avoid endless synonym expansion. Continue only when a new query tests a named gap, contradiction, design route, or benchmark dimension.
+- Treat source-field mismatch as a hypothesis to analyze, never as a reason to exclude an idea. Translate the mechanism, then test its real cost in the target circuit.
+- Avoid empty synonym expansion. Continue when a new query tests a named gap, contradiction, design route, benchmark dimension, or a genuinely different physical mechanism.
 - Keep unpublished ideas, search records, and paper drafts inside the Git-ignored workspace unless the user explicitly asks to publish them.
