@@ -104,8 +104,8 @@ RATING_LABELS = {
     "Poor": "★ Poor",
 }
 DEEPSEEK_MODEL_OPTIONS = {
-    "DeepSeek Lite/Fast (deepseek-v4-flash)": "deepseek-v4-flash",
     "DeepSeek Pro (deepseek-v4-pro)": "deepseek-v4-pro",
+    "DeepSeek Lite/Fast (deepseek-v4-flash)": "deepseek-v4-flash",
 }
 
 
@@ -452,7 +452,7 @@ def embedding_model_requires_api(model_name):
 def resolve_provider_defaults(current_preset, app_config):
     if current_preset == "DeepSeek":
         configured_model = str(app_config.get("llm_model", "")).strip()
-        model = configured_model if configured_model in DEEPSEEK_MODEL_OPTIONS.values() else "deepseek-v4-flash"
+        model = configured_model if configured_model in DEEPSEEK_MODEL_OPTIONS.values() else "deepseek-v4-pro"
         return "https://api.deepseek.com", model
     if current_preset == "SiliconFlow":
         return "https://api.siliconflow.cn/v1", "Qwen/Qwen2.5-7B-Instruct"

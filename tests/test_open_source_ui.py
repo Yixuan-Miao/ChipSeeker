@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from chipseeker.config_store import DEFAULT_CONFIG
+
 
 def test_paid_api_access_ui_is_hidden_from_open_source_app():
     app_main = Path(__file__).resolve().parents[1] / "chipseeker" / "app_main.py"
@@ -9,3 +11,12 @@ def test_paid_api_access_ui_is_hidden_from_open_source_app():
     assert "Paid API Access" not in text
     assert "ChipSeeker Cloud Access" not in text
     assert "Paid Access Key" not in text
+
+
+def test_open_source_default_deepseek_model_is_pro():
+    app_main = Path(__file__).resolve().parents[1] / "chipseeker" / "app_main.py"
+    example_config = Path(__file__).resolve().parents[1] / "config.example.json"
+
+    assert DEFAULT_CONFIG["llm_model"] == "deepseek-v4-pro"
+    assert '"llm_model": "deepseek-v4-pro"' in example_config.read_text(encoding="utf-8")
+    assert 'else "deepseek-v4-pro"' in app_main.read_text(encoding="utf-8")

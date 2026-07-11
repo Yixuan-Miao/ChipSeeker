@@ -4,7 +4,7 @@ from chipseeker.utils import load_json, save_json
 DEFAULT_CONFIG = {
     "llm_api_key": "",
     "llm_base_url": "https://api.deepseek.com",
-    "llm_model": "deepseek-v4-flash",
+    "llm_model": "deepseek-v4-pro",
     "provider_preset": "DeepSeek",
     "embedding_model": "all-MiniLM-L6-v2",
     "emb_api_key": "",
