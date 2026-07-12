@@ -23,8 +23,9 @@ The command returns JSON with a timestamped path under `local_data/ultra_researc
 4. `03_EVIDENCE_LEDGER.md`
 5. `04_IDEA_LAB.md`
 6. `08_READING_AND_CITATION_PLAN.md`
+7. `09_PAPER_LINKS.md`
 
-Update files as facts are learned. Do not defer documentation until the end. Store each raw search response in `queries/R<round>_<facet>.json`, add its reason and result to `02_SEARCH_TRACE.md`, and extract decision-relevant evidence into `03_EVIDENCE_LEDGER.md` immediately.
+Update files as facts are learned. Do not defer documentation until the end. Store each raw search response in `queries/R<round>_<facet>.json`, add its reason and result to `02_SEARCH_TRACE.md`, and extract decision-relevant evidence into `03_EVIDENCE_LEDGER.md` immediately. Whenever a paper is retained, copy its full title, DOI, and direct publisher PDF link from the agent JSON's `pdf_link` field into `09_PAPER_LINKS.md`; mark a missing link explicitly rather than silently dropping it.
 
 ## Search Tool
 
@@ -53,7 +54,7 @@ Repeat this loop while material evidence gaps remain. There is no fixed number o
 5. **Read and classify**: Deduplicate by DOI then normalized title. Extract only evidence that affects a design choice, benchmark, or feasibility claim, while preserving the source-field mechanism in `04_IDEA_LAB.md`.
 6. **Find the missing link**: After each round, ask: Which claim in the proposed architecture is still unsupported? What metric cannot yet be benchmarked? What alternative topology could invalidate the current route? Write the answer and the next query in `01_LIVE_STATUS.md`.
 7. **Branch or converge**: Maintain competing architectures in `04_IDEA_LAB.md`. Search both sides until evidence favors one, identifies a hybrid, or shows that the distinction cannot yet be resolved.
-8. **Synthesize continuously**: Update `05_PAPER_BLUEPRINT.md` as soon as there is evidence for a title, contribution, outline, figure plan, abstract sentence, or benchmarking row. Update `08_READING_AND_CITATION_PLAN.md` after every material paper: distinguish required deep reading from likely paper citations. Do not wait for a final report.
+8. **Synthesize continuously**: Update `05_PAPER_BLUEPRINT.md` as soon as there is evidence for a title, contribution, outline, figure plan, abstract sentence, or benchmarking row. Update `08_READING_AND_CITATION_PLAN.md` after every material paper: distinguish required deep reading from likely paper citations. Keep `09_PAPER_LINKS.md` complete and deduplicated. Do not wait for a final report.
 
 Do not stop merely because a planned checklist has been completed. Stop active searching only after the closure test below passes, or after recording a specific external limitation that prevents closure.
 
@@ -68,7 +69,7 @@ Call the research loop substantively closed only when all applicable conditions 
 - At least one defensible route and one credible alternative or risk-mitigation route are documented.
 - The next validation step is concrete: simulation, device characterization, circuit design, measurement, or a narrowly defined missing-literature query.
 - The literature-to-paper story is coherent enough to draft a title, abstract, contribution statement, figure sequence, and reference library.
-- A ranked reading list and a claim-specific, ranked citation set are present, with full title and DOI/PDF for each required paper.
+- A ranked reading list and a claim-specific, ranked citation set are present, with full title, DOI, and direct PDF/publisher URL for each required paper.
 
 This is evidence closure, not proof that an IC will work. Never claim experimental feasibility until measured or simulated evidence supports it.
 

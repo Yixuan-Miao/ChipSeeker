@@ -15,6 +15,7 @@ def test_workspace_keeps_direction_and_creates_research_assets(tmp_path):
     assert all((workspace / filename).is_file() for filename in WORKSPACE_FILES)
     assert "Original Direction" in (workspace / "00_PROJECT_BRIEF.md").read_text(encoding="utf-8")
     assert "Must Read In Depth" in (workspace / "08_READING_AND_CITATION_PLAN.md").read_text(encoding="utf-8")
+    assert "Direct Paper Links" in (workspace / "09_PAPER_LINKS.md").read_text(encoding="utf-8")
 
 
 def test_workspace_status_and_unicode_direction(tmp_path):

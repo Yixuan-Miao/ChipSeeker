@@ -16,6 +16,7 @@ WORKSPACE_FILES = (
     "05_PAPER_BLUEPRINT.md",
     "06_REFERENCE_LIBRARY.md",
     "08_READING_AND_CITATION_PLAN.md",
+    "09_PAPER_LINKS.md",
 )
 
 
@@ -176,6 +177,14 @@ Maintain two separate decisions: what must be read in depth to design correctly,
 ## Final Reference Set
 
 - Rank the eventual paper references from indispensable to optional. Preserve full title, venue, year, DOI/PDF, and the exact sentence/figure/claim each will support.
+""",
+        "09_PAPER_LINKS.md": """# Direct Paper Links
+
+For every paper that enters the evidence ledger, reading plan, or final citation set, record its stable DOI and the direct publisher PDF URL returned by ChipSeeker's `pdf_link` field. Do not use a search-result URL as a substitute. If the corpus has no PDF URL, record the canonical publisher/DOI URL and mark the gap.
+
+| Citation Key | Title | DOI | Direct PDF / Publisher URL | Link Status |
+| --- | --- | --- | --- | --- |
+| [Add key] | [Full title] | [DOI] | [URL] | verified / canonical only / missing |
 """,
     }
 
