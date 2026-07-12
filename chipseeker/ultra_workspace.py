@@ -17,6 +17,7 @@ WORKSPACE_FILES = (
     "06_REFERENCE_LIBRARY.md",
     "08_READING_AND_CITATION_PLAN.md",
     "09_PAPER_LINKS.md",
+    "10_PAPER_IMPORTANCE_REPORT.md",
 )
 
 
@@ -185,6 +186,28 @@ For every paper that enters the evidence ledger, reading plan, or final citation
 | Citation Key | Title | DOI | Direct PDF / Publisher URL | Link Status |
 | --- | --- | --- | --- | --- |
 | [Add key] | [Full title] | [DOI] | [URL] | verified / canonical only / missing |
+""",
+        "10_PAPER_IMPORTANCE_REPORT.md": """# Paper Importance Report
+
+Rate every retained paper from 1 to 5 stars. Write the short explanation in the user's working language (Chinese when the user writes Chinese). A star is importance to the active research decision, not a claim of a paper's general academic quality.
+
+## Rating Scale
+
+- 5 stars: indispensable direct precedent, baseline, or mechanism paper; read in depth and likely cite.
+- 4 stars: strong enabling/transfer paper that materially changes the architecture or validation plan.
+- 3 stars: useful supporting, system, or comparison paper; cite/read selectively.
+- 2 stars: peripheral but potentially useful technique or benchmark.
+- 1 star: retained background, contradictory evidence, or a low-probability idea seed.
+
+## Retained Papers
+
+| Stars | Citation Key | Title | Why It Matters | Decision / Citation Role | DOI | Direct PDF URL |
+| --- | --- | --- | --- | --- | --- | --- |
+| [1-5] | [key] | [full title] | [short user-language explanation] | [direct / enabling / transferable / contradiction] | [DOI] | [URL] |
+
+## Rating Notes
+
+- Re-rate papers whenever the selected architecture or user constraints change. Do not delete a lower-star paper without recording why it was discarded or superseded.
 """,
     }
 
