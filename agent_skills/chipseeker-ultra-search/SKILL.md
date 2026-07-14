@@ -22,11 +22,13 @@ The command returns JSON with a timestamped path under `local_data/ultra_researc
 3. `02_SEARCH_TRACE.md`
 4. `03_EVIDENCE_LEDGER.md`
 5. `04_IDEA_LAB.md`
-6. `08_READING_AND_CITATION_PLAN.md`
-7. `09_PAPER_LINKS.md`
-8. `10_PAPER_IMPORTANCE_REPORT.md`
+6. `07_CIRCUIT_CANDIDATES.md`
+7. `08_READING_AND_CITATION_PLAN.md`
+8. `09_PAPER_LINKS.md`
+9. `10_PAPER_IMPORTANCE_REPORT.md`
+10. `11_IDEA_FEASIBILITY_REVIEW.md`
 
-Update files as facts are learned. Do not defer documentation until the end. Store each raw search response in `queries/R<round>_<facet>.json`, add its reason and result to `02_SEARCH_TRACE.md`, and extract decision-relevant evidence into `03_EVIDENCE_LEDGER.md` immediately. Whenever a paper is retained, copy its full title, DOI, and direct publisher PDF link from the agent JSON's `pdf_link` field into `09_PAPER_LINKS.md`; mark a missing link explicitly rather than silently dropping it. Also update `10_PAPER_IMPORTANCE_REPORT.md` with a 1-5-star importance rating, a short explanation in the user's working language, and its specific decision/citation role.
+Update files as facts are learned. Do not defer documentation until the end. Store each raw search response in `queries/R<round>_<facet>.json`, add its reason and result to `02_SEARCH_TRACE.md`, and extract decision-relevant evidence into `03_EVIDENCE_LEDGER.md` immediately. Whenever a paper is retained, copy its full title, DOI, and direct publisher PDF link from the agent JSON's `pdf_link` field into `09_PAPER_LINKS.md`; mark a missing link explicitly rather than silently dropping it. Also update `10_PAPER_IMPORTANCE_REPORT.md` with a 1-5-star importance rating, a short explanation in the user's working language, and its specific decision/citation role. For each live circuit idea, update `07_CIRCUIT_CANDIDATES.md` and `11_IDEA_FEASIBILITY_REVIEW.md` with its mechanism, comparison baseline, evidence level, novelty, physical plausibility, deadline execution probability, and quickest falsifying simulation.
 
 ## Search Tool
 
@@ -55,7 +57,7 @@ Repeat this loop while material evidence gaps remain. There is no fixed number o
 5. **Read and classify**: Deduplicate by DOI then normalized title. Extract only evidence that affects a design choice, benchmark, or feasibility claim, while preserving the source-field mechanism in `04_IDEA_LAB.md`. Rate every retained paper from 1 to 5 stars in `10_PAPER_IMPORTANCE_REPORT.md`; the rating means importance to the active decision, not generic academic quality.
 6. **Find the missing link**: After each round, ask: Which claim in the proposed architecture is still unsupported? What metric cannot yet be benchmarked? What alternative topology could invalidate the current route? Write the answer and the next query in `01_LIVE_STATUS.md`.
 7. **Branch or converge**: Maintain competing architectures in `04_IDEA_LAB.md`. Search both sides until evidence favors one, identifies a hybrid, or shows that the distinction cannot yet be resolved.
-8. **Synthesize continuously**: Update `05_PAPER_BLUEPRINT.md` as soon as there is evidence for a title, contribution, outline, figure plan, abstract sentence, or benchmarking row. Update `08_READING_AND_CITATION_PLAN.md` after every material paper: distinguish required deep reading from likely paper citations. Keep `09_PAPER_LINKS.md` complete and deduplicated, and keep `10_PAPER_IMPORTANCE_REPORT.md` complete, sorted by importance, and re-rated when the architecture changes. Do not wait for a final report.
+8. **Synthesize continuously**: Update `05_PAPER_BLUEPRINT.md` as soon as there is evidence for a title, contribution, outline, figure plan, abstract sentence, or benchmarking row. Update `08_READING_AND_CITATION_PLAN.md` after every material paper: distinguish required deep reading from likely paper citations. Keep `09_PAPER_LINKS.md` complete and deduplicated, and keep `10_PAPER_IMPORTANCE_REPORT.md` complete, sorted by importance, and re-rated when the architecture changes. Keep `11_IDEA_FEASIBILITY_REVIEW.md` current whenever a circuit route changes: score novelty, physical plausibility, and schedule feasibility separately, record an explicit evidence level, and separate a raw input-referred noise claim from selectivity, integrated-noise, or average-power benefits. Do not wait for a final report.
 
 Do not stop merely because a planned checklist has been completed. Stop active searching only after the closure test below passes, or after recording a specific external limitation that prevents closure.
 
@@ -72,6 +74,7 @@ Call the research loop substantively closed only when all applicable conditions 
 - The literature-to-paper story is coherent enough to draft a title, abstract, contribution statement, figure sequence, and reference library.
 - A ranked reading list and a claim-specific, ranked citation set are present, with full title, DOI, and direct PDF/publisher URL for each required paper.
 - Every retained paper has a user-language 1-5-star importance explanation, direct PDF/publisher URL, and a recorded decision/citation role.
+- Every selected or deferred circuit route has a documented comparison baseline, evidence level, scorecard, and falsifying simulation gate in `11_IDEA_FEASIBILITY_REVIEW.md`.
 
 This is evidence closure, not proof that an IC will work. Never claim experimental feasibility until measured or simulated evidence supports it.
 

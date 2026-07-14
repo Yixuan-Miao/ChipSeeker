@@ -15,9 +15,11 @@ WORKSPACE_FILES = (
     "04_IDEA_LAB.md",
     "05_PAPER_BLUEPRINT.md",
     "06_REFERENCE_LIBRARY.md",
+    "07_CIRCUIT_CANDIDATES.md",
     "08_READING_AND_CITATION_PLAN.md",
     "09_PAPER_LINKS.md",
     "10_PAPER_IMPORTANCE_REPORT.md",
+    "11_IDEA_FEASIBILITY_REVIEW.md",
 )
 
 
@@ -155,6 +157,26 @@ Maintain a deduplicated working bibliography with a short note on why each paper
 | Citation Key | Title | Year | Venue | DOI / PDF | Role | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
 """,
+        "07_CIRCUIT_CANDIDATES.md": """# Circuit Candidates
+
+Keep circuit-level candidates separate from literature notes. For every candidate, state the transistor/passive skeleton, the first-order mechanism, the critical noise/loss/stability paths, and the minimum falsifying simulation.
+
+## Candidate A
+
+- Circuit skeleton:
+- Intended mechanism:
+- Target metric and comparison baseline:
+- Critical assumptions:
+- Fast falsifying simulation:
+
+## Candidate B
+
+- Circuit skeleton:
+- Intended mechanism:
+- Target metric and comparison baseline:
+- Critical assumptions:
+- Fast falsifying simulation:
+""",
         "08_READING_AND_CITATION_PLAN.md": """# Reading And Citation Plan
 
 Maintain two separate decisions: what must be read in depth to design correctly, and what must be cited to support a paper claim. A paper can be essential to read without becoming a central citation, and vice versa.
@@ -208,6 +230,29 @@ Rate every retained paper from 1 to 5 stars. Write the short explanation in the 
 ## Rating Notes
 
 - Re-rate papers whenever the selected architecture or user constraints change. Do not delete a lower-star paper without recording why it was discarded or superseded.
+""",
+        "11_IDEA_FEASIBILITY_REVIEW.md": """# Idea Feasibility Review
+
+Score each live architecture separately from the relevance of its reference papers. Scores are decision aids, not claims of a simulated or measured result.
+
+## Evaluation Rules
+
+- State the exact target, comparison baseline, and evidence level: paper evidence, analytical inference, pre-layout simulation, post-layout simulation, or measurement.
+- Give 1-5 scores for novelty, physical plausibility, and execution probability within the active deadline.
+- Separate a potential raw input-referred `NF/Te` improvement from integrated-noise, gain, selectivity, and average-power benefits.
+- State the quickest simulation that can reject the mechanism. Do not treat a favorable nominal schematic as sufficient evidence.
+
+## Candidate Scorecard
+
+| Candidate | Mechanism | Novelty | Physical plausibility | Deadline execution | Expected benefit | Main falsifier | Decision |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| [A] | [mechanism] | [1-5] | [1-5] | [1-5] | [specific metric] | [simulation] | active / selected / deferred / rejected |
+
+## Gate Results
+
+| Gate | Required result | Actual evidence | Pass / Fail / Pending | Consequence |
+| --- | --- | --- | --- | --- |
+| Device/model | [e.g. valid temperature/noise model] | [evidence] | pending | [what may be claimed] |
 """,
     }
 
