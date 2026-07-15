@@ -97,57 +97,57 @@ Every factual claim must link to one or more papers. Classify a paper by its rol
 | Paper | DOI / PDF | Role | Evidence Extracted | Metrics | Supports / Challenges | Confidence |
 | --- | --- | --- | --- | --- | --- | --- |
 """,
-        "04_IDEA_LAB.md": """# Idea Lab
+        "04_IDEA_LAB.md": """# 想法实验室 / Idea Lab
 
-Keep competing ideas alive until evidence rules them out.
+在证据明确排除某条路线之前，保留相互竞争的想法；说明它们的物理机制、迁移条件和判废标准。
 
-## Candidate Routes
+## 候选路线 / Candidate Routes
 
 ### Route A
 
-- Mechanism:
-- Why it may work:
-- Main risk:
-- Evidence:
+- 机制（Mechanism）：
+- 为什么可能有效：
+- 主要风险：
+- 证据：
 
 ### Route B
 
-- Mechanism:
-- Why it may work:
-- Main risk:
-- Evidence:
+- 机制（Mechanism）：
+- 为什么可能有效：
+- 主要风险：
+- 证据：
 
-## Decisions and Rejected Paths
+## 决策与已排除路线 / Decisions and Rejected Paths
 
-- Record why a route was selected, deferred, or rejected.
+- 记录每条路线被选中、暂缓或排除的原因。
 """,
-        "05_PAPER_BLUEPRINT.md": """# Paper Blueprint
+        "05_PAPER_BLUEPRINT.md": """# 论文蓝图 / Paper Blueprint
 
-Treat all text as a living draft until supported by evidence.
+在得到论文证据或仿真结果之前，所有贡献表述都只是动态草稿，不得写成既成结论。
 
-## Title Candidates
+## 题目候选 / Title Candidates
 
-- [Draft after the contribution is defensible.]
+- [贡献能够被证据支持后再拟题。]
 
-## One-Sentence Contribution
+## 一句话贡献 / One-Sentence Contribution
 
-- [Architecture + key mechanism + validated advantage.]
+- [Architecture + 核心 mechanism + 已验证 advantage。]
 
-## Abstract Draft
+## 摘要草稿 / Abstract Draft
 
-- [Problem, gap, proposed approach, evidence-backed expected contribution, and validation plan.]
+- [问题、研究空缺、方案、证据支持的预期贡献、验证计划。]
 
-## Storyline and Figures
+## 行文逻辑与图片 / Storyline and Figures
 
-1. Problem and literature gap
-2. Architecture and design rationale
-3. Circuit/process implementation
-4. Measurement/simulation plan and benchmarking
-5. Limits and future work
+1. 问题与文献空缺
+2. Architecture 与设计理由
+3. 电路和 process 实现
+4. Measurement/simulation 与 benchmarking
+5. 局限和后续工作
 
-## Benchmarking Table
+## Benchmarking 表
 
-| Work | Process | Temperature | Frequency | Channels | Gain | NF / Tnoise | BW | Power | Transferable Lesson |
+| 工作 | Process | 温度 | 频率 | Channels | Gain | NF / Tnoise | BW | Power | 可迁移结论 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 """,
         "06_REFERENCE_LIBRARY.md": """# Reference Library
@@ -157,49 +157,49 @@ Maintain a deduplicated working bibliography with a short note on why each paper
 | Citation Key | Title | Year | Venue | DOI / PDF | Role | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
 """,
-        "07_CIRCUIT_CANDIDATES.md": """# Circuit Candidates
+        "07_CIRCUIT_CANDIDATES.md": """# 电路候选方案 / Circuit Candidates
 
-Keep circuit-level candidates separate from literature notes. For every candidate, state the transistor/passive skeleton, the first-order mechanism, the critical noise/loss/stability paths, and the minimum falsifying simulation.
+把 transistor-level 候选方案与普通文献笔记分开。每个方案必须写清电路骨架、一阶机理、关键 noise/loss/stability 路径，以及最快的 falsifying simulation。
 
 ## Candidate A
 
-- Circuit skeleton:
-- Intended mechanism:
-- Target metric and comparison baseline:
-- Critical assumptions:
-- Fast falsifying simulation:
+- 电路骨架：
+- 目标机制（Mechanism）：
+- 目标 metric 与 comparison baseline：
+- 关键假设：
+- 最快判废仿真：
 
 ## Candidate B
 
-- Circuit skeleton:
-- Intended mechanism:
-- Target metric and comparison baseline:
-- Critical assumptions:
-- Fast falsifying simulation:
+- 电路骨架：
+- 目标机制（Mechanism）：
+- 目标 metric 与 comparison baseline：
+- 关键假设：
+- 最快判废仿真：
 """,
-        "08_READING_AND_CITATION_PLAN.md": """# Reading And Citation Plan
+        "08_READING_AND_CITATION_PLAN.md": """# 精读与引用计划 / Reading And Citation Plan
 
-Maintain two separate decisions: what must be read in depth to design correctly, and what must be cited to support a paper claim. A paper can be essential to read without becoming a central citation, and vice versa.
+分开维护两个问题：为了正确设计必须精读什么，以及为了支撑论文 claim 必须引用什么。必须精读的论文不一定是核心 citation，反之亦然。
 
-## Must Read In Depth
+## 必须精读 / Must Read In Depth
 
-| Priority | Citation Key / Title | Why Read It | Specific Questions To Answer | Status |
+| 优先级 | Citation Key / Title | 为什么精读 | 必须回答的具体问题 | 状态 |
 | --- | --- | --- | --- | --- |
-| 1 | [Add paper] | [Circuit or device mechanism critical to the chosen route.] | [What exact topology, equations, assumptions, and limits matter?] | unread |
+| 1 | [添加论文] | [对所选路线至关重要的 circuit/device mechanism。] | [需要确认的 topology、equations、assumptions 和 limits。] | unread |
 
-## Citation Candidates
+## 引用候选 / Citation Candidates
 
-| Paper | Claim It Supports | Citation Role | Required Before Citing |
+| Paper | 支撑的 claim | Citation role | 引用前必须确认 |
 | --- | --- | --- | --- |
-| [Add paper] | [Specific factual or novelty claim.] | direct / enabling / transferable / contradictory | [Verify abstract/full text/metric.] |
+| [添加论文] | [具体事实或 novelty claim。] | direct / enabling / transferable / contradictory | [核对 abstract/full text/metric。] |
 
-## Concepts To Clarify With The Researcher
+## 需要和研究者澄清的概念
 
-- [Record misconceptions, missing prerequisites, and the short physical explanation needed before a design decision.]
+- [记录理解偏差、知识缺口，以及设计决策前需要补足的最短物理解释。]
 
-## Final Reference Set
+## 最终 Reference Set
 
-- Rank the eventual paper references from indispensable to optional. Preserve full title, venue, year, DOI/PDF, and the exact sentence/figure/claim each will support.
+- 将最终 references 从不可缺少到可选排序，保留完整 title、venue、year、DOI/PDF，以及它要支撑的具体 sentence/figure/claim。
 """,
         "09_PAPER_LINKS.md": """# Direct Paper Links
 
@@ -209,50 +209,50 @@ For every paper that enters the evidence ledger, reading plan, or final citation
 | --- | --- | --- | --- | --- |
 | [Add key] | [Full title] | [DOI] | [URL] | verified / canonical only / missing |
 """,
-        "10_PAPER_IMPORTANCE_REPORT.md": """# Paper Importance Report
+        "10_PAPER_IMPORTANCE_REPORT.md": """# 论文重要性报告 / Paper Importance Report
 
-Rate every retained paper from 1 to 5 stars. Write the short explanation in the user's working language (Chinese when the user writes Chinese). A star is importance to the active research decision, not a claim of a paper's general academic quality.
+每篇保留论文按 1-5 星评分。解释默认使用中文，论文原题、DOI、metric 和关键技术术语保留英文。星级表示它对当前研究决策的重要性，不代表论文的一般学术水平。
 
-## Rating Scale
+## 评分标准 / Rating Scale
 
-- 5 stars: indispensable direct precedent, baseline, or mechanism paper; read in depth and likely cite.
-- 4 stars: strong enabling/transfer paper that materially changes the architecture or validation plan.
-- 3 stars: useful supporting, system, or comparison paper; cite/read selectively.
-- 2 stars: peripheral but potentially useful technique or benchmark.
-- 1 star: retained background, contradictory evidence, or a low-probability idea seed.
+- 5 星：不可缺少的 direct precedent、baseline 或 mechanism paper，必须精读且大概率引用。
+- 4 星：会实质改变 architecture 或 validation plan 的强 enabling/transfer paper。
+- 3 星：有用的 supporting、system 或 comparison paper，选择性精读和引用。
+- 2 星：边缘但可能有用的 technique 或 benchmark。
+- 1 星：保留的背景、contradictory evidence 或低概率 idea seed。
 
-## Retained Papers
+## 保留论文 / Retained Papers
 
-| Stars | Citation Key | Title | Why It Matters | Decision / Citation Role | DOI | Direct PDF URL |
+| 星级 | Citation Key | Title | 为什么重要 | Decision / Citation Role | DOI | Direct PDF URL |
 | --- | --- | --- | --- | --- | --- | --- |
-| [1-5] | [key] | [full title] | [short user-language explanation] | [direct / enabling / transferable / contradiction] | [DOI] | [URL] |
+| [1-5] | [key] | [full title] | [简短中文解释] | [direct / enabling / transferable / contradiction] | [DOI] | [URL] |
 
-## Rating Notes
+## 评分说明 / Rating Notes
 
-- Re-rate papers whenever the selected architecture or user constraints change. Do not delete a lower-star paper without recording why it was discarded or superseded.
+- selected architecture 或约束变化后重新评分。不要直接删除低星论文，必须记录它被排除或替代的原因。
 """,
-        "11_IDEA_FEASIBILITY_REVIEW.md": """# Idea Feasibility Review
+        "11_IDEA_FEASIBILITY_REVIEW.md": """# Idea 可行性评估报告 / Idea Feasibility Review
 
-Score each live architecture separately from the relevance of its reference papers. Scores are decision aids, not claims of a simulated or measured result.
+把每个 architecture 的可行性评分与参考论文的重要性评分分开。评分用于辅助决策，不表示已经得到 simulation 或 measurement 结果。
 
-## Evaluation Rules
+## 评估规则 / Evaluation Rules
 
-- State the exact target, comparison baseline, and evidence level: paper evidence, analytical inference, pre-layout simulation, post-layout simulation, or measurement.
-- Give 1-5 scores for novelty, physical plausibility, and execution probability within the active deadline.
-- Separate a potential raw input-referred `NF/Te` improvement from integrated-noise, gain, selectivity, and average-power benefits.
-- State the quickest simulation that can reject the mechanism. Do not treat a favorable nominal schematic as sufficient evidence.
+- 写清目标、comparison baseline 和 evidence level：paper evidence、analytical inference、pre-layout simulation、post-layout simulation 或 measurement。
+- 分别给出 novelty、physical plausibility 和 deadline execution probability 的 1-5 分。
+- 严格区分原始 input-referred `NF/Te` 改善与 integrated noise、gain、selectivity、average power 收益。
+- 写清最快能排除该机制的 simulation；漂亮的 nominal schematic 不能单独构成证据。
 
-## Candidate Scorecard
+## 候选方案评分 / Candidate Scorecard
 
-| Candidate | Mechanism | Novelty | Physical plausibility | Deadline execution | Expected benefit | Main falsifier | Decision |
+| Candidate | Mechanism | Novelty | Physical plausibility | Deadline execution | 预期收益 | 主要判废条件 | Decision |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | [A] | [mechanism] | [1-5] | [1-5] | [1-5] | [specific metric] | [simulation] | active / selected / deferred / rejected |
 
-## Gate Results
+## 验证门槛 / Gate Results
 
-| Gate | Required result | Actual evidence | Pass / Fail / Pending | Consequence |
+| Gate | 要求 | 实际证据 | Pass / Fail / Pending | 对结论的影响 |
 | --- | --- | --- | --- | --- |
-| Device/model | [e.g. valid temperature/noise model] | [evidence] | pending | [what may be claimed] |
+| Device/model | [例如有效的 temperature/noise model] | [evidence] | pending | [允许提出的 claim] |
 """,
     }
 

@@ -7,6 +7,12 @@ description: Run a persistent, interactive, evidence-grounded IC research progra
 
 Act as a research partner, not a one-shot search form. Turn each new direction into a durable local research workspace, investigate until the available evidence supports a closed-loop conclusion or exposes a precise unresolved question, and maintain all intermediate reasoning and artifacts so another session can resume without restarting.
 
+## Language And Terminology
+
+When the researcher primarily communicates in Chinese, write all user-facing reports, explanations, decisions, mentoring notes, and paper-planning prose in Chinese by default. Preserve English where it carries technical identity or precision: original paper titles, proper nouns, process/model names, circuit acronyms, metric symbols, equations, API/CLI fields, and established terms such as `noise matching`, `NF/Te`, `Gamma_opt`, `S11`, `current density`, `N-path`, and `noise cancellation`. On first use, prefer a compact Chinese explanation followed by the English term or acronym; do not translate the same term inconsistently.
+
+Raw search JSON, exact source quotations, citation metadata, and machine-facing fields may remain English. At every meaningful checkpoint, consolidate their decision-relevant content into a Chinese report so the researcher never has to read internal English notes to understand the state, evidence, risks, or next action. If the researcher requests another language, follow that request for the relevant artifact.
+
 ## Start Or Resume
 
 For a new direction, create the workspace before running any search:
@@ -87,6 +93,8 @@ Act as a technical research mentor as well as a search agent. When the user stat
 ## Paper Report Delivery
 
 Maintain `10_PAPER_IMPORTANCE_REPORT.md` throughout the project, not only at closure. On the user's request or at a meaningful research checkpoint, present a Markdown report sorted from 5 to 1 stars. For every retained paper include its full title, a short user-language explanation of why it matters, its specific decision/citation role, DOI, and direct PDF/publisher URL. Explain that stars measure relevance to the current research path, not general scholarly prestige. Keep lower-star papers when they document a risk, contradiction, or potential future mechanism.
+
+For a Chinese-speaking researcher, keep paper titles and identifiers in their original English form but write the report title, section headings, explanations, comparisons, conclusions, and next-step recommendations in Chinese. Apply the same policy to `05_PAPER_BLUEPRINT.md`, `07_CIRCUIT_CANDIDATES.md`, `08_READING_AND_CITATION_PLAN.md`, `10_PAPER_IMPORTANCE_REPORT.md`, and `11_IDEA_FEASIBILITY_REVIEW.md`.
 
 When an answer changes a route, record the decision and rationale in `04_IDEA_LAB.md`; revise the brief, benchmark table, and next search gap. Offer concrete alternatives rather than only asking what the user wants.
 
