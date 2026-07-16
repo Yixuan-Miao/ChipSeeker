@@ -1,4 +1,4 @@
 interface:
   display_name: "ChipSeeker Ultra Search"
-  short_description: "Search IC papers precisely with only requested outputs."
-  default_prompt: "Use ChipSeeker Ultra Search to find accurate, high-recall IC literature and create only the folders and files I explicitly request."
+  short_description: "Run recall-first mixed retrieval for complete IC paper sets."
+  default_prompt: "Use ChipSeeker Ultra Search with broad Lite and exact Keyword retrieval, deduplicate first, then title- and abstract-screen for a complete, accurate paper set using only my requested outputs."

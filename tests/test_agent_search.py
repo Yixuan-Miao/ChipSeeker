@@ -1,4 +1,4 @@
-from chipseeker.agent_search import build_response, compact_paper, parse_year_range, run_lite_search
+from chipseeker.agent_search import build_response, compact_paper, parse_year_range, run_keyword_search, run_lite_search
 
 
 class FakeSearcher:
@@ -60,6 +60,78 @@ def test_compact_paper_preserves_llm_evidence():
     item = compact_paper({"title": "Paper", "abstract": "text", "llm_score": 90, "llm_reason": "direct"}, 0.8, 1, 100)
     assert item["llm_score"] == 90
     assert item["llm_reason"] == "direct"
+
+
+def test_compact_paper_supports_title_first_without_abstract():
+    item = compact_paper({"title": "Paper", "abstract": "long abstract"}, 0.8, 1, 0)
+
+    assert item["abstract"] == ""
+    assert item["abstract_truncated"] is True
+
+
+def test_keyword_search_scans_full_corpus_and_reports_match_fields():
+    papers = [
+        {
+            "title": "A Cryogenic InP HEMT Low-Noise Amplifier",
+            "abstract": "The LNA covers C-band.",
+            "authors": ["A. Researcher"],
+            "year": "2024",
+            "venue": "TMTT",
+            "doi": "10.example/inp",
+            "keywords": ["InP", "LNA"],
+        },
+        {
+            "title": "A Cryogenic CMOS Receiver",
+            "abstract": "A receiver is presented.",
+            "authors": ["B. Researcher"],
+            "year": "2024",
+            "venue": "JSSC",
+            "keywords": ["CMOS"],
+        },
+    ]
+
+    response = run_keyword_search(
+        "InP,LNA/low-noise amplifier",
+        db_file="papers.json",
+        top_k=0,
+        fields="title,abstract,authors,keywords",
+        abstract_chars=0,
+        paper_loader=lambda _path: papers,
+    )
+
+    assert response["mode"] == "keyword"
+    assert response["candidate_count"] == 2
+    assert response["matched_count"] == 1
+    assert response["result_count"] == 1
+    assert response["results"][0]["abstract"] == ""
+    assert "title" in response["results"][0]["matched_fields"]
+    assert "keywords" in response["results"][0]["matched_fields"]
+
+
+def test_title_result_view_omits_abstract_and_terms():
+    response = run_keyword_search(
+        "InP,LNA",
+        db_file="papers.json",
+        top_k=0,
+        fields="title,keywords",
+        result_view="titles",
+        paper_loader=lambda _path: [
+            {
+                "title": "An InP LNA",
+                "abstract": "Long detail.",
+                "year": "2024",
+                "keywords": ["InP", "LNA"],
+                "ieee_terms": ["Cryogenics"],
+            }
+        ],
+    )
+
+    paper = response["results"][0]
+    assert response["result_view"] == "titles"
+    assert "abstract" not in paper
+    assert "keywords" not in paper
+    assert "ieee_terms" not in paper
+    assert paper["title"] == "An InP LNA"
 
 
 def test_response_preserves_pro_item_llm_evidence():

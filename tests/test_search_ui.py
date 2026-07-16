@@ -1,4 +1,4 @@
-from chipseeker.search_ui import build_and_groups, filter_search_results, highlight_text
+from chipseeker.search_ui import build_and_groups, filter_search_results, highlight_text, keyword_match_details
 
 
 def analyze_venue(value):
@@ -145,3 +145,21 @@ def test_exact_match_comma_means_and():
     results = filter_search_results(raw_hits, (2020, 2026), [], "adc, calibration", analyze_venue, extract_year)
 
     assert [item["paper"]["title"] for item in results] == ["A SAR ADC With Calibration"]
+
+
+def test_keyword_match_can_target_authors_only():
+    paper = {
+        "title": "A Cryogenic Amplifier",
+        "abstract": "No author name here.",
+        "authors": ["Y. Zeng", "J. Grahn"],
+        "year": "2025",
+        "venue": "TMTT",
+        "keywords": [],
+    }
+
+    match = keyword_match_details(paper, "Grahn", analyze_venue, ["authors"])
+    miss = keyword_match_details(paper, "Grahn", analyze_venue, ["title", "abstract"])
+
+    assert match["matched"] is True
+    assert match["matched_fields"] == ["authors"]
+    assert miss["matched"] is False

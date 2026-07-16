@@ -30,7 +30,8 @@ def test_search_runtime_reorders_cache_when_order_changes(tmp_path):
     write_db(db_file, papers)
 
     DummySearcher.embed_history = []
-    DummySearcher(str(db_file), model_name="all-MiniLM-L6-v2")
+    first_searcher = DummySearcher(str(db_file), model_name="all-MiniLM-L6-v2")
+    first_searcher._ensure_embeddings()
     assert len(DummySearcher.embed_history) == 1
     assert len(DummySearcher.embed_history[0]) == 2
 
@@ -39,6 +40,7 @@ def test_search_runtime_reorders_cache_when_order_changes(tmp_path):
     assert status["cached_papers"] == 2
     assert status["new_papers"] == 0
     searcher = DummySearcher(str(db_file), model_name="all-MiniLM-L6-v2")
+    searcher._ensure_embeddings()
     assert len(DummySearcher.embed_history) == 1
     assert np.array_equal(searcher.eb, np.array([[12.0], [13.0]], dtype=np.float32))
 
@@ -52,7 +54,8 @@ def test_search_runtime_repairs_only_changed_fingerprints(tmp_path):
     write_db(db_file, papers)
 
     DummySearcher.embed_history = []
-    DummySearcher(str(db_file), model_name="all-MiniLM-L6-v2")
+    first_searcher = DummySearcher(str(db_file), model_name="all-MiniLM-L6-v2")
+    first_searcher._ensure_embeddings()
     assert len(DummySearcher.embed_history[0]) == 2
 
     changed_papers = [
@@ -65,6 +68,7 @@ def test_search_runtime_repairs_only_changed_fingerprints(tmp_path):
     assert status["new_papers"] == 1
 
     searcher = DummySearcher(str(db_file), model_name="all-MiniLM-L6-v2")
+    searcher._ensure_embeddings()
     assert DummySearcher.embed_history[-1] == ["Paper B Gamma"]
     assert np.array_equal(searcher.eb, np.array([[13.0], [13.0]], dtype=np.float32))
 
@@ -106,6 +110,7 @@ def test_search_runtime_reuses_legacy_hash_cache_after_database_move(tmp_path):
     assert status["needs_build"] is False
 
     searcher = DummySearcher(str(target_db), model_name="all-MiniLM-L6-v2")
+    searcher._ensure_embeddings()
     assert DummySearcher.embed_history == []
     assert np.array_equal(searcher.eb, embeddings)
 

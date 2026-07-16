@@ -3,6 +3,24 @@ import re
 from chipseeker.scoring import compute_paper_score
 
 
+KEYWORD_SEARCH_FIELDS = (
+    "title",
+    "abstract",
+    "authors",
+    "venue",
+    "year",
+    "keywords",
+    "ieee_terms",
+    "doi",
+)
+
+
+def _keyword_field_text(value):
+    if isinstance(value, (list, tuple, set)):
+        return " ".join(str(item) for item in value if str(item).strip())
+    return str(value or "")
+
+
 def get_paper_id(paper):
     return str(paper.get("doi") or paper.get("paper_key") or paper.get("title", "unknown"))
 
@@ -51,6 +69,86 @@ def required_words_from_query(must_have):
     return required_words
 
 
+def normalize_keyword_fields(fields):
+    aliases = {
+        "author": "authors",
+        "keyword": "keywords",
+        "ieee": "ieee_terms",
+        "terms": "ieee_terms",
+    }
+    normalized = []
+    for field in fields or KEYWORD_SEARCH_FIELDS:
+        field = aliases.get(str(field or "").strip().lower(), str(field or "").strip().lower())
+        if field not in KEYWORD_SEARCH_FIELDS:
+            raise ValueError(
+                f"Unknown keyword field '{field}'. Choose from: {', '.join(KEYWORD_SEARCH_FIELDS)}."
+            )
+        if field not in normalized:
+            normalized.append(field)
+    return normalized
+
+
+def paper_keyword_fields(paper, analyze_venue):
+    authors = paper.get("authors", [])
+    author_str = " ".join(authors) if isinstance(authors, list) else str(authors or "")
+    if not author_str.strip():
+        author_str = f"{paper.get('first_author', '')} {paper.get('last_author', '')}"
+    venue_data = analyze_venue(paper.get("venue", ""))
+    venue_terms = " ".join(
+        [
+            str(paper.get("venue", "")),
+            str(venue_data.get("n", "")),
+            str(venue_data.get("t", "")),
+            " ".join(venue_data.get("d", []) or []),
+        ]
+    )
+    return {
+        "title": str(paper.get("title", "") or ""),
+        "abstract": str(paper.get("abstract", "") or ""),
+        "authors": author_str,
+        "venue": venue_terms,
+        "year": str(paper.get("year", "") or ""),
+        "keywords": _keyword_field_text(paper.get("keywords", [])),
+        "ieee_terms": _keyword_field_text(paper.get("ieee_terms", [])),
+        "doi": str(paper.get("doi", "") or ""),
+    }
+
+
+def keyword_match_details(paper, must_have, analyze_venue, fields=None):
+    and_groups = build_and_groups(must_have)
+    if not and_groups:
+        return {"matched": True, "matched_fields": [], "matched_terms": []}
+
+    selected_fields = normalize_keyword_fields(fields)
+    field_text = paper_keyword_fields(paper, analyze_venue)
+    normalized = {
+        field: re.sub(r"[^a-z0-9+]+", " ", field_text[field].lower())
+        for field in selected_fields
+    }
+    matched_fields = set()
+    matched_terms = []
+    for group in and_groups:
+        group_match = None
+        for term in group:
+            term_fields = [
+                field
+                for field in selected_fields
+                if term_matches(term, field_text[field].lower(), normalized[field])
+            ]
+            if term_fields:
+                group_match = {"term": term, "fields": term_fields}
+                matched_fields.update(term_fields)
+                break
+        if group_match is None:
+            return {"matched": False, "matched_fields": [], "matched_terms": []}
+        matched_terms.append(group_match)
+    return {
+        "matched": True,
+        "matched_fields": [field for field in selected_fields if field in matched_fields],
+        "matched_terms": matched_terms,
+    }
+
+
 def filter_search_results(raw_hits, selected_years, selected_ui_venues, must_have, analyze_venue, extract_year):
     filtered_results = []
     and_groups = build_and_groups(must_have)
@@ -67,25 +165,8 @@ def filter_search_results(raw_hits, selected_years, selected_ui_venues, must_hav
             if parsed_venue not in selected_ui_venues:
                 continue
 
-        if and_groups:
-            authors = paper.get("authors", [])
-            author_str = " ".join(authors) if isinstance(authors, list) else str(authors or "")
-            if not author_str.strip():
-                author_str = f"{paper.get('first_author', '')} {paper.get('last_author', '')}"
-            keyword_str = " ".join(paper.get("keywords", []))
-            ieee_terms = " ".join(paper.get("ieee_terms", []))
-            venue_terms = " ".join(
-                [
-                    str(paper.get("venue", "")),
-                    str(venue_data.get("n", "")),
-                    str(venue_data.get("t", "")),
-                    " ".join(venue_data.get("d", []) or []),
-                ]
-            )
-            corpus = f"{paper.get('title', '')} {paper.get('abstract', '')} {author_str} {venue_terms} {paper.get('year', '')} {keyword_str} {ieee_terms}".lower()
-            normalized_corpus = re.sub(r"[^a-z0-9+]+", " ", corpus)
-            if not all(any(term_matches(word, corpus, normalized_corpus) for word in or_words) for or_words in and_groups):
-                continue
+        if and_groups and not keyword_match_details(paper, must_have, analyze_venue)["matched"]:
+            continue
 
         filtered_results.append(item)
 
