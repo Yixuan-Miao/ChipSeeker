@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create or inspect a persistent private Ultra Search research workspace."""
+"""Create or inspect a minimal private Ultra Search workspace."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from chipseeker.ultra_workspace import create_workspace, workspace_status
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Manage persistent local Ultra Search research workspaces.")
     subparsers = parser.add_subparsers(dest="command", required=True)
-    create_parser = subparsers.add_parser("create", help="Create a timestamped workspace for a new research direction.")
+    create_parser = subparsers.add_parser("create", help="Create an empty timestamped workspace.")
     create_parser.add_argument("--direction", required=True)
     create_parser.add_argument("--root", default=str(Path(DATA_DIR) / "ultra_research"))
     status_parser = subparsers.add_parser("status", help="Check an existing research workspace.")
