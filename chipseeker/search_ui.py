@@ -1,24 +1,15 @@
 import re
 
-from chipseeker.scoring import compute_paper_score
-
-
-KEYWORD_SEARCH_FIELDS = (
-    "title",
-    "abstract",
-    "authors",
-    "venue",
-    "year",
-    "keywords",
-    "ieee_terms",
-    "doi",
+from chipseeker.keyword_search import (
+    KEYWORD_SEARCH_FIELDS,
+    build_structured_query,
+    match_paper,
+    normalize_keyword_fields,
+    normalize_search_text,
+    parse_legacy_groups,
+    term_matches_normalized,
 )
-
-
-def _keyword_field_text(value):
-    if isinstance(value, (list, tuple, set)):
-        return " ".join(str(item) for item in value if str(item).strip())
-    return str(value or "")
+from chipseeker.scoring import compute_paper_score
 
 
 def get_paper_id(paper):
@@ -52,14 +43,7 @@ def highlight_text(text, keywords):
 
 
 def build_and_groups(must_have):
-    and_groups = []
-    if must_have:
-        for group in re.split(r"\s*(?:,|&|\band\b)\s*", must_have, flags=re.IGNORECASE):
-            raw_words = [word.strip().lower().strip('"') for word in re.split(r"\s*/\s*", group) if word.strip()]
-            or_words = raw_words
-            if or_words:
-                and_groups.append(list(dict.fromkeys(or_words)))
-    return and_groups
+    return parse_legacy_groups(must_have)
 
 
 def required_words_from_query(must_have):
@@ -69,84 +53,13 @@ def required_words_from_query(must_have):
     return required_words
 
 
-def normalize_keyword_fields(fields):
-    aliases = {
-        "author": "authors",
-        "keyword": "keywords",
-        "ieee": "ieee_terms",
-        "terms": "ieee_terms",
-    }
-    normalized = []
-    for field in fields or KEYWORD_SEARCH_FIELDS:
-        field = aliases.get(str(field or "").strip().lower(), str(field or "").strip().lower())
-        if field not in KEYWORD_SEARCH_FIELDS:
-            raise ValueError(
-                f"Unknown keyword field '{field}'. Choose from: {', '.join(KEYWORD_SEARCH_FIELDS)}."
-            )
-        if field not in normalized:
-            normalized.append(field)
-    return normalized
-
-
-def paper_keyword_fields(paper, analyze_venue):
-    authors = paper.get("authors", [])
-    author_str = " ".join(authors) if isinstance(authors, list) else str(authors or "")
-    if not author_str.strip():
-        author_str = f"{paper.get('first_author', '')} {paper.get('last_author', '')}"
-    venue_data = analyze_venue(paper.get("venue", ""))
-    venue_terms = " ".join(
-        [
-            str(paper.get("venue", "")),
-            str(venue_data.get("n", "")),
-            str(venue_data.get("t", "")),
-            " ".join(venue_data.get("d", []) or []),
-        ]
-    )
-    return {
-        "title": str(paper.get("title", "") or ""),
-        "abstract": str(paper.get("abstract", "") or ""),
-        "authors": author_str,
-        "venue": venue_terms,
-        "year": str(paper.get("year", "") or ""),
-        "keywords": _keyword_field_text(paper.get("keywords", [])),
-        "ieee_terms": _keyword_field_text(paper.get("ieee_terms", [])),
-        "doi": str(paper.get("doi", "") or ""),
-    }
-
-
 def keyword_match_details(paper, must_have, analyze_venue, fields=None):
-    and_groups = build_and_groups(must_have)
-    if not and_groups:
-        return {"matched": True, "matched_fields": [], "matched_terms": []}
-
-    selected_fields = normalize_keyword_fields(fields)
-    field_text = paper_keyword_fields(paper, analyze_venue)
-    normalized = {
-        field: re.sub(r"[^a-z0-9+]+", " ", field_text[field].lower())
-        for field in selected_fields
-    }
-    matched_fields = set()
-    matched_terms = []
-    for group in and_groups:
-        group_match = None
-        for term in group:
-            term_fields = [
-                field
-                for field in selected_fields
-                if term_matches(term, field_text[field].lower(), normalized[field])
-            ]
-            if term_fields:
-                group_match = {"term": term, "fields": term_fields}
-                matched_fields.update(term_fields)
-                break
-        if group_match is None:
-            return {"matched": False, "matched_fields": [], "matched_terms": []}
-        matched_terms.append(group_match)
-    return {
-        "matched": True,
-        "matched_fields": [field for field in selected_fields if field in matched_fields],
-        "matched_terms": matched_terms,
-    }
+    return match_paper(
+        paper,
+        build_structured_query(must_have),
+        analyze_venue,
+        fields,
+    )
 
 
 def filter_search_results(raw_hits, selected_years, selected_ui_venues, must_have, analyze_venue, extract_year):
@@ -174,16 +87,7 @@ def filter_search_results(raw_hits, selected_years, selected_ui_venues, must_hav
 
 
 def term_matches(term, corpus, normalized_corpus=None):
-    term = str(term or "").strip().lower()
-    if not term:
-        return False
-    normalized_corpus = normalized_corpus or re.sub(r"[^a-z0-9+]+", " ", corpus.lower())
-    normalized_term = re.sub(r"[^a-z0-9+]+", " ", term).strip()
-    if not normalized_term:
-        return False
-    if " " in normalized_term:
-        return f" {normalized_term} " in f" {normalized_corpus} "
-    return re.search(r"\b" + re.escape(normalized_term) + r"\b", normalized_corpus) is not None
+    return term_matches_normalized(term, normalized_corpus or normalize_search_text(corpus))
 
 
 def result_bucket_counts(results, search_query):

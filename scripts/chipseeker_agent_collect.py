@@ -19,29 +19,56 @@ from chipseeker.agent_search import (
     parse_keyword_fields,
     parse_venues,
     parse_year_range,
+    run_filtered_lite_searches,
     run_keyword_search,
-    run_lite_search,
+    run_lite_searches,
     run_pro_search,
 )
 from chipseeker.config_store import load_app_config
+from chipseeker.keyword_search import KeywordSearchIndex
 from chipseeker.paths import CONFIG_FILE, DB_FILE, EXAMPLE_CONFIG_FILE, LEGACY_CONFIG_FILE
+from chipseeker.utils import extract_year
+from chipseeker.venue_data import analyze_venue
+from search_runtime import PaperSearcher
 
 
 def build_parser():
     parser = argparse.ArgumentParser(description="Collect and deduplicate multiple ChipSeeker searches.")
     parser.add_argument("--lite-query", action="append", default=[], help="Repeat for broad semantic recall.")
     parser.add_argument("--keyword-query", action="append", default=[], help="Repeat for exact AND/OR recall.")
+    parser.add_argument(
+        "--filtered-lite-query",
+        action="append",
+        default=[],
+        help="Repeat for semantic ranking inside one shared hard-filtered subset.",
+    )
     parser.add_argument("--pro-query", action="append", default=[], help="Repeat only for focused LLM reranking.")
     parser.add_argument("--lite-top-k", type=int, default=200)
     parser.add_argument("--keyword-top-k", type=int, default=0, help="0 returns every exact match.")
     parser.add_argument("--pro-top-k", type=int, default=30)
     parser.add_argument("--fields", default="", help="Fields used by every keyword query.")
+    parser.add_argument(
+        "--keyword-expression",
+        default="",
+        help="Hard expression shared by structured keyword and filtered-lite searches.",
+    )
+    parser.add_argument("--all-term", action="append", default=[])
+    parser.add_argument("--any-term", action="append", default=[])
+    parser.add_argument("--exact-title", action="append", default=[])
+    parser.add_argument("--doi", action="append", default=[])
+    parser.add_argument("--author", action="append", default=[])
     parser.add_argument("--years", default="")
     parser.add_argument("--venue", action="append", default=[])
     parser.add_argument("--embedding-model", default="")
     parser.add_argument("--llm-model", default="")
     parser.add_argument("--rerank-limit", type=int, default=30)
     parser.add_argument("--timeout-seconds", type=int, default=300)
+    parser.add_argument(
+        "--query-workers",
+        type=int,
+        default=4,
+        help="Concurrent remote embedding requests; local models still use one batch.",
+    )
     parser.add_argument(
         "--abstract-chars",
         type=int,
@@ -67,8 +94,22 @@ def write_json(payload, output_path=""):
 
 def main(argv=None):
     args = build_parser().parse_args(argv)
-    if not (args.lite_query or args.keyword_query or args.pro_query):
-        write_json({"schema": "chipseeker-agent-collect/v1", "error": "At least one query is required."}, args.output)
+    has_structured_query = bool(
+        args.keyword_expression
+        or args.all_term
+        or args.any_term
+        or args.exact_title
+        or args.doi
+        or args.author
+    )
+    if not (
+        args.lite_query
+        or args.keyword_query
+        or args.filtered_lite_query
+        or args.pro_query
+        or has_structured_query
+    ):
+        write_json({"schema": "chipseeker-agent-collect/v2", "error": "At least one query is required."}, args.output)
         return 1
 
     try:
@@ -79,10 +120,33 @@ def main(argv=None):
         embedding_model = args.embedding_model or config["embedding_model"]
         responses = []
         with contextlib.redirect_stdout(sys.stderr):
-            for query in args.lite_query:
-                responses.append(
-                    run_lite_search(
-                        query,
+            needs_papers = bool(
+                args.keyword_query
+                or args.filtered_lite_query
+                or has_structured_query
+                or args.lite_query
+            )
+            papers = None
+            keyword_index = None
+            searcher = None
+            if needs_papers:
+                with open(DB_FILE, "r", encoding="utf-8") as handle:
+                    papers = json.load(handle)
+            if args.keyword_query or args.filtered_lite_query or has_structured_query:
+                keyword_index = KeywordSearchIndex(papers, analyze_venue, extract_year)
+            if args.lite_query or args.filtered_lite_query:
+                searcher = PaperSearcher(
+                    DB_FILE,
+                    model_name=embedding_model,
+                    api_key=config.get("emb_api_key", ""),
+                    papers_override=papers,
+                    scope_key="all",
+                )
+
+            if args.lite_query:
+                responses.extend(
+                    run_lite_searches(
+                        args.lite_query,
                         db_file=DB_FILE,
                         embedding_model=embedding_model,
                         embedding_api_key=config.get("emb_api_key", ""),
@@ -91,12 +155,21 @@ def main(argv=None):
                         venues=venues,
                         abstract_chars=args.abstract_chars,
                         result_view=args.result_view,
+                        searcher=searcher,
+                        query_workers=args.query_workers,
                     )
                 )
-            for query in args.keyword_query:
+            keyword_queries = list(args.keyword_query)
+            if has_structured_query and not keyword_queries and not args.filtered_lite_query:
+                keyword_queries.append("")
+            for query in keyword_queries:
                 responses.append(
                     run_keyword_search(
-                        query,
+                        ",".join(
+                            value
+                            for value in (query.strip(), args.keyword_expression.strip())
+                            if value
+                        ),
                         db_file=DB_FILE,
                         top_k=args.keyword_top_k,
                         selected_years=years,
@@ -104,6 +177,36 @@ def main(argv=None):
                         fields=fields,
                         abstract_chars=args.abstract_chars,
                         result_view=args.result_view,
+                        keyword_index=keyword_index,
+                        all_terms=args.all_term,
+                        any_terms=args.any_term,
+                        exact_titles=args.exact_title,
+                        dois=args.doi,
+                        authors=args.author,
+                    )
+                )
+            if args.filtered_lite_query:
+                responses.extend(
+                    run_filtered_lite_searches(
+                        args.filtered_lite_query,
+                        db_file=DB_FILE,
+                        embedding_model=embedding_model,
+                        embedding_api_key=config.get("emb_api_key", ""),
+                        top_k=args.lite_top_k,
+                        selected_years=years,
+                        venues=venues,
+                        fields=fields,
+                        abstract_chars=args.abstract_chars,
+                        result_view=args.result_view,
+                        searcher=searcher,
+                        keyword_index=keyword_index,
+                        expression=args.keyword_expression,
+                        all_terms=args.all_term,
+                        any_terms=args.any_term,
+                        exact_titles=args.exact_title,
+                        dois=args.doi,
+                        authors=args.author,
+                        query_workers=args.query_workers,
                     )
                 )
             for query in args.pro_query:
@@ -127,7 +230,7 @@ def main(argv=None):
                 )
         response = merge_search_responses(responses)
     except Exception as exc:
-        write_json({"schema": "chipseeker-agent-collect/v1", "error": str(exc)}, args.output)
+        write_json({"schema": "chipseeker-agent-collect/v2", "error": str(exc)}, args.output)
         return 1
 
     write_json(response, args.output)

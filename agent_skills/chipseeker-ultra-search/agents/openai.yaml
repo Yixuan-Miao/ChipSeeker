@@ -1,4 +1,4 @@
 interface:
   display_name: "ChipSeeker Ultra Search"
-  short_description: "Run recall-first mixed retrieval for complete IC paper sets."
-  default_prompt: "Use ChipSeeker Ultra Search with broad Lite and exact Keyword retrieval, deduplicate first, then title- and abstract-screen for a complete, accurate paper set using only my requested outputs."
+  short_description: "Run structured, recall-first IC literature searches."
+  default_prompt: "Use ChipSeeker Ultra Search to batch semantic and structured local retrieval, preserve separate publications and work families, and continue until evidence saturation using only my requested deliverables."

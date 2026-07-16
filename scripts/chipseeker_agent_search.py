@@ -18,6 +18,7 @@ from chipseeker.agent_search import (
     parse_keyword_fields,
     parse_venues,
     parse_year_range,
+    run_filtered_lite_search,
     run_keyword_search,
     run_lite_search,
     run_pro_search,
@@ -28,10 +29,20 @@ from chipseeker.paths import CONFIG_FILE, DB_FILE, EXAMPLE_CONFIG_FILE, LEGACY_C
 
 def build_parser():
     parser = argparse.ArgumentParser(description="Run ChipSeeker for a coding agent and print JSON to stdout.")
-    parser.add_argument("--query", required=True, help="Natural-language query, or an exact expression in keyword mode.")
-    parser.add_argument("--mode", choices=("lite", "pro", "keyword"), default="lite")
+    parser.add_argument("--query", default="", help="Natural-language query, or a legacy expression in keyword mode.")
+    parser.add_argument("--mode", choices=("lite", "pro", "keyword", "filtered-lite"), default="lite")
     parser.add_argument("--top-k", type=int, default=50)
     parser.add_argument("--must-have", default="", help="Optional exact filter. Use / for OR and commas for AND.")
+    parser.add_argument(
+        "--keyword-expression",
+        default="",
+        help="Legacy AND/OR expression used as the hard prefilter in filtered-lite mode.",
+    )
+    parser.add_argument("--all-term", action="append", default=[], help="Required literal term. Repeat for AND.")
+    parser.add_argument("--any-term", action="append", default=[], help="Alternative literal term. Repeat for OR.")
+    parser.add_argument("--exact-title", action="append", default=[], help="Exact normalized title selector.")
+    parser.add_argument("--doi", action="append", default=[], help="Exact DOI selector; DOI slashes remain literal.")
+    parser.add_argument("--author", action="append", default=[], help="Author selector. Repeat for alternatives.")
     parser.add_argument(
         "--fields",
         default="",
@@ -73,7 +84,13 @@ def main(argv=None):
         with contextlib.redirect_stdout(sys.stderr):
             if args.mode == "keyword":
                 keyword_query = ",".join(
-                    value for value in (args.query.strip(), args.must_have.strip()) if value
+                    value
+                    for value in (
+                        args.query.strip(),
+                        args.keyword_expression.strip(),
+                        args.must_have.strip(),
+                    )
+                    if value
                 )
                 response = run_keyword_search(
                     keyword_query,
@@ -84,6 +101,30 @@ def main(argv=None):
                     fields=parse_keyword_fields(args.fields),
                     abstract_chars=args.abstract_chars,
                     result_view=args.result_view,
+                    all_terms=args.all_term,
+                    any_terms=args.any_term,
+                    exact_titles=args.exact_title,
+                    dois=args.doi,
+                    authors=args.author,
+                )
+            elif args.mode == "filtered-lite":
+                response = run_filtered_lite_search(
+                    args.query,
+                    db_file=DB_FILE,
+                    embedding_model=embedding_model,
+                    embedding_api_key=config.get("emb_api_key", ""),
+                    top_k=args.top_k,
+                    selected_years=years,
+                    venues=venues,
+                    fields=parse_keyword_fields(args.fields),
+                    abstract_chars=args.abstract_chars,
+                    result_view=args.result_view,
+                    expression=args.keyword_expression or args.must_have,
+                    all_terms=args.all_term,
+                    any_terms=args.any_term,
+                    exact_titles=args.exact_title,
+                    dois=args.doi,
+                    authors=args.author,
                 )
             elif args.mode == "lite":
                 response = run_lite_search(

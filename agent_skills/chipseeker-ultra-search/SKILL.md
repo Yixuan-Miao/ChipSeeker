@@ -1,157 +1,188 @@
 ---
 name: chipseeker-ultra-search
-description: Use ChipSeeker to perform precise, high-recall literature searches and create only the folders and deliverables explicitly requested by the user. Use for literature censuses, idea validation, paper lists, technology comparisons, and persistent search workspaces.
+description: Use ChipSeeker for precise, high-recall IC literature censuses, idea validation, technology comparisons, work-family expansion, and persistent paper-search workspaces. Execute fresh local searches, preserve evidence and links, and create only deliverables explicitly requested by the user.
 ---
 
 # ChipSeeker Ultra Search
 
-Use ChipSeeker as the literature engine. Follow the user's requested scope and output structure exactly. Do not generate generic research templates, idea reports, paper blueprints, status files, or extra Markdown unless the user explicitly asks for them.
+Use `F:\Papers_Embedding\SearchPaperByEmbedding-main` as the literature engine. Follow the requested scope and output structure exactly. Do not create generic briefs, query diaries, idea canvases, paper blueprints, or empty Markdown placeholders.
 
-Every literature task must execute fresh ChipSeeker searches for the current request. Do not claim that ChipSeeker was used when relying only on old output files, memory, general web search, or hand-written candidate lists. External publisher and author pages may verify metadata or a suspected corpus gap, but they do not replace the required ChipSeeker retrieval pass.
+Every task must execute fresh ChipSeeker queries. Memory, old result files, and web search do not count as running ChipSeeker.
 
-## Create A Workspace
+## Workspace
 
-For a new task, create only an empty timestamped folder:
+For a new persistent task, create only the timestamped root:
 
 ```powershell
 & .\.venv\Scripts\python.exe .\scripts\chipseeker_ultra_workspace.py create --direction "<direction>"
 ```
 
-After creation, add only the folders and files named or clearly required by the user. Search scratch files should be temporary and must not remain in the final workspace unless the user requests raw results.
+Add only folders and files requested or required for the stated deliverable. Keep scratch JSON in a temporary location unless raw results were requested. Do not write deliverables until papers have been retained.
 
-Do not create deliverable files before there are retained papers to write. If the first searches return no usable papers, broaden and reformulate the ChipSeeker queries instead of filling the workspace with empty placeholders or workflow documents.
+## Retrieval Strategy
 
-## Search With ChipSeeker
+Optimize candidate generation for recall, then recover precision through deduplication, title triage, abstract review, and work-family auditing.
 
-Optimize the first phase for recall, not immediate proof. Start searching quickly with a fan-out of short queries instead of spending a long time designing one perfect query.
+### 1. Fan out semantic queries in one parallel pass
 
-Use `lite` repeatedly for semantic variants:
-
-```powershell
-& .\.venv\Scripts\python.exe .\scripts\chipseeker_agent_search.py --mode lite --query "<query>" --top-k 200 --abstract-chars 0 --result-view titles
-```
-
-Use `keyword` to scan the full corpus without embeddings. Commas mean AND; slashes mean OR. Restrict fields when searching an author, exact title, or DOI:
-
-```powershell
-& .\.venv\Scripts\python.exe .\scripts\chipseeker_agent_search.py --mode keyword --query "InP,LNA/low-noise amplifier" --top-k 0 --abstract-chars 0 --result-view titles
-& .\.venv\Scripts\python.exe .\scripts\chipseeker_agent_search.py --mode keyword --query "J. Grahn" --fields authors --top-k 0 --abstract-chars 0 --result-view titles
-```
-
-For the normal high-recall first pass, run several Lite and Keyword queries in one command and deduplicate them automatically:
+Use the collector for several short, materially different Lite queries. It loads the corpus once, executes remote query embeddings concurrently, and keeps local-model queries in one batch:
 
 ```powershell
 & .\.venv\Scripts\python.exe .\scripts\chipseeker_agent_collect.py `
   --lite-query "cryogenic InP 4-8 GHz LNA" `
   --lite-query "cryogenic InP low-noise amplifier" `
-  --lite-query "cryogenic C-band LNA qubit readout radio astronomy" `
-  --keyword-query "InP,LNA/low-noise amplifier" `
-  --keyword-query "cryogenic,InP,LNA/low-noise amplifier" `
-  --lite-top-k 200 --keyword-top-k 0 --abstract-chars 0 --result-view titles `
-  --output "$env:TEMP\chipseeker_candidate_union.json" | Out-Null
+  --lite-query "C-band cryogenic receiver LNA qubit readout radio astronomy" `
+  --lite-top-k 200 --abstract-chars 0 --result-view titles `
+  --output "$env:TEMP\chipseeker_union.json" | Out-Null
 ```
 
-The collector deduplicates by DOI, then normalized title, and records every query that retrieved each paper. Save large unions to a temporary JSON file and inspect structured title fields rather than printing the whole result into model context. Use `pro` only after the candidate pool exists, for a focused ambiguous subset, terminology expansion, or reranking where the LLM adds value:
+Cover distinct query families when relevant:
+
+- direct specification;
+- broader technology + circuit;
+- acronym and expanded terminology;
+- device/process variants;
+- application language;
+- circuit mechanism or architecture;
+- author, venue, and work-family clues discovered during search.
+
+Do not generate many cosmetic rewrites. The collector reports `query_family_count`, per-search `new_unique_count`, and a `saturation` signal so repeated variants do not masquerade as independent evidence.
+
+### 2. Use structured literal search
+
+Use structured selectors for exact identity and hard constraints. Never encode a DOI or exact title inside slash-delimited query syntax.
 
 ```powershell
-& .\.venv\Scripts\python.exe .\scripts\chipseeker_agent_search.py --mode pro --query "<focused ambiguity>" --top-k 30 --rerank-limit 30
+# AND constraints
+& .\.venv\Scripts\python.exe .\scripts\chipseeker_agent_search.py `
+  --mode keyword --all-term InP --all-term LNA `
+  --fields title,abstract,keywords,ieee_terms --top-k 0 `
+  --abstract-chars 0 --result-view titles
+
+# OR synonyms
+& .\.venv\Scripts\python.exe .\scripts\chipseeker_agent_search.py `
+  --mode keyword --all-term InP `
+  --any-term LNA --any-term "low-noise amplifier" `
+  --top-k 0 --abstract-chars 0 --result-view titles
+
+# Author, exact title, or DOI
+& .\.venv\Scripts\python.exe .\scripts\chipseeker_agent_search.py --mode keyword --author "J. Grahn" --fields authors --top-k 0
+& .\.venv\Scripts\python.exe .\scripts\chipseeker_agent_search.py --mode keyword --exact-title "<title>" --top-k 0
+& .\.venv\Scripts\python.exe .\scripts\chipseeker_agent_search.py --mode keyword --doi "10.1109/TMTT.2025.1234567" --top-k 0
 ```
 
-The coding agent owns inclusion decisions. Never accept or reject a paper solely because Lite similarity, Keyword rank, or Pro reranking is high or low.
+`--all-term` is repeated AND. `--any-term` is one OR group. Repeated `--exact-title` and `--doi` form an identity OR group. Repeated `--author` matches any listed author. Unicode normalization handles common diacritics and unit symbols such as `Rücker/Rucker` and `μW/uW`.
 
-## Precision And Recall Protocol
+Legacy comma-AND/slash-OR expressions remain available for generic terms only.
 
-Use a recall-first funnel.
+### 3. Choose semantic-first or hard-prefiltered semantic search
 
-### 1. Separate hard constraints from useful relaxations
+Use semantic-first Lite by default. It is usually faster and avoids excluding a useful paper whose title or abstract omits one literal term.
 
-Identify what must be true and what may be broadened. For an LNA census, the final paper must contain an LNA as the primary circuit or as a separately described, useful block. A receiver, mixer, or readout-system paper may remain when its LNA is characterized or technically informative.
-
-Treat frequency boundaries as relevance labels rather than brittle exclusions unless the user demands an exact band:
-
-- retain full-band matches;
-- retain wider bands containing the target;
-- retain positive-width partial overlaps such as 4-6 GHz for a 4-8 GHz request;
-- optionally retain a close adjacent band only when its mechanism is clearly useful, labeled `adjacent_useful`;
-- exclude endpoint-only contact unless there is another concrete reason to retain it.
-
-Technology, cryogenic operation, and the existence of a relevant LNA still require evidence. Do not infer them from similarity alone.
-
-### 2. Build a large candidate union
-
-Fan out across:
-
-- the full direct phrase;
-- technology + circuit without frequency;
-- cryogenic circuit without technology, then exact-filter technology;
-- acronyms and expanded names;
-- application language such as qubit readout, radio astronomy, SIS IF, C-band, receiver, front end, and multiplexed readout;
-- process names, device names, authors, venues, and years discovered during search.
-
-Use high `top-k` values and tolerate false positives in this temporary pool. Missing a paper is more costly than admitting an extra candidate at this stage.
-
-### 3. Deduplicate before reading
-
-Union every search result, deduplicate by DOI and then normalized title, and preserve all retrieval sources. Link conference and journal variants as one work family without deleting either publication.
-
-### 4. Triage titles first
-
-Use `--abstract-chars 0`. Remove only titles that are obviously outside the requested circuit, technology, temperature regime, or useful frequency neighborhood. Keep uncertain titles. Never reject a candidate merely because the title omits temperature, process, frequency, or the LNA details that may appear in the abstract.
-
-### 5. Read abstracts only for survivors and uncertain cases
-
-Retrieve full abstracts by exact title or DOI. Join several uncertain titles or DOIs with `/` to hydrate them in one full-corpus scan:
+Use `filtered-lite` when a literal constraint is truly mandatory and selective, or when a relevant paper may sit outside the global semantic top 2000:
 
 ```powershell
-& .\.venv\Scripts\python.exe .\scripts\chipseeker_agent_search.py --mode keyword --query "<title 1>/<title 2>/<DOI 3>" --fields title,doi --top-k 0 --abstract-chars 4000 --result-view standard
+& .\.venv\Scripts\python.exe .\scripts\chipseeker_agent_search.py `
+  --mode filtered-lite --query "cryogenic amplifier for qubit readout" `
+  --all-term InP --any-term LNA --any-term "low-noise amplifier" `
+  --top-k 200 --abstract-chars 0 --result-view titles
 ```
 
-Classify each survivor as `direct`, `superset`, `partial_overlap`, `adjacent_useful`, `receiver_with_lna`, `simulation_only`, or `exclude`. The final list may be broad, but every label must be accurate.
+This scans the full corpus for the structured constraints, then performs semantic ranking only inside that subset. If the literal subset is huge or the constraint may be absent from metadata, keep semantic-first and filter after retrieval.
 
-### 6. Reverse-audit work families
+The collector can batch this mode with repeated `--filtered-lite-query` and one shared set of structured constraints.
 
-For every important cluster:
+### 4. Use Pro selectively
 
-- hard-search the exact title and DOI;
-- hard-search all authors, especially recurring first and last authors;
-- search the process/device name and distinctive circuit phrase;
-- find conference precursors, journal extensions, and later follow-up papers;
-- inspect benchmark/reference tables in the newest strong papers and search every plausible cited work by exact title or DOI.
+Use Pro after a candidate pool exists, for focused terminology expansion, ambiguity resolution, or reranking:
 
-Use author search as a discovery tool, not merely metadata verification. A known author often reveals differently titled papers that semantic ranking misses.
+```powershell
+& .\.venv\Scripts\python.exe .\scripts\chipseeker_agent_search.py `
+  --mode pro --query "<focused ambiguity>" --top-k 30 --rerank-limit 30
+```
 
-### 7. Search to evidence saturation
+Do not use Pro as the only census pass. The coding agent owns inclusion decisions.
 
-Do not stop because a fixed number of rounds was completed. Continue until materially different semantic queries, exact technology/circuit queries, and author/work-family reverse audits stop adding new in-scope candidates. If a suspected paper is absent from the local corpus, verify it from an authoritative source and label it `corpus_gap`.
+## Recall Funnel
 
-Record exclusions only when the user requests an audit; otherwise keep them out of the deliverable.
+### Build a broad union
+
+Use high Lite `top-k` values and tolerate temporary false positives. For frequency ranges, retain full-band, containing-band, and positive-width partial-overlap papers. Keep adjacent-band work only when the mechanism is useful and label it.
+
+A receiver or system paper may remain when the target circuit is separately described or characterized. Technology, temperature, and circuit existence still require evidence.
+
+### Deduplicate publications safely
+
+The collector merges matching DOI records. It may merge a DOI-missing record with the same normalized title and year. It never merges two nonempty different DOIs merely because titles match.
+
+Conference, journal, and follow-up publications remain separate records and receive `work_family_id` links. Use `retrieval_family_count` rather than raw `retrieval_count` as stronger evidence: five near-duplicate queries are not five independent confirmations.
+
+### Triage titles before abstracts
+
+Start with `--abstract-chars 0 --result-view titles`. Remove only obvious false positives. Keep uncertain titles when technology, temperature, band, or block-level details may appear only in the abstract.
+
+Hydrate survivors with repeated structured identity selectors:
+
+```powershell
+& .\.venv\Scripts\python.exe .\scripts\chipseeker_agent_search.py `
+  --mode keyword `
+  --exact-title "<title 1>" --exact-title "<title 2>" `
+  --doi "<doi 3>" `
+  --top-k 0 --abstract-chars 4000 --result-view standard
+```
+
+Classify retained papers accurately, for example `direct`, `superset`, `partial_overlap`, `adjacent_useful`, `receiver_with_lna`, `simulation_only`, or `exclude`.
+
+### Expand work families
+
+For each important seed, use the formal family interface:
+
+```powershell
+& .\.venv\Scripts\python.exe .\scripts\chipseeker_agent_expand_family.py `
+  --doi "<seed DOI>" --semantic-top-k 200 --abstract-chars 2000
+```
+
+The command combines exact-title variants, author reverse search, and semantic neighbors. It labels `publication_variant`, `likely_extension`, and `related_followup` without deleting separate publications.
+
+Also search distinctive process/device phrases and inspect reference or benchmark tables in strong recent papers. Search plausible cited works by structured exact title or DOI.
+
+## Stopping Rule
+
+Do not stop after a fixed number of rounds. Continue while a materially different semantic, literal, author, process, application, venue/year, or work-family audit adds in-scope papers.
+
+Treat collector saturation as evidence, not an automatic decision:
+
+- inspect every search's `new_unique_count`;
+- inspect family-level new and deduplicated counts;
+- require multiple materially different query families;
+- require late author/work-family audits to add no important papers;
+- resolve suspicious category, year, venue, or technology gaps.
+
+Stop locally when additional distinct families produce no meaningful candidates and important work families are closed. Do not keep issuing cosmetic query rewrites after saturation.
+
+## Web Gap Audit
+
+The local corpus is the primary source and normally covers the relevant top journals and conferences. After local saturation, perform one light web audit only for likely corpus gaps:
+
+- recent arXiv/preprints;
+- Nature-family or other nonstandard venues;
+- papers newer than the latest local update;
+- a specific suspected title, author, or work family.
+
+Prefer publisher, DOI, arXiv, conference, or author pages. Do not repeat a broad web census of venues already covered locally. Label verified external-only records `corpus_gap`.
 
 ## Deliverables
 
-Write user-facing reports in Chinese by default while preserving original English paper titles and technical terms. A machine-readable paper record should normally include:
+Write user-facing reports in Chinese by default while preserving English titles and technical terms. Never invent metadata or links. A machine-readable record should include title, authors, year, venue, DOI, `pdf_link`, abstract, technology/process, temperature, frequency, key metrics, evidence category, and source queries when requested.
 
-- title
-- authors
-- year
-- venue
-- DOI
-- direct PDF/publisher URL from `pdf_link`
-- abstract
-- technology/process
-- physical temperature
-- frequency range
-- gain
-- `NF/Te`
-- power
-- evidence category
-- source queries or verification note when requested
+Before completion:
 
-Do not report completion until every requested folder exists, every requested output file is populated, links are present, JSON parses successfully, duplicates are resolved, and a final spot-check confirms that no obvious false positives remain.
+- verify requested folders and files exist and contain retained papers;
+- parse JSON outputs;
+- resolve publication duplicates without collapsing work-family variants;
+- spot-check false positives and links;
+- report modes/query families run, raw count, deduplicated count, retained count per category, and any corpus gaps.
 
-Completion means the requested paper list has been produced, not that a fixed workflow has been executed. Keep searching with new ChipSeeker queries while unresolved technology, frequency, author-family, venue, or year gaps remain. Do not create `00_PROJECT_BRIEF.md`, query logs, progress diaries, idea canvases, or any other generic files unless the user explicitly requested them.
+A zero-paper category is incomplete until expanded Lite, structured Keyword, and work-family searches still find nothing.
 
-Before finishing, state which ChipSeeker modes and query families were actually run, the raw and deduplicated candidate counts when available, and the retained-paper count per requested category. A zero-paper category is incomplete unless expanded Lite, Keyword, and work-family searches still find nothing and the user is explicitly told that no in-scope corpus hit was found.
-
-## Research Boundary
-
-When the user asks to validate their idea, search and evaluate evidence around that idea. Do not replace it with unsolicited idea generation. Offer alternative ideas only when explicitly requested.
+When validating a user's idea, search evidence around that idea. Do not replace it with unsolicited idea generation unless asked.

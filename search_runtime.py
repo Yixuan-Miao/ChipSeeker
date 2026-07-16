@@ -4,6 +4,7 @@ import os
 import re
 import shutil
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 from chipseeker.cloud_access import cloud_embed, is_cloud_token
@@ -475,7 +476,7 @@ class PaperSearcher:
         # blocking the UI on repeated network retries. Cache build/repair stages
         # keep retries because they are long-running maintenance tasks.
         if max_attempts is None:
-            max_attempts = 1 if stage_message == "Embedding query" else 3
+            max_attempts = 1 if stage_message in {"Embedding query", "Embedding queries"} else 3
         if self.mt == 'l':
             self._ensure_model()
             rows = []
@@ -600,16 +601,59 @@ class PaperSearcher:
             self._embeddings_loaded = True
 
     def search(self, query, top_k=50):
+        return self.search_many([query], top_k=top_k)[0]
+
+    def _embed_queries(self, queries, query_workers=None):
+        queries = list(queries)
+        configured_workers = query_workers
+        if configured_workers is None:
+            configured_workers = os.environ.get("CHIPSEEKER_QUERY_WORKERS", "4")
+        workers = max(1, min(int(configured_workers), len(queries)))
+        if self.mt == "l" or workers == 1 or len(queries) == 1:
+            return np.asarray(
+                self._embed(queries, stage_message="Embedding queries"),
+                dtype=np.float32,
+            )
+
+        self._ensure_model()
+
+        def embed_one(query):
+            return self._embed(
+                [query],
+                stage_message="Embedding query",
+                max_attempts=1,
+            )[0]
+
+        self._log(f"Embedding queries concurrently: queries={len(queries)} workers={workers}")
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="chipseeker-query") as executor:
+            rows = list(executor.map(embed_one, queries))
+        return np.asarray(rows, dtype=np.float32)
+
+    def search_many(self, queries, top_k=50, query_workers=None):
+        queries = [str(query or "").strip() for query in queries or []]
+        if not queries or any(not query for query in queries):
+            raise ValueError("Every semantic query must be non-empty.")
         self._ensure_embeddings()
-        qe = np.array(self._embed([query], stage_message="Embedding query")).reshape(1, -1)
-        hits = _semantic_search(qe, self.eb, top_k=top_k)
-        return [{"similarity": x['score'], "paper": self.dt[x['corpus_id']]} for x in hits]
+        query_embeddings = self._embed_queries(queries, query_workers=query_workers)
+        results = []
+        for query_embedding in query_embeddings:
+            hits = _semantic_search(query_embedding, self.eb, top_k=top_k)
+            results.append(
+                [{"similarity": hit["score"], "paper": self.dt[hit["corpus_id"]]} for hit in hits]
+            )
+        return results
 
     def search_candidates(self, query, candidate_papers, top_k=50):
+        return self.search_candidates_many([query], candidate_papers, top_k=top_k)[0]
+
+    def search_candidates_many(self, queries, candidate_papers, top_k=50, query_workers=None):
         self._ensure_embeddings()
+        queries = [str(query or "").strip() for query in queries or []]
+        if not queries or any(not query for query in queries):
+            raise ValueError("Every semantic query must be non-empty.")
         candidate_papers = list(candidate_papers or [])
         if not candidate_papers:
-            return []
+            return [[] for _query in queries]
 
         positions = {}
         for index, paper in enumerate(self.dt):
@@ -626,12 +670,21 @@ class PaperSearcher:
                     break
 
         if not candidate_indexes:
-            return []
+            return [[] for _query in queries]
 
-        qe = np.array(self._embed([query], stage_message="Embedding query")).reshape(1, -1)
+        query_embeddings = self._embed_queries(queries, query_workers=query_workers)
         subset_embeddings = self.eb[candidate_indexes]
-        hits = _semantic_search(qe, subset_embeddings, top_k=min(int(top_k), len(candidate_indexes)))
-        return [
-            {"similarity": hit["score"], "paper": self.dt[candidate_indexes[hit["corpus_id"]]]}
-            for hit in hits
-        ]
+        results = []
+        for query_embedding in query_embeddings:
+            hits = _semantic_search(
+                query_embedding,
+                subset_embeddings,
+                top_k=min(int(top_k), len(candidate_indexes)),
+            )
+            results.append(
+                [
+                    {"similarity": hit["score"], "paper": self.dt[candidate_indexes[hit["corpus_id"]]]}
+                    for hit in hits
+                ]
+            )
+        return results

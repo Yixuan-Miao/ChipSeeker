@@ -1,4 +1,12 @@
-from chipseeker.agent_search import build_response, compact_paper, parse_year_range, run_keyword_search, run_lite_search
+from chipseeker.agent_search import (
+    build_response,
+    compact_paper,
+    parse_year_range,
+    run_filtered_lite_search,
+    run_keyword_search,
+    run_lite_search,
+    run_lite_searches,
+)
 
 
 class FakeSearcher:
@@ -29,6 +37,38 @@ class FakeSearcher:
                     "venue": "IEEE Journal of Solid-State Circuits",
                 },
             },
+        ]
+
+
+class FakeBatchSearcher:
+    def __init__(self):
+        self.calls = []
+
+    def search_many(self, queries, top_k):
+        self.calls.append((list(queries), top_k))
+        return [
+            [
+                {
+                    "similarity": 0.9,
+                    "paper": {"title": f"Result for {query}", "year": "2024"},
+                }
+            ]
+            for query in queries
+        ]
+
+
+class FakeCandidateSearcher:
+    def __init__(self):
+        self.candidates = []
+
+    def search_candidates_many(self, queries, candidate_papers, top_k):
+        self.candidates = list(candidate_papers)
+        return [
+            [
+                {"similarity": 0.8, "paper": paper}
+                for paper in reversed(self.candidates[:top_k])
+            ]
+            for _query in queries
         ]
 
 
@@ -132,6 +172,50 @@ def test_title_result_view_omits_abstract_and_terms():
     assert "keywords" not in paper
     assert "ieee_terms" not in paper
     assert paper["title"] == "An InP LNA"
+
+
+def test_lite_searches_batch_multiple_queries_once():
+    searcher = FakeBatchSearcher()
+    responses = run_lite_searches(
+        ["cryogenic InP LNA", "InP qubit readout amplifier"],
+        db_file="papers.json",
+        embedding_model="test-model",
+        embedding_api_key="",
+        top_k=20,
+        searcher=searcher,
+    )
+
+    assert len(searcher.calls) == 1
+    assert len(responses) == 2
+    assert responses[1]["results"][0]["title"] == "Result for InP qubit readout amplifier"
+
+
+def test_filtered_lite_ranks_only_full_corpus_keyword_matches():
+    papers = [
+        {"title": "Cryogenic InP LNA", "year": "2024", "keywords": ["InP", "LNA"]},
+        {"title": "Room Temperature InP LNA", "year": "2024", "keywords": ["InP", "LNA"]},
+        {"title": "Cryogenic CMOS LNA", "year": "2024", "keywords": ["CMOS", "LNA"]},
+    ]
+    searcher = FakeCandidateSearcher()
+    response = run_filtered_lite_search(
+        "best cryogenic amplifier",
+        db_file="papers.json",
+        embedding_model="test-model",
+        embedding_api_key="",
+        top_k=10,
+        fields="title,keywords",
+        all_terms=["InP", "LNA"],
+        paper_loader=lambda _path: papers,
+        searcher=searcher,
+    )
+
+    assert response["mode"] == "filtered_lite"
+    assert response["candidate_count"] == 2
+    assert {paper["title"] for paper in searcher.candidates} == {
+        "Cryogenic InP LNA",
+        "Room Temperature InP LNA",
+    }
+    assert response["filters"]["structured"]["all_terms"] == ["InP", "LNA"]
 
 
 def test_response_preserves_pro_item_llm_evidence():

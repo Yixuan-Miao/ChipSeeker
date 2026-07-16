@@ -1,5 +1,6 @@
 import hashlib
 import json
+import time
 
 import numpy as np
 
@@ -14,6 +15,14 @@ class DummySearcher(PaperSearcher):
 
     def _embed(self, texts, stage_message="Embedding papers"):
         self.embed_history.append(list(texts))
+        return np.array([[float(len(text))] for text in texts], dtype=np.float32)
+
+
+class SlowRemoteQuerySearcher(DummySearcher):
+    def _embed(self, texts, stage_message="Embedding papers", **_kwargs):
+        self.embed_history.append(list(texts))
+        if stage_message.startswith("Embedding quer"):
+            time.sleep(0.06)
         return np.array([[float(len(text))] for text in texts], dtype=np.float32)
 
 
@@ -140,3 +149,44 @@ def test_search_candidates_reranks_exact_filtered_subset(tmp_path):
 
     assert len(results) == 2
     assert {item["paper"]["title"] for item in results} == {"Paper A", "Paper C"}
+
+
+def test_search_many_embeds_all_queries_in_one_batch(tmp_path):
+    db_file = tmp_path / "papers.json"
+    papers = [
+        {"title": "Paper A", "abstract": "Alpha"},
+        {"title": "Paper B", "abstract": "Beta"},
+    ]
+    write_db(db_file, papers)
+
+    DummySearcher.embed_history = []
+    searcher = DummySearcher(str(db_file), model_name="all-MiniLM-L6-v2")
+    searcher._ensure_embeddings()
+    DummySearcher.embed_history = []
+    results = searcher.search_many(["short", "longer query"], top_k=1)
+
+    assert len(results) == 2
+    assert DummySearcher.embed_history == [["short", "longer query"]]
+
+
+def test_remote_search_many_embeds_queries_concurrently(tmp_path):
+    db_file = tmp_path / "papers.json"
+    papers = [
+        {"title": "Paper A", "abstract": "Alpha"},
+        {"title": "Paper B", "abstract": "Beta"},
+    ]
+    write_db(db_file, papers)
+
+    SlowRemoteQuerySearcher.embed_history = []
+    searcher = SlowRemoteQuerySearcher(str(db_file), model_name="all-MiniLM-L6-v2")
+    searcher._ensure_embeddings()
+    searcher.mt = "v"
+    searcher.md = object()
+    SlowRemoteQuerySearcher.embed_history = []
+    started = time.perf_counter()
+    results = searcher.search_many(["one", "two", "three"], top_k=1, query_workers=3)
+    elapsed = time.perf_counter() - started
+
+    assert len(results) == 3
+    assert sorted(SlowRemoteQuerySearcher.embed_history) == [["one"], ["three"], ["two"]]
+    assert elapsed < 0.14

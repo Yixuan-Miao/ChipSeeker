@@ -46,7 +46,7 @@ def test_collection_deduplicates_doi_and_preserves_retrieval_sources():
     assert {item["mode"] for item in response["results"][0]["retrievals"]} == {"lite", "keyword"}
 
 
-def test_collection_deduplicates_normalized_title_when_doi_metadata_differs():
+def test_collection_keeps_different_year_publications_and_links_work_family():
     responses = [
         {
             "mode": "lite",
@@ -64,6 +64,108 @@ def test_collection_deduplicates_normalized_title_when_doi_metadata_differs():
 
     response = merge_search_responses(responses)
 
-    assert response["deduplicated_count"] == 1
+    assert response["deduplicated_count"] == 2
     assert response["result_view"] == "titles"
-    assert response["results"][0]["doi"] == "10.example/inp"
+    assert len({paper["work_family_id"] for paper in response["results"]}) == 1
+
+
+def test_collection_keeps_same_title_different_dois_as_publication_variants():
+    responses = [
+        {
+            "mode": "lite",
+            "query": "query",
+            "results": [
+                {
+                    "title": "A Cryogenic LNA",
+                    "year": "2024",
+                    "doi": "10.example/conference",
+                    "authors": ["A. Author"],
+                }
+            ],
+        },
+        {
+            "mode": "keyword",
+            "query": "LNA",
+            "results": [
+                {
+                    "title": "A Cryogenic LNA",
+                    "year": "2024",
+                    "doi": "10.example/journal",
+                    "authors": ["A. Author"],
+                }
+            ],
+        },
+    ]
+
+    response = merge_search_responses(responses)
+
+    assert response["deduplicated_count"] == 2
+    assert len({paper["work_family_id"] for paper in response["results"]}) == 1
+
+
+def test_collection_merges_missing_doi_with_same_title_and_year():
+    responses = [
+        {
+            "mode": "lite",
+            "query": "query",
+            "results": [{"title": "A Cryogenic LNA", "year": "2024", "doi": ""}],
+        },
+        {
+            "mode": "keyword",
+            "query": "LNA",
+            "results": [
+                {"title": "A Cryogenic LNA!", "year": "2024", "doi": "10.example/paper"}
+            ],
+        },
+    ]
+
+    response = merge_search_responses(responses)
+
+    assert response["deduplicated_count"] == 1
+    assert response["results"][0]["doi"] == "10.example/paper"
+
+
+def test_collection_counts_query_families_and_marginal_yield():
+    paper = {"title": "A Cryogenic InP LNA", "year": "2024", "doi": "10.example/lna"}
+    responses = [
+        {"mode": "lite", "query": "cryogenic InP LNA", "results": [paper]},
+        {"mode": "lite", "query": "InP cryogenic low-noise amplifier", "results": [paper]},
+        {"mode": "keyword", "query": "InP,LNA", "results": [paper]},
+    ]
+
+    response = merge_search_responses(responses)
+
+    assert response["query_family_count"] == 2
+    assert [search["new_unique_count"] for search in response["searches"]] == [1, 0, 0]
+    assert response["results"][0]["retrieval_count"] == 3
+    assert response["results"][0]["retrieval_family_count"] == 2
+    assert response["saturation"]["zero_yield_search_tail"] == 2
+
+
+def test_collection_does_not_guess_when_missing_doi_matches_two_publications():
+    responses = [
+        {
+            "mode": "keyword",
+            "query": "first",
+            "results": [
+                {"title": "Shared Title", "year": "2024", "doi": "10.example/one"}
+            ],
+        },
+        {
+            "mode": "keyword",
+            "query": "second",
+            "results": [
+                {"title": "Shared Title", "year": "2024", "doi": "10.example/two"}
+            ],
+        },
+        {
+            "mode": "lite",
+            "query": "third",
+            "results": [{"title": "Shared Title", "year": "2024", "doi": ""}],
+        },
+    ]
+
+    response = merge_search_responses(responses)
+
+    assert response["deduplicated_count"] == 3
+    assert len({paper["work_family_id"] for paper in response["results"]}) == 1
