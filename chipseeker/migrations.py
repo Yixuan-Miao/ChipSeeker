@@ -12,6 +12,7 @@ from chipseeker.paths import (
     SOURCE_CSV_DIR,
     SOURCE_MANIFEST_FILE,
 )
+from chipseeker.update_manager import merge_literature_v2_sources
 from chipseeker.utils import load_json, save_json
 
 
@@ -114,6 +115,15 @@ def _migrate_to_v8(state):
     _record_state(state, 8, "Scheduled metadata refresh for annual conference report exports.")
 
 
+def _migrate_to_v9(state):
+    registry = load_json(SOURCE_REGISTRY_FILE, {"sources": [], "pending_ieee_batch": None})
+    if not isinstance(registry, dict):
+        registry = {"sources": [], "pending_ieee_batch": None}
+    merge_literature_v2_sources(registry)
+    save_json(SOURCE_REGISTRY_FILE, registry)
+    _record_state(state, 9, "Installed resumable high-recall Nature, arXiv, and Science update sources.")
+
+
 def migrate_local_data():
     state = load_json(LOCAL_DATA_STATE_FILE, _default_state())
     if not isinstance(state, dict):
@@ -144,6 +154,9 @@ def migrate_local_data():
     if version < 8:
         _migrate_to_v8(state)
         version = 8
+    if version < 9:
+        _migrate_to_v9(state)
+        version = 9
 
     if version != CURRENT_LOCAL_DATA_VERSION:
         state["schema_version"] = CURRENT_LOCAL_DATA_VERSION

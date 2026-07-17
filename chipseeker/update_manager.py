@@ -1,10 +1,14 @@
 import os
+import threading
 from calendar import monthrange
 from datetime import date, datetime, timedelta, timezone
 from urllib.parse import quote
 
-from chipseeker.paths import SOURCE_REGISTRY_FILE, SOURCE_REGISTRY_TEMPLATE_FILE
+from chipseeker.paths import LITERATURE_SOURCE_TEMPLATE_FILE, SOURCE_REGISTRY_FILE, SOURCE_REGISTRY_TEMPLATE_FILE
 from chipseeker.utils import load_json, normalize_text, save_json, slugify_filename
+
+
+_REGISTRY_LOCK = threading.RLock()
 
 
 def _utc_now():
@@ -82,23 +86,93 @@ def _merge_template_sources(payload):
     return changed
 
 
-def load_source_registry(registry_path=SOURCE_REGISTRY_FILE):
-    payload = load_json(registry_path, None)
-    if not isinstance(payload, dict):
-        payload = _default_registry_payload()
-        save_json(registry_path, payload)
-    payload.setdefault("schema_version", 1)
+def merge_literature_v2_sources(payload):
+    """Install the compact, high-recall update set and retire overlapping V1 auto sources."""
+    template_payload = load_json(LITERATURE_SOURCE_TEMPLATE_FILE, {"sources": []})
+    templates = [source for source in template_payload.get("sources", []) if isinstance(source, dict) and source.get("id")]
+    if not templates:
+        return False
+
     payload.setdefault("sources", [])
-    payload.setdefault("pending_ieee_batch", None)
-    payload.setdefault("updated_at_utc", _utc_now())
-    if _merge_template_sources(payload):
-        save_source_registry(payload, registry_path)
-    return payload
+    changed = False
+    legacy_nature_dates = sorted(
+        {
+            source.get("last_checked_date")
+            for source in payload["sources"]
+            if source.get("provider") == "nature"
+            and int(source.get("generation", 1) or 1) < 2
+            and source.get("last_checked_date")
+        }
+    )
+    nature_checkpoint = legacy_nature_dates[0] if legacy_nature_dates else ""
+
+    v2_ids = {source["id"] for source in templates}
+    for source in payload["sources"]:
+        if (
+            source.get("provider") in {"nature", "arxiv", "science"}
+            and source.get("id") not in v2_ids
+            and int(source.get("generation", 1) or 1) < 2
+        ):
+            if source.get("enabled") or not source.get("superseded_by_v2"):
+                source["enabled"] = False
+                source["superseded_by_v2"] = True
+                changed = True
+
+    existing_by_id = {
+        source.get("id"): index
+        for index, source in enumerate(payload["sources"])
+        if isinstance(source, dict) and source.get("id")
+    }
+    preserve_keys = {"enabled", "last_checked_date", "last_run", "last_error"}
+    for template in templates:
+        source_id = template["id"]
+        existing_index = existing_by_id.get(source_id)
+        if existing_index is None:
+            installed = dict(template)
+            if installed.get("provider") == "nature" and nature_checkpoint:
+                installed["last_checked_date"] = nature_checkpoint
+            payload["sources"].append(installed)
+            existing_by_id[source_id] = len(payload["sources"]) - 1
+            changed = True
+            continue
+
+        existing = payload["sources"][existing_index]
+        if _safe_revision(template) <= _safe_revision(existing):
+            continue
+        refreshed = dict(template)
+        for key in preserve_keys:
+            if key in existing:
+                refreshed[key] = existing[key]
+        payload["sources"][existing_index] = refreshed
+        changed = True
+
+    if payload.get("literature_update_generation") != 2:
+        payload["literature_update_generation"] = 2
+        changed = True
+    return changed
+
+
+def load_source_registry(registry_path=SOURCE_REGISTRY_FILE):
+    with _REGISTRY_LOCK:
+        payload = load_json(registry_path, None)
+        if not isinstance(payload, dict):
+            payload = _default_registry_payload()
+            save_json(registry_path, payload)
+        payload.setdefault("schema_version", 1)
+        payload.setdefault("sources", [])
+        payload.setdefault("pending_ieee_batch", None)
+        payload.setdefault("updated_at_utc", _utc_now())
+        changed = _merge_template_sources(payload)
+        changed = merge_literature_v2_sources(payload) or changed
+        if changed:
+            save_source_registry(payload, registry_path)
+        return payload
 
 
 def save_source_registry(payload, registry_path=SOURCE_REGISTRY_FILE):
-    payload["updated_at_utc"] = _utc_now()
-    save_json(registry_path, payload)
+    with _REGISTRY_LOCK:
+        payload["updated_at_utc"] = _utc_now()
+        save_json(registry_path, payload)
 
 
 def list_sources(payload, provider=None):
@@ -246,6 +320,8 @@ def save_ieee_uploaded_file(uploaded_file, source, target_month, ieee_update_dir
 def default_incremental_start_date(source):
     last_checked = parse_iso_date(source.get("last_checked_date", ""))
     if last_checked:
+        if int(source.get("generation", 1) or 1) >= 2:
+            return last_checked.isoformat()
         return (last_checked + timedelta(days=1)).isoformat()
     initial_start = parse_iso_date(source.get("initial_start_date", ""))
     if initial_start:
@@ -270,6 +346,28 @@ def default_nature_start_date(source):
 def save_incremental_run_result(payload, source_ids, checked_date):
     for source_id in source_ids:
         replace_source(payload, source_id, {"last_checked_date": checked_date})
+
+
+def commit_incremental_source_results(registry_path, source_results, checked_date, run_id=""):
+    """Merge source checkpoints into the latest registry snapshot under one lock."""
+    with _REGISTRY_LOCK:
+        payload = load_json(registry_path, _default_registry_payload())
+        if not isinstance(payload, dict):
+            payload = _default_registry_payload()
+        for source_id, result in source_results.items():
+            updates = {
+                "last_checked_date": checked_date,
+                "last_run": {
+                    "run_id": run_id,
+                    "checked_date": checked_date,
+                    "rows": int(result.get("rows", 0) or 0),
+                    "completed_at_utc": _utc_now(),
+                },
+                "last_error": "",
+            }
+            replace_source(payload, source_id, updates)
+        save_source_registry(payload, registry_path)
+        return payload
 
 
 def save_nature_run_result(payload, source_ids, checked_date):

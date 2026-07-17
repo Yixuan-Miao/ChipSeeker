@@ -28,17 +28,20 @@ SOURCE_MANIFEST_FILE = os.path.join(DATA_DIR, "source_manifest.json")
 LOCAL_DATA_STATE_FILE = os.path.join(DATA_DIR, "schema_state.json")
 CONFLICT_RESOLUTIONS_FILE = os.path.join(DATA_DIR, "conflict_resolutions.json")
 SOURCE_REGISTRY_FILE = os.path.join(DATA_DIR, "source_registry.json")
+LITERATURE_UPDATE_RUN_DIR = os.path.join(DATA_DIR, "literature_update_runs")
+LITERATURE_UPDATE_STAGING_DIR = os.path.join(DATA_DIR, "literature_update_staging")
 CONTENT_PACK_STATE_FILE = os.path.join(DATA_DIR, "content_pack_state.json")
 NOTEBOOKLM_EXPORT_FILE = os.path.join(EXPORT_DIR, "NotebookLM_Sources.md")
 VENUE_RULES_FILE = os.path.join(PACKAGE_DATA_DIR, "venue_rules.json")
 SOURCE_REGISTRY_TEMPLATE_FILE = os.path.join(PACKAGE_DATA_DIR, "source_registry_template.json")
+LITERATURE_SOURCE_TEMPLATE_FILE = os.path.join(PACKAGE_DATA_DIR, "literature_sources_v2.json")
 APP_LOGO_FILE = os.path.join(PACKAGE_ASSET_DIR, "chipseeker_logo.svg")
 WECHAT_QR_FILE = os.path.join(PACKAGE_ASSET_DIR, "wechat_qr.jpg")
 CONFIG_FILE = os.path.join(BASE_DIR, "config.local.json")
 LEGACY_CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
 EXAMPLE_CONFIG_FILE = os.path.join(BASE_DIR, "config.example.json")
 BUNDLED_DEMO_CSV = os.path.join(DEMO_DATA_DIR, "export2026.03.04-08.56.26.csv")
-CURRENT_LOCAL_DATA_VERSION = 8
+CURRENT_LOCAL_DATA_VERSION = 9
 
 
 def ensure_runtime_dirs():
@@ -58,6 +61,8 @@ def ensure_runtime_dirs():
         CONTENT_PACK_EXPORT_DIR,
         DOWNLOAD_DIR,
         BACKUP_ROOT_DIR,
+        LITERATURE_UPDATE_RUN_DIR,
+        LITERATURE_UPDATE_STAGING_DIR,
     ):
         os.makedirs(path, exist_ok=True)
 

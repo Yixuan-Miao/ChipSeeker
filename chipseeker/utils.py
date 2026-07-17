@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import tempfile
 
 
 def extract_year(year_str):
@@ -22,8 +23,17 @@ def save_json(filepath, data):
     parent_dir = os.path.dirname(filepath)
     if parent_dir:
         os.makedirs(parent_dir, exist_ok=True)
-    with open(filepath, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=4, ensure_ascii=False)
+    target_dir = parent_dir or "."
+    fd, temporary_path = tempfile.mkstemp(prefix=".chipseeker-", suffix=".tmp", dir=target_dir)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=4, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temporary_path, filepath)
+    finally:
+        if os.path.exists(temporary_path):
+            os.unlink(temporary_path)
 
 
 def normalize_text(value):

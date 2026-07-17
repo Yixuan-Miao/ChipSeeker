@@ -29,7 +29,6 @@ from chipseeker.llm_tools import analyze_with_llm, generate_global_report_with_l
 from chipseeker.maintenance import generate_db_stats
 from chipseeker.migrations import migrate_local_data
 from chipseeker.paths import (
-    ARXIV_UPDATE_DIR,
     CACHE_DIR,
     CONFIG_FILE,
     BUNDLED_DEMO_CSV,
@@ -43,17 +42,15 @@ from chipseeker.paths import (
     IEEE_UPDATE_DIR,
     LEGACY_CONFIG_FILE,
     LOCAL_DATA_STATE_FILE,
-    NATURE_UPDATE_DIR,
     NOTEBOOKLM_EXPORT_FILE,
     SOURCE_CSV_DIR,
     SOURCE_MANIFEST_FILE,
     SOURCE_REGISTRY_FILE,
-    SCIENCE_UPDATE_DIR,
     USER_DATA_FILE,
 )
 from chipseeker.search_ui import collect_year_counts, filter_search_results, get_paper_id, highlight_text, required_words_from_query, result_bucket_counts, sort_results
 from chipseeker.scoring import compute_paper_score
-from chipseeker.task_queue import cancel_task, cleanup_task, get_task, submit_arxiv_incremental, submit_embedding_build, submit_llm_powered_search, submit_nature_incremental, submit_pdf_download, submit_science_incremental
+from chipseeker.task_queue import cancel_task, cleanup_task, get_task, submit_embedding_build, submit_literature_incremental, submit_llm_powered_search, submit_pdf_download
 from chipseeker.update_notices import load_update_notices
 from chipseeker.update_manager import (
     advance_ieee_sources,
@@ -383,7 +380,45 @@ def render_task_status(task_id, label, success_message=None, container=st, clean
         container.error(f"{label} failed: {task.get('error', 'unknown error')}")
         if show_history:
             container.code(format_task_history(task, limit=12), language="text")
+    elif status == "canceled":
+        container.warning(f"{label}: canceled. The next run will resume staged sources.")
+        if show_history:
+            container.code(format_task_history(task, limit=12), language="text")
     return task
+
+
+@st.fragment(run_every=1.0)
+def render_literature_task_fragment(task_key, label):
+    task_id = st.session_state.get(task_key)
+    if not task_id:
+        return
+    task = render_task_status(
+        task_id,
+        label,
+        success_message=lambda result: (
+            f"Update {result.get('status', 'completed')}: "
+            f"{result.get('completed_sources', 0)}/{result.get('source_count', 0)} sources committed; "
+            f"added {(result.get('import_result') or {}).get('added', 0)}, "
+            f"updated {(result.get('import_result') or {}).get('updated', 0)}."
+        ),
+        cleanup_on_complete=False,
+        auto_refresh=False,
+        show_history=True,
+    )
+    if not task:
+        return
+    status = task.get("status")
+    if status in {"queued", "running"}:
+        if st.button("Cancel update safely", key=f"cancel_{task_key}", use_container_width=True):
+            cancel_task(task_id, "Canceled by user; completed staged sources were preserved for resume.")
+    elif status in {"completed", "failed", "canceled"}:
+        refresh_key = f"{task_key}_final_refresh_{task_id}"
+        if not st.session_state.get(refresh_key):
+            st.session_state[refresh_key] = True
+            for state_key in ("current_query", "raw_results", "initial_count"):
+                st.session_state.pop(state_key, None)
+            st.cache_resource.clear()
+            st.rerun(scope="app")
 
 
 def format_task_history(task, limit=30):
@@ -890,111 +925,68 @@ def render_annual_conference_report_export(all_papers):
 
 def render_one_click_literature_update(nature_sources, science_sources):
     today_iso = date.today().isoformat()
-    enabled_sources = [source for source in (nature_sources + science_sources) if source.get("enabled") and source.get("query")]
-    enabled_nature_sources = [source for source in nature_sources if source.get("enabled") and source.get("query")]
-    enabled_science_sources = [source for source in science_sources if source.get("enabled") and source.get("query")]
-    due_sources = [source for source in enabled_sources if default_incremental_start_date(source) <= today_iso]
-    due_nature_sources = [source for source in enabled_nature_sources if default_incremental_start_date(source) <= today_iso]
-    due_science_sources = [source for source in enabled_science_sources if default_incremental_start_date(source) <= today_iso]
+    registry = load_source_registry(SOURCE_REGISTRY_FILE)
+    arxiv_sources = list_sources(registry, "arxiv")
+    enabled_sources = [
+        source
+        for source in (nature_sources + arxiv_sources + science_sources)
+        if source.get("enabled") and source.get("query") and int(source.get("generation", 1) or 1) >= 2
+    ]
+    due_sources = [source for source in enabled_sources if source.get("last_checked_date") != today_iso]
     earliest_due = min((default_incremental_start_date(source) for source in due_sources), default="Up to date")
     checked_dates = [source.get("last_checked_date") for source in enabled_sources if source.get("last_checked_date")]
     last_checked = max(checked_dates, default="Never")
 
-    st.markdown("### One-Click Literature Update")
-    st.caption("Fetch every enabled Nature/NE/NC/Science source from its last successful update date to today, then import the new CSVs automatically.")
+    st.markdown("### Resumable Literature Update")
+    st.caption(
+        "One task covers Nature Portfolio, Nature Electronics, Nature Communications, arXiv, and Science for chips, "
+        "AI hardware, and quantum computing. It resumes interrupted sources and commits the paper library only once."
+    )
 
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Enabled Sources", len(enabled_sources))
     col2.metric("Need Update", len(due_sources))
     col3.metric("From", earliest_due)
     col4.metric("To", today_iso)
-    st.caption(f"Latest saved checkpoint: `{last_checked}`. Each source keeps its own checkpoint, so repeated full-year downloads will not duplicate the JSON library.")
-
-    nature_task_key = "one_click_nature_update_task"
-    science_task_key = "one_click_science_update_task"
-    nature_task_id = st.session_state.get(nature_task_key)
-    science_task_id = st.session_state.get(science_task_key)
-
-    def success_message(result):
-        imported = result.get("import_result") or {}
-        failed = [item for item in result.get("written_files", []) if item.get("error")]
-        failed_names = ", ".join(item.get("source_id", "") for item in failed[:5] if item.get("source_id"))
-        failed_hint = f" Failed sources still need update: {failed_names}." if failed_names else ""
-        return (
-            "One-click literature update completed. "
-            f"Sources: {len(result.get('source_ids', []))}; "
-            f"added {imported.get('added', 0)}, updated {imported.get('updated', 0)}, removed {imported.get('removed', 0)}; "
-            f"failed {len(failed)}."
-            f"{failed_hint}"
-        )
-
-    nature_task = render_task_status(
-        nature_task_id,
-        "One-click Nature/NE/NC update",
-        success_message=success_message,
-        cleanup_on_complete=False,
-        auto_refresh=True,
-        show_history=True,
+    st.caption(
+        f"Latest committed checkpoint: `{last_checked}`. New files remain outside the watched library until all "
+        "available sources finish; failed sources keep their old checkpoint."
     )
-    science_task = render_task_status(
-        science_task_id,
-        "One-click Science update",
-        success_message=success_message,
-        cleanup_on_complete=False,
-        auto_refresh=True,
-        show_history=True,
-    )
-    if nature_task is None and nature_task_id:
-        st.session_state.pop(nature_task_key, None)
-        st.session_state["csv_state"] = ()
-        st.rerun()
-    if science_task is None and science_task_id:
-        st.session_state.pop(science_task_key, None)
-        st.session_state["csv_state"] = ()
-        st.rerun()
 
-    running = any(
-        bool(task and task.get("status") in {"queued", "running"})
-        for task in (nature_task, science_task)
-    )
-    button_label = "Update Nature/NE/Science Now"
+    task_key = "one_click_literature_v2_task"
+    task_id = st.session_state.get(task_key)
+    task = get_task(task_id) if task_id else None
+    running = bool(task and task.get("status") in {"queued", "running"})
+    render_literature_task_fragment(task_key, "ChipSeeker literature update")
+
+    button_label = "Update Nature / NE / NC / arXiv / Science Now"
     if not due_sources:
         button_label = "Literature Sources Already Up To Date"
     if st.button(button_label, type="primary", use_container_width=True, disabled=running or not due_sources):
-        if due_nature_sources:
-            st.session_state[nature_task_key] = submit_nature_incremental(
-                SOURCE_REGISTRY_FILE,
-                [source["id"] for source in due_nature_sources],
-                NATURE_UPDATE_DIR,
-                import_after=True,
-                db_file=DB_FILE,
-                cache_dir=CACHE_DIR,
-                source_root=SOURCE_CSV_DIR,
-                manifest_path=SOURCE_MANIFEST_FILE,
-            )
-        if due_science_sources:
-            st.session_state[science_task_key] = submit_science_incremental(
-                SOURCE_REGISTRY_FILE,
-                [source["id"] for source in due_science_sources],
-                SCIENCE_UPDATE_DIR,
-                import_after=True,
-                db_file=DB_FILE,
-                cache_dir=CACHE_DIR,
-                source_root=SOURCE_CSV_DIR,
-                manifest_path=SOURCE_MANIFEST_FILE,
-            )
+        st.session_state[task_key] = submit_literature_incremental(
+            SOURCE_REGISTRY_FILE,
+            [source["id"] for source in due_sources],
+            db_file=DB_FILE,
+            cache_dir=CACHE_DIR,
+            source_root=SOURCE_CSV_DIR,
+            manifest_path=SOURCE_MANIFEST_FILE,
+            local_state_path=LOCAL_DATA_STATE_FILE,
+        )
         st.rerun()
 
 
 def render_update_manager(source_csv_files, all_papers):
     st.header("Update Manager")
-    st.caption("Default path: one click updates Nature/NE from the last checkpoint to today and imports the new papers automatically.")
+    st.caption(
+        "One resumable update covers Nature Portfolio, NE, NC, arXiv, and Science from each source checkpoint "
+        "through today, then imports the deduplicated papers in one transaction."
+    )
 
     registry = load_source_registry(SOURCE_REGISTRY_FILE)
     ieee_sources = list_sources(registry, "ieee")
-    nature_sources = list_sources(registry, "nature")
-    arxiv_sources = list_sources(registry, "arxiv")
-    science_sources = list_sources(registry, "science")
+    nature_sources = [source for source in list_sources(registry, "nature") if int(source.get("generation", 1) or 1) >= 2]
+    arxiv_sources = [source for source in list_sources(registry, "arxiv") if int(source.get("generation", 1) or 1) >= 2]
+    science_sources = [source for source in list_sources(registry, "science") if int(source.get("generation", 1) or 1) >= 2]
 
     metric_col1, metric_col2, metric_col3 = st.columns(3)
     metric_col1.metric("IEEE Sources", sum(1 for source in ieee_sources if source.get("enabled")))
@@ -1146,9 +1138,16 @@ def render_update_manager(source_csv_files, all_papers):
                         format_func=format_nature_journal,
                         key=f"nature_journal_{source['id']}",
                     )
-                    st.number_input("Max Pages", min_value=1, max_value=50, value=int(source.get("max_pages", 5)), step=1, key=f"nature_pages_{source['id']}")
+                    st.number_input(
+                        "Page cap (0 = scan to end)",
+                        min_value=0,
+                        max_value=200,
+                        value=int(source.get("max_pages", 0)),
+                        step=1,
+                        key=f"nature_pages_{source['id']}",
+                    )
                     st.number_input("Request Delay (s)", min_value=0.0, max_value=10.0, value=float(source.get("sleep_seconds", 1.0)), step=0.5, key=f"nature_sleep_{source['id']}")
-                    last_checked = source.get("last_checked_date", "") or "2015-01-01"
+                    last_checked = source.get("last_checked_date", "") or default_incremental_start_date(source)
                     st.date_input("Last Checked Date", value=date.fromisoformat(last_checked), key=f"nature_last_checked_{source['id']}")
                     st.caption(f"Next incremental start date: `{default_incremental_start_date(source)}`")
                     st.caption(source.get("notes", ""))
@@ -1218,33 +1217,26 @@ def render_update_manager(source_csv_files, all_papers):
 
         nature_task_key = "nature_incremental_task"
         nature_task_id = st.session_state.get(nature_task_key)
-        task = render_task_status(
-            nature_task_id,
-            "Nature incremental update",
-            success_message=lambda result: f"Nature incremental update finished for {len(result.get('source_ids', []))} source(s).",
-            cleanup_on_complete=False,
-            auto_refresh=True,
-            show_history=True,
-        )
-        if task is None and nature_task_id:
-            st.session_state.pop(nature_task_key, None)
-            st.session_state["csv_state"] = ()
-            st.rerun()
-        if st.button("Run Nature Incremental Update", type="primary", use_container_width=True):
+        nature_task = get_task(nature_task_id) if nature_task_id else None
+        render_literature_task_fragment(nature_task_key, "Nature incremental update")
+        if st.button(
+            "Run Nature Incremental Update",
+            type="primary",
+            use_container_width=True,
+            disabled=bool(nature_task and nature_task.get("status") in {"queued", "running"}),
+        ):
             if not selected_nature_ids:
                 st.warning("Select at least one Nature source with a query.")
             else:
-                st.session_state[nature_task_key] = submit_nature_incremental(
+                st.session_state[nature_task_key] = submit_literature_incremental(
                     SOURCE_REGISTRY_FILE,
                     selected_nature_ids,
-                    NATURE_UPDATE_DIR,
-                    import_after=True,
                     db_file=DB_FILE,
                     cache_dir=CACHE_DIR,
                     source_root=SOURCE_CSV_DIR,
                     manifest_path=SOURCE_MANIFEST_FILE,
+                    local_state_path=LOCAL_DATA_STATE_FILE,
                 )
-                st.success("Nature incremental update queued in the background. New CSVs will be imported automatically.")
                 st.rerun()
 
         st.markdown("---")
@@ -1294,9 +1286,16 @@ def render_update_manager(source_csv_files, all_papers):
                     st.text_input("Display Name", value=source.get("name", ""), key=f"arxiv_name_{source['id']}")
                     st.text_input("Query", value=source.get("query", ""), key=f"arxiv_query_{source['id']}")
                     st.text_input("Categories (; separated)", value="; ".join(source.get("categories", [])), key=f"arxiv_categories_{source['id']}")
-                    st.number_input("Max Results", min_value=10, max_value=300, value=int(source.get("max_results", 100)), step=10, key=f"arxiv_results_{source['id']}")
+                    st.number_input(
+                        "Total result cap (0 = scan to checkpoint)",
+                        min_value=0,
+                        max_value=30000,
+                        value=int(source.get("max_results", 0)),
+                        step=100,
+                        key=f"arxiv_results_{source['id']}",
+                    )
                     st.number_input("Request Delay (s)", min_value=0.0, max_value=10.0, value=float(source.get("sleep_seconds", 0.5)), step=0.5, key=f"arxiv_sleep_{source['id']}")
-                    last_checked = source.get("last_checked_date", "") or "2015-01-01"
+                    last_checked = source.get("last_checked_date", "") or default_incremental_start_date(source)
                     st.date_input("Last Checked Date", value=date.fromisoformat(last_checked), key=f"arxiv_last_checked_{source['id']}")
                     st.caption(f"Next incremental start date: `{default_incremental_start_date(source)}`")
                     st.caption(source.get("notes", ""))
@@ -1336,24 +1335,26 @@ def render_update_manager(source_csv_files, all_papers):
 
         arxiv_task_key = "arxiv_incremental_task"
         arxiv_task_id = st.session_state.get(arxiv_task_key)
-        task = render_task_status(
-            arxiv_task_id,
-            "arXiv incremental update",
-            success_message=lambda result: f"arXiv incremental update finished for {len(result.get('source_ids', []))} source(s).",
-            cleanup_on_complete=False,
-            auto_refresh=True,
-            show_history=True,
-        )
-        if task is None and arxiv_task_id:
-            st.session_state.pop(arxiv_task_key, None)
-            st.session_state["csv_state"] = ()
-            st.rerun()
-        if st.button("Run arXiv Incremental Update", type="primary", use_container_width=True):
+        arxiv_task = get_task(arxiv_task_id) if arxiv_task_id else None
+        render_literature_task_fragment(arxiv_task_key, "arXiv incremental update")
+        if st.button(
+            "Run arXiv Incremental Update",
+            type="primary",
+            use_container_width=True,
+            disabled=bool(arxiv_task and arxiv_task.get("status") in {"queued", "running"}),
+        ):
             if not selected_arxiv_ids:
                 st.warning("Select at least one arXiv source with a query.")
             else:
-                st.session_state[arxiv_task_key] = submit_arxiv_incremental(SOURCE_REGISTRY_FILE, selected_arxiv_ids, ARXIV_UPDATE_DIR)
-                st.success("arXiv incremental update queued in the background.")
+                st.session_state[arxiv_task_key] = submit_literature_incremental(
+                    SOURCE_REGISTRY_FILE,
+                    selected_arxiv_ids,
+                    db_file=DB_FILE,
+                    cache_dir=CACHE_DIR,
+                    source_root=SOURCE_CSV_DIR,
+                    manifest_path=SOURCE_MANIFEST_FILE,
+                    local_state_path=LOCAL_DATA_STATE_FILE,
+                )
                 st.rerun()
 
 
@@ -1550,7 +1551,14 @@ def run():
         (
             scope_id
             for scope_id in semantic_scope_candidates
-            if scope_status_map.get(scope_id, {}).get("cache_status", {}).get("up_to_date") and scope_status_map.get(scope_id, {}).get("total_papers", 0) > 0
+            if (
+                scope_status_map.get(scope_id, {}).get("cache_status", {}).get("up_to_date")
+                or (
+                    scope_status_map.get(scope_id, {}).get("cache_status", {}).get("append_only")
+                    and scope_status_map.get(scope_id, {}).get("cache_status", {}).get("cached_papers", 0) > 0
+                )
+            )
+            and scope_status_map.get(scope_id, {}).get("total_papers", 0) > 0
         ),
         None,
     )

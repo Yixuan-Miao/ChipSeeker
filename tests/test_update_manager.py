@@ -2,6 +2,7 @@ from chipseeker.update_manager import (
     advance_ieee_sources,
     default_nature_start_date,
     load_source_registry,
+    merge_literature_v2_sources,
     save_source_registry,
     source_target_window,
     start_ieee_batch,
@@ -63,3 +64,31 @@ def test_source_registry_batch_and_watermark(tmp_path, monkeypatch):
     advance_ieee_sources(registry, ["ieee_jssc"], "2026-04")
     assert source_target_window(registry["sources"][0], "2026-04") == ("2026-04-01", "2026-04-30")
     assert default_nature_start_date(registry["sources"][2]) == "2026-04-11"
+
+
+def test_v2_sources_retire_legacy_and_inherit_earliest_nature_checkpoint(tmp_path, monkeypatch):
+    template_path = tmp_path / "literature_v2.json"
+    template_path.write_text(
+        """{
+  "sources": [
+    {"id":"nature_v2","provider":"nature","generation":2,"revision":1,"enabled":true,"query":"chip","last_checked_date":""},
+    {"id":"arxiv_v2","provider":"arxiv","generation":2,"revision":1,"enabled":true,"query":"chip","last_checked_date":""}
+  ]
+}""",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("chipseeker.update_manager.LITERATURE_SOURCE_TEMPLATE_FILE", str(template_path))
+    payload = {
+        "sources": [
+            {"id": "old_nature_a", "provider": "nature", "enabled": True, "last_checked_date": "2026-06-06"},
+            {"id": "old_nature_b", "provider": "nature", "enabled": True, "last_checked_date": "2026-05-16"},
+            {"id": "old_arxiv", "provider": "arxiv", "enabled": True, "last_checked_date": ""},
+        ]
+    }
+
+    assert merge_literature_v2_sources(payload) is True
+    by_id = {source["id"]: source for source in payload["sources"]}
+    assert by_id["old_nature_a"]["enabled"] is False
+    assert by_id["old_arxiv"]["enabled"] is False
+    assert by_id["nature_v2"]["last_checked_date"] == "2026-05-16"
+    assert by_id["arxiv_v2"]["last_checked_date"] == ""
