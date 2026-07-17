@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import time
 from datetime import datetime
+from urllib.parse import quote
 
 from chipseeker.keyword_search import (
     KEYWORD_SEARCH_FIELDS,
@@ -23,6 +24,17 @@ from search_runtime import PaperSearcher
 
 
 AGENT_SEARCH_SCHEMA = "chipseeker-agent-search/v1"
+
+
+class ProSearchError(RuntimeError):
+    def __init__(self, message, attempts):
+        super().__init__(message)
+        self.attempts = list(attempts or [])
+
+
+def _doi_link(value):
+    doi = normalize_doi_selector(value)
+    return f"https://doi.org/{quote(doi, safe='/():._-')}" if doi else ""
 
 
 def parse_year_range(value):
@@ -75,6 +87,8 @@ def compact_paper(paper, similarity, rank, abstract_chars):
     if not authors:
         authors = [item for item in (paper.get("first_author", ""), paper.get("last_author", "")) if item]
 
+    doi = str(paper.get("doi", "") or "")
+    pdf_link = str(paper.get("pdf_link", "") or "")
     result = {
         "rank": int(rank),
         "similarity": round(float(similarity), 6),
@@ -84,8 +98,15 @@ def compact_paper(paper, similarity, rank, abstract_chars):
         "authors": authors,
         "venue": str(paper.get("venue", "") or ""),
         "year": str(paper.get("year", "") or ""),
-        "doi": str(paper.get("doi", "") or ""),
-        "pdf_link": str(paper.get("pdf_link", "") or ""),
+        "doi": doi,
+        "doi_link": _doi_link(doi),
+        "pdf_link": pdf_link,
+        "source_links": {
+            "doi": _doi_link(doi),
+            "pdf": pdf_link,
+        },
+        "source_in_current_corpus": True,
+        "abstract_kind": "source_abstract" if abstract else "missing",
         "keywords": paper.get("keywords", []) or [],
         "ieee_terms": paper.get("ieee_terms", []) or [],
     }
@@ -108,7 +129,11 @@ def _project_result_view(result, result_view):
         "venue",
         "year",
         "doi",
+        "doi_link",
         "pdf_link",
+        "source_links",
+        "source_in_current_corpus",
+        "abstract_kind",
         "llm_score",
         "llm_reason",
         "exact_score",
@@ -517,6 +542,82 @@ def run_filtered_lite_search(query, **kwargs):
 
 
 def run_pro_search(
+    query,
+    *,
+    db_file,
+    embedding_model,
+    embedding_api_key,
+    llm_api_key,
+    llm_base_url,
+    llm_model,
+    top_k=50,
+    selected_years=(2000, 2100),
+    venues=(),
+    must_have="",
+    abstract_chars=1600,
+    result_view="standard",
+    rerank_limit=30,
+    timeout_seconds=300,
+    fallback_models=(),
+):
+    models = []
+    for model in (llm_model, *(fallback_models or ())):
+        normalized = str(model or "").strip()
+        if normalized and normalized not in models:
+            models.append(normalized)
+    if not models:
+        raise ValueError("At least one Pro LLM model is required.")
+
+    attempts = []
+    last_error = None
+    for attempt_index, model in enumerate(models):
+        attempt_rerank_limit = min(int(rerank_limit), 25) if attempt_index else int(rerank_limit)
+        started_at = time.monotonic()
+        try:
+            response = _run_pro_search_once(
+                query,
+                db_file=db_file,
+                embedding_model=embedding_model,
+                embedding_api_key=embedding_api_key,
+                llm_api_key=llm_api_key,
+                llm_base_url=llm_base_url,
+                llm_model=model,
+                top_k=top_k,
+                selected_years=selected_years,
+                venues=venues,
+                must_have=must_have,
+                abstract_chars=abstract_chars,
+                result_view=result_view,
+                rerank_limit=attempt_rerank_limit,
+                timeout_seconds=timeout_seconds,
+            )
+            attempts.append(
+                {
+                    "model": model,
+                    "status": "completed",
+                    "rerank_limit": attempt_rerank_limit,
+                    "duration_seconds": round(time.monotonic() - started_at, 3),
+                }
+            )
+            response["pro_attempts"] = attempts
+            response["pro_fallback_used"] = attempt_index > 0
+            return response
+        except Exception as exc:
+            last_error = exc
+            attempts.append(
+                {
+                    "model": model,
+                    "status": "failed",
+                    "rerank_limit": attempt_rerank_limit,
+                    "duration_seconds": round(time.monotonic() - started_at, 3),
+                    "error": str(exc),
+                }
+            )
+    details = "; ".join(f"{item['model']}: {item['error']}" for item in attempts)
+    raise ProSearchError(f"All Pro search models failed ({details}).", attempts) from last_error
+
+
+def _run_pro_search_once(
     query,
     *,
     db_file,

@@ -169,3 +169,52 @@ def test_collection_does_not_guess_when_missing_doi_matches_two_publications():
 
     assert response["deduplicated_count"] == 3
     assert len({paper["work_family_id"] for paper in response["results"]}) == 1
+
+
+def test_collection_uses_screened_work_family_yield_for_saturation():
+    first = {"title": "Relevant LNA", "year": "2024", "doi": "10.example/relevant"}
+    noise = {"title": "Unrelated paper", "year": "2025", "doi": "10.example/noise"}
+    responses = [
+        {"mode": "lite", "query": "direct", "query_family": "direct", "results": [first]},
+        {"mode": "lite", "query": "broad one", "query_family": "broad", "results": [noise]},
+        {"mode": "lite", "query": "broad two", "query_family": "container", "results": [noise]},
+    ]
+    decisions = {
+        "doi:10.example/relevant": {**first, "screening_decision": "include"},
+        "doi:10.example/noise": {**noise, "screening_decision": "exclude"},
+    }
+
+    response = merge_search_responses(responses, screening_decisions=decisions)
+
+    assert response["saturation"]["basis"] == "retained_work_families"
+    assert response["searches"][0]["new_retained_family_count"] == 1
+    assert response["searches"][1]["new_retained_family_count"] == 0
+    assert response["screening"]["retained_count"] == 1
+
+
+def test_collection_preserves_success_when_another_query_fails():
+    responses = [
+        {
+            "mode": "pro",
+            "query": "ambiguous",
+            "query_id": "pro-one",
+            "query_role": "rerank",
+            "status": "failed",
+            "error": "connection error",
+            "results": [],
+        },
+        {
+            "mode": "lite",
+            "query": "direct",
+            "query_id": "lite-one",
+            "query_role": "standalone_lna",
+            "coverage": {"technology": ["InP"]},
+            "results": [{"title": "Relevant", "year": "2024", "doi": "10.example/one"}],
+        },
+    ]
+
+    response = merge_search_responses(responses)
+
+    assert response["failed_search_count"] == 1
+    assert response["deduplicated_count"] == 1
+    assert response["query_coverage"]["technology"]["InP"] == ["lite-one"]

@@ -53,6 +53,11 @@ def _full_author_keys(paper):
     }
 
 
+def full_author_keys(paper):
+    """Return normalized full-author identities for external family tooling."""
+    return _full_author_keys(paper)
+
+
 def _author_keys(paper):
     full_keys = _full_author_keys(paper)
     keys = set(full_keys)
@@ -232,3 +237,109 @@ def expand_work_family(seed, candidates):
         reverse=True,
     )
     return expanded
+
+
+def expand_work_family_closure(seeds, candidates):
+    """Expand likely publication variants/extensions until the family set converges."""
+    seeds = list(seeds or [])
+    candidates = list(candidates or [])
+    selected = {publication_key(seed): dict(seed) for seed in seeds}
+    remaining = {
+        publication_key(candidate): candidate
+        for candidate in candidates
+        if publication_key(candidate) not in selected
+    }
+    relation_paths = {}
+    rounds = []
+
+    def parent_indexes():
+        by_author = {}
+        by_title = {}
+        for key, paper in selected.items():
+            title = normalize_title_selector(paper.get("title", ""))
+            if title:
+                by_title.setdefault(title, set()).add(key)
+            for author in _full_author_keys(paper):
+                by_author.setdefault(author, set()).add(key)
+        return by_author, by_title
+
+    def possible_parents(candidate, by_author, by_title):
+        keys = set()
+        title = normalize_title_selector(candidate.get("title", ""))
+        if title:
+            keys.update(by_title.get(title, ()))
+        for author in _full_author_keys(candidate):
+            keys.update(by_author.get(author, ()))
+        return keys
+
+    while remaining:
+        selected_by_author, selected_by_title = parent_indexes()
+        additions = {}
+        for candidate_key, candidate in remaining.items():
+            best = None
+            best_parent = None
+            for parent_key in possible_parents(candidate, selected_by_author, selected_by_title):
+                parent = selected[parent_key]
+                relation = relation_between(parent, candidate)
+                if relation["relation"] not in {"publication_variant", "likely_extension"}:
+                    continue
+                if best is None or relation["confidence"] > best["confidence"]:
+                    best = relation
+                    best_parent = parent_key
+            if best is not None:
+                additions[candidate_key] = dict(candidate)
+                relation_paths[candidate_key] = {
+                    "parent_publication_key": best_parent,
+                    **best,
+                }
+        if not additions:
+            break
+        selected.update(additions)
+        for key in additions:
+            remaining.pop(key, None)
+        rounds.append(
+            {
+                "round": len(rounds) + 1,
+                "added_count": len(additions),
+                "added_publication_keys": sorted(additions),
+            }
+        )
+
+    related = []
+    selected_by_author, selected_by_title = parent_indexes()
+    for candidate_key, candidate in remaining.items():
+        best = None
+        best_parent = None
+        for parent_key in possible_parents(candidate, selected_by_author, selected_by_title):
+            parent = selected[parent_key]
+            relation = relation_between(parent, candidate)
+            if relation["relation"] != "related_followup":
+                continue
+            if best is None or relation["confidence"] > best["confidence"]:
+                best = relation
+                best_parent = parent_key
+        if best is not None:
+            item = dict(candidate)
+            item["family_relation"] = {"parent_publication_key": best_parent, **best}
+            related.append(item)
+
+    confirmed = list(selected.values())
+    assign_work_families(confirmed)
+    for paper in confirmed:
+        key = publication_key(paper)
+        if key in relation_paths:
+            paper["family_relation"] = relation_paths[key]
+        else:
+            paper["family_relation"] = {"relation": "seed", "confidence": 1.0}
+    related.sort(
+        key=lambda item: (
+            item["family_relation"]["confidence"],
+            extract_year(item.get("year", "")),
+        ),
+        reverse=True,
+    )
+    return {
+        "rounds": rounds,
+        "confirmed": confirmed,
+        "related_suggestions": related,
+    }

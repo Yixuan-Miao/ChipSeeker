@@ -1,0 +1,4 @@
+interface:
+  display_name: "ChipSeeker"
+  short_description: "Search the local IC-paper corpus with evidence."
+  default_prompt: "Use ChipSeeker to search my local IC-paper corpus, return evidence-grounded Chinese results with DOI/PDF links, and use the Ultra Search workflow for high-recall censuses."

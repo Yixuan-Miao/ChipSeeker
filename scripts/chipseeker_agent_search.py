@@ -52,6 +52,7 @@ def build_parser():
     parser.add_argument("--venue", action="append", default=[], help="Optional unified venue. Repeat or use commas.")
     parser.add_argument("--embedding-model", default="")
     parser.add_argument("--llm-model", default="")
+    parser.add_argument("--pro-fallback-model", action="append", default=[])
     parser.add_argument("--rerank-limit", type=int, default=30)
     parser.add_argument("--timeout-seconds", type=int, default=300)
     parser.add_argument("--abstract-chars", type=int, default=1600)
@@ -148,6 +149,7 @@ def main(argv=None):
                     llm_api_key=config.get("llm_api_key", ""),
                     llm_base_url=config.get("llm_base_url", ""),
                     llm_model=args.llm_model or config.get("llm_model", ""),
+                    fallback_models=args.pro_fallback_model or ["deepseek-v4-flash"],
                     top_k=args.top_k,
                     selected_years=years,
                     venues=venues,
@@ -158,7 +160,10 @@ def main(argv=None):
                     timeout_seconds=args.timeout_seconds,
                 )
     except Exception as exc:
-        write_json({"schema": "chipseeker-agent-search/v1", "error": str(exc)}, args.output)
+        payload = {"schema": "chipseeker-agent-search/v1", "error": str(exc)}
+        if getattr(exc, "attempts", None):
+            payload["pro_attempts"] = list(exc.attempts)
+        write_json(payload, args.output)
         return 1
 
     write_json(response, args.output)

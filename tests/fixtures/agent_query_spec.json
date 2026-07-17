@@ -1,0 +1,40 @@
+{
+  "schema": "chipseeker-agent-query-spec/v1",
+  "defaults": {
+    "abstract_chars": 0,
+    "result_view": "titles"
+  },
+  "scope": {
+    "technology": ["InP"],
+    "circuit": ["LNA"],
+    "container": ["receiver", "SoC"]
+  },
+  "queries": [
+    {
+      "id": "inp-lna",
+      "mode": "keyword",
+      "all_terms": ["InP", "LNA"],
+      "fields": ["title", "abstract", "keywords", "ieee_terms"],
+      "query_family": "standalone-lna",
+      "query_role": "standalone_lna",
+      "coverage": {
+        "technology": ["InP"],
+        "circuit": ["LNA"]
+      },
+      "top_k": 5
+    },
+    {
+      "id": "receiver-container",
+      "mode": "keyword",
+      "all_terms": ["cryogenic"],
+      "any_terms": ["receiver", "readout IC", "SoC"],
+      "fields": ["title", "abstract"],
+      "query_family": "receiver-container",
+      "query_role": "receiver_soc",
+      "coverage": {
+        "container": ["receiver", "SoC"]
+      },
+      "top_k": 5
+    }
+  ]
+}

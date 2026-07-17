@@ -13,7 +13,7 @@ from chipseeker.utils import extract_year
 from chipseeker.work_family import assign_work_families, publication_key
 
 
-AGENT_COLLECT_SCHEMA = "chipseeker-agent-collect/v2"
+AGENT_COLLECT_SCHEMA = "chipseeker-agent-collect/v3"
 
 _QUERY_STOPWORDS = {
     "a",
@@ -147,7 +147,17 @@ def _resolve_publication_key(paper, merged, doi_index, title_index):
 
 
 def _merge_metadata(item, paper):
-    for field in ("doi", "pdf_link", "authors", "venue", "year"):
+    for field in (
+        "doi",
+        "doi_link",
+        "pdf_link",
+        "source_links",
+        "source_in_current_corpus",
+        "abstract_kind",
+        "authors",
+        "venue",
+        "year",
+    ):
         if not item.get(field) and paper.get(field):
             item[field] = copy.deepcopy(paper[field])
     if len(str(paper.get("abstract", "") or "")) > len(str(item.get("abstract", "") or "")):
@@ -165,15 +175,19 @@ def _merge_metadata(item, paper):
         item["matched_fields"] = combined_fields
 
 
-def _saturation_signal(searches, family_stats):
+def _saturation_signal(searches, family_stats, has_screening=False):
     if not searches:
         return "insufficient"
+    metric = "new_retained_family_count" if has_screening else "new_unique_count"
     zero_yield_tail = 0
     for search in reversed(searches):
-        if search["new_unique_count"] != 0:
+        if search.get("status", "completed") != "completed":
+            continue
+        if int(search.get(metric, 0) or 0) != 0:
             break
         zero_yield_tail += 1
-    productive_families = sum(1 for item in family_stats.values() if item["new_unique_count"] > 0)
+    family_metric = "new_retained_family_count" if has_screening else "new_unique_count"
+    productive_families = sum(1 for item in family_stats.values() if item.get(family_metric, 0) > 0)
     if len(family_stats) >= 4 and productive_families >= 2 and zero_yield_tail >= 2:
         return "strong"
     if len(family_stats) >= 3 and zero_yield_tail >= 1:
@@ -181,8 +195,14 @@ def _saturation_signal(searches, family_stats):
     return "weak"
 
 
-def merge_search_responses(responses):
+def _is_retained(decision):
+    return str(decision or "").strip().lower() in {"include", "included", "retain", "retained"}
+
+
+def merge_search_responses(responses, screening_decisions=None):
     responses = list(responses or [])
+    screening_decisions = dict(screening_decisions or {})
+    has_screening = bool(screening_decisions)
     query_families = _infer_query_families(responses)
     merged = {}
     doi_index = {}
@@ -191,13 +211,21 @@ def merge_search_responses(responses):
     searches = []
     result_views = set()
     family_stats = {}
+    role_stats = {}
+    coverage_stats = {}
+    failed_search_count = 0
 
     for response, family_id in zip(responses, query_families):
         mode = str(response.get("mode", "") or "")
         query = str(response.get("query", "") or "")
+        query_id = str(response.get("query_id", "") or "")
+        query_role = str(response.get("query_role", "general") or "general")
+        coverage = response.get("coverage", {}) or {}
+        status = str(response.get("status", "completed") or "completed")
         result_views.add(str(response.get("result_view", "standard") or "standard"))
         new_unique_count = 0
         search_publications = set()
+        introduced_publications = set()
         for paper in response.get("results", []) or []:
             raw_result_count += 1
             key = _resolve_publication_key(paper, merged, doi_index, title_index)
@@ -207,12 +235,16 @@ def merge_search_responses(responses):
                 item["retrievals"] = []
                 merged[key] = item
                 new_unique_count += 1
+                introduced_publications.add(key)
             item = merged[key]
             search_publications.add(key)
             retrieval = {
                 "mode": mode,
                 "query": query,
                 "query_family": family_id,
+                "query_id": query_id,
+                "query_role": query_role,
+                "coverage": copy.deepcopy(coverage),
                 "rank": int(paper.get("rank", 0) or 0),
             }
             if mode in {"keyword", "filtered_lite"}:
@@ -236,12 +268,29 @@ def merge_search_responses(responses):
         search_record = {
             "mode": mode,
             "query": query,
+            "query_id": query_id,
+            "query_role": query_role,
+            "coverage": copy.deepcopy(coverage),
             "query_family": family_id,
+            "status": status,
             "result_count": int(response.get("result_count", 0) or 0),
             "candidate_count": int(response.get("candidate_count", 0) or 0),
             "new_unique_count": new_unique_count,
             "deduplicated_result_count": len(search_publications),
+            "duration_seconds": float(response.get("duration_seconds", 0.0) or 0.0),
+            "_publication_keys": search_publications,
+            "_introduced_keys": introduced_publications,
         }
+        if response.get("error"):
+            search_record["error"] = str(response["error"])
+        if response.get("pro_attempts") is not None:
+            search_record["pro_attempts"] = copy.deepcopy(response["pro_attempts"])
+        if response.get("batch_retry") is not None:
+            search_record["batch_retry"] = copy.deepcopy(response["batch_retry"])
+        if response.get("batch_error"):
+            search_record["batch_error"] = str(response["batch_error"])
+        if status != "completed":
+            failed_search_count += 1
         searches.append(search_record)
         stats = family_stats.setdefault(
             family_id,
@@ -251,22 +300,75 @@ def merge_search_responses(responses):
                 "raw_result_count": 0,
                 "new_unique_count": 0,
                 "publication_keys": set(),
+                "new_retained_count": 0,
+                "new_retained_family_count": 0,
             },
         )
         stats["search_count"] += 1
         stats["raw_result_count"] += int(response.get("result_count", 0) or 0)
         stats["new_unique_count"] += new_unique_count
         stats["publication_keys"].update(search_publications)
+        role = role_stats.setdefault(
+            query_role,
+            {"query_role": query_role, "search_count": 0, "raw_result_count": 0, "publication_keys": set()},
+        )
+        role["search_count"] += 1
+        role["raw_result_count"] += int(response.get("result_count", 0) or 0)
+        role["publication_keys"].update(search_publications)
+        for dimension, values in coverage.items():
+            dimension_stats = coverage_stats.setdefault(str(dimension), {})
+            for value in values or []:
+                ids = dimension_stats.setdefault(str(value), [])
+                if query_id not in ids:
+                    ids.append(query_id)
 
     results = list(merged.values())
     assign_work_families(results)
     for item in results:
+        decision = screening_decisions.get(publication_key(item))
+        if decision:
+            for field in (
+                "screening_decision",
+                "screening_reason",
+                "evidence_matrix",
+                "record_type",
+                "evidence_category",
+                "technology_process",
+                "physical_temperature",
+                "frequency_range_ghz",
+                "frequency_relation",
+            ):
+                if field in decision:
+                    item[field] = copy.deepcopy(decision[field])
         item["retrieval_count"] = len(item["retrievals"])
         item["retrieval_family_count"] = len(
             {source["query_family"] for source in item["retrievals"]}
         )
         item["retrieval_mode_count"] = len({source["mode"] for source in item["retrievals"]})
         item["publication_key"] = publication_key(item)
+
+    if has_screening:
+        seen_retained_families = set()
+        for search in searches:
+            introduced = [merged[key] for key in search.pop("_introduced_keys")]
+            searched = [merged[key] for key in search.pop("_publication_keys")]
+            retained_introduced = [item for item in introduced if _is_retained(item.get("screening_decision"))]
+            retained_families = {
+                item.get("work_family_id")
+                for item in searched
+                if _is_retained(item.get("screening_decision")) and item.get("work_family_id")
+            }
+            new_families = retained_families - seen_retained_families
+            search["new_retained_count"] = len(retained_introduced)
+            search["new_retained_family_count"] = len(new_families)
+            seen_retained_families.update(retained_families)
+            stats = family_stats[search["query_family"]]
+            stats["new_retained_count"] += len(retained_introduced)
+            stats["new_retained_family_count"] += len(new_families)
+    else:
+        for search in searches:
+            search.pop("_introduced_keys")
+            search.pop("_publication_keys")
     results.sort(
         key=lambda item: (
             item["retrieval_family_count"],
@@ -286,24 +388,53 @@ def merge_search_responses(responses):
         stats["deduplicated_result_count"] = len(stats.pop("publication_keys"))
         serializable_family_stats.append(stats)
 
+    serializable_role_stats = []
+    for stats in role_stats.values():
+        stats = dict(stats)
+        stats["deduplicated_result_count"] = len(stats.pop("publication_keys"))
+        serializable_role_stats.append(stats)
+
     zero_yield_tail = 0
     for search in reversed(searches):
-        if search["new_unique_count"] != 0:
+        metric = "new_retained_family_count" if has_screening else "new_unique_count"
+        if search.get("status", "completed") != "completed":
+            continue
+        if int(search.get(metric, 0) or 0) != 0:
             break
         zero_yield_tail += 1
+    screening_summary = None
+    if has_screening:
+        decision_counts = {}
+        for item in results:
+            decision = str(item.get("screening_decision", "unscreened") or "unscreened")
+            decision_counts[decision] = decision_counts.get(decision, 0) + 1
+        screening_summary = {
+            "decision_counts": decision_counts,
+            "retained_count": sum(
+                1 for item in results if _is_retained(item.get("screening_decision"))
+            ),
+        }
     return {
         "schema": AGENT_COLLECT_SCHEMA,
         "result_view": result_views.pop() if len(result_views) == 1 else "mixed",
         "search_count": len(searches),
         "query_family_count": len(family_stats),
+        "query_role_count": len(role_stats),
+        "failed_search_count": failed_search_count,
         "searches": searches,
         "query_families": serializable_family_stats,
+        "query_roles": serializable_role_stats,
+        "query_coverage": coverage_stats,
         "raw_result_count": raw_result_count,
         "deduplicated_count": len(results),
+        "screening": screening_summary,
         "saturation": {
-            "signal": _saturation_signal(searches, family_stats),
+            "signal": _saturation_signal(searches, family_stats, has_screening=has_screening),
+            "basis": "retained_work_families" if has_screening else "raw_unique_candidates",
+            "provisional": not has_screening,
             "zero_yield_search_tail": zero_yield_tail,
-            "last_search_new_unique_count": searches[-1]["new_unique_count"] if searches else 0,
+            "last_search_new_unique_count": searches[-1].get("new_unique_count", 0) if searches else 0,
+            "last_search_new_retained_family_count": searches[-1].get("new_retained_family_count") if searches else None,
         },
         "results": results,
     }

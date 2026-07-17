@@ -1,3 +1,5 @@
+import chipseeker.agent_search as agent_search
+
 from chipseeker.agent_search import (
     build_response,
     compact_paper,
@@ -6,6 +8,7 @@ from chipseeker.agent_search import (
     run_keyword_search,
     run_lite_search,
     run_lite_searches,
+    run_pro_search,
 )
 
 
@@ -232,3 +235,31 @@ def test_response_preserves_pro_item_llm_evidence():
     )
     assert response["results"][0]["llm_score"] == 90
     assert response["results"][0]["llm_reason"] == "direct"
+
+
+def test_pro_search_falls_back_and_reduces_rerank_batch(monkeypatch):
+    calls = []
+
+    def fake_once(query, **kwargs):
+        calls.append((kwargs["llm_model"], kwargs["rerank_limit"]))
+        if kwargs["llm_model"] == "deepseek-v4-pro":
+            raise ConnectionError("primary unavailable")
+        return {"mode": "pro", "query": query, "model": kwargs["llm_model"], "results": []}
+
+    monkeypatch.setattr(agent_search, "_run_pro_search_once", fake_once)
+
+    response = run_pro_search(
+        "cryogenic LNA",
+        db_file="papers.json",
+        embedding_model="embedding",
+        embedding_api_key="",
+        llm_api_key="key",
+        llm_base_url="https://example.invalid",
+        llm_model="deepseek-v4-pro",
+        fallback_models=["deepseek-v4-flash"],
+        rerank_limit=40,
+    )
+
+    assert calls == [("deepseek-v4-pro", 40), ("deepseek-v4-flash", 25)]
+    assert response["pro_fallback_used"] is True
+    assert [item["status"] for item in response["pro_attempts"]] == ["failed", "completed"]

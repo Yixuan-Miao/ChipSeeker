@@ -1,4 +1,4 @@
 interface:
   display_name: "ChipSeeker Ultra Search"
-  short_description: "Run structured, recall-first IC literature searches."
-  default_prompt: "Use ChipSeeker Ultra Search to batch semantic and structured local retrieval, preserve separate publications and work families, and continue until evidence saturation using only my requested deliverables."
+  short_description: "Run evidence-closed, high-recall IC literature censuses."
+  default_prompt: "Use ChipSeeker Ultra Search to run structured local retrieval, screen explicit evidence, close every work family, compare prior results, and continue until retained-family saturation while creating only my requested deliverables."
