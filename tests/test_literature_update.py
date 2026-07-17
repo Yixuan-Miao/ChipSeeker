@@ -37,6 +37,7 @@ def test_literature_update_stages_then_commits_once(monkeypatch, tmp_path):
     manifest_path = tmp_path / "source_manifest.json"
     registry_path = tmp_path / "registry.json"
     local_state_path = tmp_path / "schema_state.json"
+    history_path = tmp_path / "paper_update_history.json"
     run_dir = tmp_path / "runs"
     staging_root = tmp_path / "staging"
     official_dir = source_root / "generated_exports" / "nature_updates"
@@ -89,6 +90,7 @@ def test_literature_update_stages_then_commits_once(monkeypatch, tmp_path):
             "local_state_path": str(local_state_path),
             "run_dir": str(run_dir),
             "staging_root": str(staging_root),
+            "history_path": str(history_path),
         },
         update_progress=lambda *_args: None,
         append_history=lambda *_args, **_kwargs: None,
@@ -105,6 +107,9 @@ def test_literature_update_stages_then_commits_once(monkeypatch, tmp_path):
     schema_state = json.loads(local_state_path.read_text(encoding="utf-8"))
     assert schema_state["library_sync"]["source_token"]
     assert schema_state["library_sync"]["source_token"] == schema_state["bibliographic_metadata_enrich"]["source_token"]
+    history = json.loads(history_path.read_text(encoding="utf-8"))
+    assert history["events"][0]["event_type"] == "automatic_literature_update"
+    assert history["events"][0]["details"]["papers_added"] == 1
 
 
 def test_create_or_resume_run_preserves_fetched_source(monkeypatch, tmp_path):

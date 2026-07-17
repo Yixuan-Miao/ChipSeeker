@@ -4,7 +4,8 @@ import io
 import json
 import os
 import shutil
-import tempfile
+import time
+import uuid
 import zipfile
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -36,12 +37,15 @@ class ContentPackInstallError(RuntimeError):
 
 @contextmanager
 def _safe_temporary_directory(prefix, parent_dir):
-    os.makedirs(parent_dir, exist_ok=True)
-    temp_dir = tempfile.mkdtemp(prefix=prefix, dir=parent_dir)
+    parent = os.path.realpath(parent_dir)
+    os.makedirs(parent, exist_ok=True)
+    temp_dir = os.path.realpath(os.path.join(parent, f"{prefix}{uuid.uuid4().hex}"))
+    os.makedirs(temp_dir)
     try:
         yield temp_dir
     finally:
-        shutil.rmtree(temp_dir, ignore_errors=True)
+        if temp_dir != parent and os.path.commonpath([parent, temp_dir]) == parent:
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 def _read_papers(db_file):
@@ -512,6 +516,32 @@ def _uploaded_bytes(uploaded_file):
     raise TypeError("Unsupported uploaded content pack object.")
 
 
+def content_pack_kind(uploaded_file):
+    payload = _uploaded_bytes(uploaded_file)
+    try:
+        with zipfile.ZipFile(io.BytesIO(payload), "r") as archive:
+            _validate_zip_members(archive.namelist())
+            try:
+                manifest = json.loads(archive.read("content_pack_manifest.json").decode("utf-8"))
+            except (KeyError, UnicodeError, json.JSONDecodeError):
+                manifest = {}
+    except zipfile.BadZipFile as exc:
+        raise ContentPackInstallError("The selected file is not a valid ChipSeeker ZIP package.") from exc
+    kind = str(manifest.get("pack_kind", "full") or "full").strip().lower()
+    if kind not in {"full", "update"}:
+        raise ContentPackInstallError(f"Unsupported ChipSeeker content pack kind: {kind}")
+    return kind, payload
+
+
+def install_content_package(uploaded_file, data_dir):
+    """Install either a full member package or an incremental update package."""
+    kind, payload = content_pack_kind(uploaded_file)
+    stream = io.BytesIO(payload)
+    result = install_content_update_pack(stream, data_dir) if kind == "update" else install_content_pack(stream, data_dir)
+    result["pack_kind"] = kind
+    return result
+
+
 def install_content_pack(uploaded_file, data_dir):
     payload = _uploaded_bytes(uploaded_file)
     data_dir = os.path.abspath(data_dir)
@@ -583,7 +613,18 @@ def _merge_tree(source_dir, target_dir):
             source_path = os.path.join(root, file_name)
             target_path = os.path.join(target_root, file_name)
             if os.path.exists(target_path):
-                os.replace(source_path, target_path)
+                replaced = False
+                for attempt in range(3):
+                    try:
+                        os.replace(source_path, target_path)
+                        replaced = True
+                        break
+                    except PermissionError:
+                        if attempt < 2:
+                            time.sleep(0.1 * (attempt + 1))
+                if not replaced:
+                    shutil.copy2(source_path, target_path)
+                    os.remove(source_path)
             else:
                 shutil.move(source_path, target_path)
             copied_files += 1

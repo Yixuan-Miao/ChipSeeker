@@ -1,6 +1,19 @@
 import csv
 
 from chipseeker.conflict_review import collect_source_records, detect_conflicts
+from chipseeker.utils import normalize_doi, normalize_title
+
+
+def _record(title, doi, abstract, year="2026"):
+    return {
+        "paper": {"title": title, "doi": doi, "abstract": abstract, "year": year, "venue": "JSSC"},
+        "source_file": "source.csv",
+        "row_number": 2,
+        "title_key": normalize_title(title),
+        "doi_key": normalize_doi(doi),
+        "abstract_hash": str(hash(abstract)),
+        "abstract_text": abstract,
+    }
 
 
 def write_csv(path, rows):
@@ -14,10 +27,40 @@ def write_csv(path, rows):
         "DOI",
         "PDF Link",
     ]
-    with open(path, "w", encoding="utf-8-sig", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
+    with open(path, "w", encoding="utf-8-sig", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
+
+
+def test_conflict_review_ignores_title_punctuation_and_extended_abstract():
+    base = "A low-noise amplifier for cryogenic quantum readout with broadband input matching and low power."
+    records = [
+        _record("A 4-GHz LNA: Design", "10.1000/example", base),
+        _record("A 4 GHz LNA Design", "10.1000/example", base + " Additional measurement details are provided here."),
+    ]
+
+    assert detect_conflicts(records) == []
+
+
+def test_conflict_review_keeps_material_same_doi_conflict():
+    records = [
+        _record("Cryogenic LNA", "10.1000/example", "A" * 180),
+        _record("Quantum ADC", "10.1000/example", "B" * 180),
+    ]
+
+    conflicts = detect_conflicts(records)
+    assert {item["kind"] for item in conflicts} == {"same_doi_different_abstract", "same_doi_different_title"}
+    assert all(item["severity"] == "high" for item in conflicts)
+
+
+def test_conflict_review_ignores_early_access_year_change_for_same_doi():
+    records = [
+        _record("A Cryogenic Receiver", "10.1000/example", "A" * 180, year="2025"),
+        _record("A Cryogenic Receiver", "10.1000/example", "A" * 180, year="2026"),
+    ]
+
+    assert detect_conflicts(records) == []
 
 
 def test_detect_conflicts_finds_title_year_and_doi_abstract(tmp_path):
@@ -69,8 +112,7 @@ def test_detect_conflicts_finds_title_year_and_doi_abstract(tmp_path):
     )
 
     records = collect_source_records([str(source_file)])
-    conflicts = detect_conflicts(records)
-    conflict_kinds = {conflict["kind"] for conflict in conflicts}
+    conflict_kinds = {conflict["kind"] for conflict in detect_conflicts(records)}
 
     assert "same_title_different_year" in conflict_kinds
     assert "same_doi_different_abstract" in conflict_kinds
@@ -104,9 +146,7 @@ def test_detect_conflicts_ignores_book_chapters_sharing_same_doi(tmp_path):
         ],
     )
 
-    records = collect_source_records([str(source_file)])
-    conflicts = detect_conflicts(records)
-    conflict_kinds = {conflict["kind"] for conflict in conflicts}
+    conflict_kinds = {conflict["kind"] for conflict in detect_conflicts(collect_source_records([str(source_file)]))}
 
     assert "same_doi_different_abstract" not in conflict_kinds
     assert "same_doi_different_title" not in conflict_kinds

@@ -23,6 +23,7 @@ from chipseeker.paths import (
     SOURCE_REGISTRY_FILE,
 )
 from chipseeker.update_manager import commit_incremental_source_results, default_incremental_start_date, find_source, load_source_registry
+from chipseeker.update_history import record_update_event
 from chipseeker.utils import load_json, save_json
 
 
@@ -395,6 +396,28 @@ def run_literature_update(
             state["status"] = "partial" if failed else "completed"
             state["finished_at_utc"] = _utc_now()
             _save_run_state(state, run_dir=run_dir)
+            history_path = payload.get("history_path")
+            if history_path:
+                completed_source_states = [
+                    source for source in state["sources"].values() if source.get("status") == "fetched"
+                ]
+                try:
+                    record_update_event(
+                        history_path,
+                        "automatic_literature_update",
+                        "Nature / arXiv / Science incremental update",
+                        status=state["status"],
+                        details={
+                            "run_id": state["run_id"],
+                            "sources": [source.get("name", source.get("source_id", "")) for source in completed_source_states],
+                            "source_rows": sum(int(source.get("rows", 0) or 0) for source in completed_source_states),
+                            "papers_added": int(import_result.get("added", 0) or 0),
+                            "papers_updated": int(import_result.get("updated", 0) or 0),
+                            "failed_sources": [source.get("name", source.get("source_id", "")) for source in failed],
+                        },
+                    )
+                except OSError:
+                    append_history("Literature update committed, but its timeline entry could not be saved.", level="warning")
             _remove_staging_dir(
                 state["staging_dir"],
                 payload.get("staging_root") or LITERATURE_UPDATE_STAGING_DIR,

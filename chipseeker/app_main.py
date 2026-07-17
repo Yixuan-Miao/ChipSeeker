@@ -11,7 +11,7 @@ import streamlit as st
 
 from chipseeker.config_store import UserDataStore, load_app_config
 from chipseeker.cloud_access import build_cloud_token, cloud_access_configured
-from chipseeker.content_pack import ContentPackInstallError, build_content_pack, build_content_update_pack, describe_content_update_status, detect_content_pack_status, install_bundled_demo_csv, install_content_pack, install_content_update_pack, refresh_content_pack_baseline
+from chipseeker.content_pack import ContentPackInstallError, build_content_pack, build_content_update_pack, describe_content_update_status, detect_content_pack_status, install_bundled_demo_csv, install_content_package, refresh_content_pack_baseline
 from chipseeker.content_release import ContentReleaseError, content_release_configured, load_content_release_config, publish_content_pack_to_release
 from chipseeker.conflict_review import collect_source_records, detect_conflicts, dismiss_conflict, load_conflict_resolutions, restore_conflicts
 from chipseeker.data_sync import (
@@ -43,6 +43,7 @@ from chipseeker.paths import (
     LEGACY_CONFIG_FILE,
     LOCAL_DATA_STATE_FILE,
     NOTEBOOKLM_EXPORT_FILE,
+    PAPER_UPDATE_HISTORY_FILE,
     SOURCE_CSV_DIR,
     SOURCE_MANIFEST_FILE,
     SOURCE_REGISTRY_FILE,
@@ -67,6 +68,7 @@ from chipseeker.update_manager import (
     source_target_window,
     start_ieee_batch,
 )
+from chipseeker.update_history import collect_database_update_rows, load_update_history, record_update_event
 from chipseeker.utils import extract_year, load_json, save_json, slugify_filename
 from chipseeker.venue_data import DOMAIN_COLORS, TIER_COLORS, analyze_venue, get_venue_display_str
 from chipseeker.version import APP_VERSION, GITHUB_REPO_URL
@@ -553,30 +555,15 @@ def runtime_llm_key(app_config, direct_key):
 
 def install_uploaded_content_pack(uploaded_pack):
     try:
-        result = install_content_pack(uploaded_pack, DATA_DIR)
-    except ContentPackInstallError as exc:
-        st.error(str(exc))
-        return
-    st.cache_resource.clear()
-    st.session_state["csv_state"] = ()
-    st.success(f"Installed content pack into `{result['data_dir']}` with {result['copied_entries']} copied entries.")
-    time.sleep(1.0)
-    st.rerun()
-
-
-def install_uploaded_update_pack(uploaded_pack):
-    try:
-        result = install_content_update_pack(uploaded_pack, DATA_DIR)
+        result = install_content_package(uploaded_pack, DATA_DIR)
     except ContentPackInstallError as exc:
         st.error(str(exc))
         return
     st.cache_resource.clear()
     st.session_state["csv_state"] = ()
     st.success(
-        "Installed update pack into "
-        f"`{result['data_dir']}`. Papers added: {result.get('paper_added', 0)}, "
-        f"updated: {result.get('paper_updated', 0)}, duplicate/skipped: {result.get('paper_skipped', 0)}, "
-        f"cache rows appended: {result.get('cache_appended', 0)}, files merged: {result['copied_entries']}."
+        f"Installed {result.get('pack_kind', 'full')} content pack into `{result['data_dir']}` "
+        f"with {result['copied_entries']} copied entries."
     )
     time.sleep(1.0)
     st.rerun()
@@ -584,24 +571,15 @@ def install_uploaded_update_pack(uploaded_pack):
 
 def install_bundled_demo_library():
     target_path = install_bundled_demo_csv(BUNDLED_DEMO_CSV, SOURCE_CSV_DIR)
+    app_config = load_app_config([CONFIG_FILE, LEGACY_CONFIG_FILE])
+    app_config["embedding_model"] = "all-MiniLM-L6-v2"
+    save_json(CONFIG_FILE, app_config)
+    st.session_state["auto_build_tmtt_demo_cache"] = True
     st.cache_resource.clear()
     st.session_state["csv_state"] = ()
     st.success(f"Bundled demo CSV installed to `{target_path}`.")
     time.sleep(1.0)
     st.rerun()
-
-
-def latest_content_update_pack(output_dir):
-    if not os.path.isdir(output_dir):
-        return ""
-    candidates = [
-        os.path.join(output_dir, name)
-        for name in os.listdir(output_dir)
-        if name.lower().startswith("chipseeker_contentupdate_") and name.lower().endswith(".zip")
-    ]
-    if not candidates:
-        return ""
-    return max(candidates, key=lambda path: os.path.getmtime(path))
 
 
 def format_content_pack_time(value):
@@ -615,120 +593,173 @@ def format_content_pack_time(value):
         return value
 
 
-def render_content_pack_sidebar(content_status, ui_language):
-    with st.sidebar.expander(tr(ui_language, "Content Pack", "内容包"), expanded=False):
-        status_text = "Ready" if content_status["pack_ready"] else "Not installed"
-        st.caption(
-            f"Status: {status_text} | Papers: {content_status['paper_count']} | "
-            f"Sources: {content_status['source_count']} | Cache files: {content_status['cache_count']}"
+@st.cache_data(show_spinner=False)
+def cached_database_update_rows(source_csv_files, source_state):
+    del source_state
+    return collect_database_update_rows(list(source_csv_files), SOURCE_CSV_DIR)
+
+
+@st.cache_data(show_spinner=False)
+def cached_conflict_scan(source_csv_files, source_state):
+    del source_state
+    records = collect_source_records(list(source_csv_files))
+    return len(records), detect_conflicts(records)
+
+
+def _content_pack_event_details(pack_kind, build_result, publish_result=None):
+    details = {
+        "pack_kind": pack_kind,
+        "zip_file": os.path.basename(build_result.get("zip_path", "")),
+        "paper_count": int(build_result.get("paper_count", 0) or 0),
+        "paper_delta_count": int(build_result.get("paper_delta_count", 0) or 0),
+        "source_delta_count": int(build_result.get("source_delta_count", 0) or 0),
+        "cache_delta_count": int(build_result.get("cache_delta_count", 0) or 0),
+    }
+    if publish_result:
+        details.update(
+            {
+                "repo": publish_result.get("repo", ""),
+                "tag": publish_result.get("tag", ""),
+                "asset_name": publish_result.get("asset_name", ""),
+                "size_bytes": int(publish_result.get("size_bytes", 0) or 0),
+            }
         )
-        update_status = describe_content_update_status(DATA_DIR, DB_FILE)
-        if update_status["baseline_ready"]:
-            baseline_kind = str(update_status.get("baseline_kind") or "baseline").title()
-            st.caption(
-                f"Last {baseline_kind}: {format_content_pack_time(update_status['baseline_created_at_utc'])} | "
-                f"Baseline papers: {update_status['baseline_paper_count']} | "
-                f"Current: {update_status['current_paper_count']} | "
-                f"Incremental papers: {update_status['paper_delta_count']}"
-            )
-        else:
-            st.caption(
-                "No local baseline yet. Build one local full pack once; later update ZIPs only include incremental papers."
-            )
-        if st.button(tr(ui_language, "Open Quick Start", "打开快速开始"), use_container_width=True):
-            st.session_state["show_quick_start"] = True
-            st.rerun()
-        if st.button(tr(ui_language, "Build Content Pack ZIP", "生成内容包 ZIP"), use_container_width=True):
-            build_result = build_content_pack(
-                DATA_DIR,
-                DB_FILE,
-                CACHE_DIR,
-                SOURCE_MANIFEST_FILE,
-                schema_state=load_json(LOCAL_DATA_STATE_FILE, {}),
-                output_dir=CONTENT_PACK_EXPORT_DIR,
-            )
-            st.success(f"Created: {build_result['zip_path']}")
-        if st.button(tr(ui_language, "Build Incremental Update ZIP", "生成增量更新 ZIP"), use_container_width=True):
-            try:
-                update_result = build_content_update_pack(
+    return details
+
+
+def _record_update_event_safely(event_type, label, status, details):
+    try:
+        record_update_event(
+            PAPER_UPDATE_HISTORY_FILE,
+            event_type,
+            label,
+            status=status,
+            details=details,
+        )
+    except OSError as exc:
+        st.warning(f"The update timeline entry could not be saved: {exc}")
+
+
+def _build_and_publish_content_pack(pack_kind, release_config):
+    publish_enabled = content_release_configured(release_config)
+    label = "Latest incremental content pack" if pack_kind == "update" else "Full content pack"
+    try:
+        with st.spinner(f"Building {label.lower()}..."):
+            if pack_kind == "update":
+                build_result = build_content_update_pack(
                     DATA_DIR,
                     DB_FILE,
                     CACHE_DIR,
                     SOURCE_MANIFEST_FILE,
                     schema_state=load_json(LOCAL_DATA_STATE_FILE, {}),
                     output_dir=CONTENT_PACK_EXPORT_DIR,
-                    save_state=False,
+                    pack_name=release_config.update_asset_name if publish_enabled else None,
+                    save_state=not publish_enabled,
                 )
-                st.success(
-                    f"Created: {update_result['zip_path']} | "
-                    f"papers: {update_result['paper_delta_count']} | "
-                    f"sources: {update_result['source_delta_count']} | "
-                    f"cache rows: {update_result['cache_delta_count']} | "
-                    f"full caches: {update_result.get('cache_full_count', 0)} | "
-                    "Baseline not advanced until upload succeeds."
+                asset_name = release_config.update_asset_name
+            else:
+                build_result = build_content_pack(
+                    DATA_DIR,
+                    DB_FILE,
+                    CACHE_DIR,
+                    SOURCE_MANIFEST_FILE,
+                    schema_state=load_json(LOCAL_DATA_STATE_FILE, {}),
+                    output_dir=CONTENT_PACK_EXPORT_DIR,
+                    pack_name=release_config.full_asset_name if publish_enabled else None,
+                    save_state=not publish_enabled,
                 )
-            except ContentPackInstallError as exc:
-                st.error(str(exc))
-        app_config = load_app_config([CONFIG_FILE, LEGACY_CONFIG_FILE])
-        release_config = load_content_release_config(app_config)
-        if content_release_configured(release_config):
-            st.markdown("---")
-            st.caption("Internal private publisher is enabled on this machine.")
-            st.caption(
-                f"Target: `{release_config.repo}` / `{release_config.tag}` / "
-                f"`{release_config.update_asset_name}`"
+                asset_name = release_config.full_asset_name
+
+            publish_result = None
+            if publish_enabled:
+                publish_result = publish_content_pack_to_release(
+                    build_result["zip_path"],
+                    release_config,
+                    asset_name=asset_name,
+                )
+                refresh_content_pack_baseline(DATA_DIR, DB_FILE, CACHE_DIR, baseline_kind=pack_kind)
+
+        status = "published" if publish_result else "generated"
+        _record_update_event_safely(
+            "content_pack",
+            label,
+            status,
+            _content_pack_event_details(pack_kind, build_result, publish_result),
+        )
+        if publish_result:
+            st.success(
+                f"Published `{publish_result['asset_name']}` to `{publish_result['repo']}` "
+                f"({publish_result['size_bytes'] / 1024 / 1024:.1f} MB)."
             )
-            if st.button("Build & Upload Private Update Pack", use_container_width=True):
-                try:
-                    update_result = build_content_update_pack(
-                        DATA_DIR,
-                        DB_FILE,
-                        CACHE_DIR,
-                        SOURCE_MANIFEST_FILE,
-                        schema_state=load_json(LOCAL_DATA_STATE_FILE, {}),
-                        output_dir=CONTENT_PACK_EXPORT_DIR,
-                        pack_name=release_config.update_asset_name,
-                        save_state=False,
-                    )
-                    publish_result = publish_content_pack_to_release(
-                        update_result["zip_path"],
-                        release_config,
-                        asset_name=release_config.update_asset_name,
-                    )
-                    refresh_content_pack_baseline(DATA_DIR, DB_FILE, CACHE_DIR, baseline_kind="update")
-                    st.success(
-                        "Uploaded private update pack: "
-                        f"{publish_result['asset_name']} ({publish_result['size_bytes'] / 1024 / 1024:.1f} MB)"
-                    )
-                except (ContentPackInstallError, ContentReleaseError) as exc:
-                    st.error(str(exc))
-            latest_update_pack = latest_content_update_pack(CONTENT_PACK_EXPORT_DIR)
-            if latest_update_pack:
-                st.caption(f"Latest local update ZIP: `{os.path.basename(latest_update_pack)}`")
-                if st.button("Upload Latest Existing Update Pack", use_container_width=True):
-                    try:
-                        publish_result = publish_content_pack_to_release(
-                            latest_update_pack,
-                            release_config,
-                            asset_name=release_config.update_asset_name,
-                        )
-                        refresh_content_pack_baseline(DATA_DIR, DB_FILE, CACHE_DIR, baseline_kind="update")
-                        st.success(
-                            "Uploaded existing private update pack: "
-                            f"{publish_result['asset_name']} ({publish_result['size_bytes'] / 1024 / 1024:.1f} MB)"
-                        )
-                    except ContentReleaseError as exc:
-                        st.error(str(exc))
-        st.caption(tr(ui_language, "Large ZIP files are supported locally.", "本地支持较大的 ZIP 内容包。"))
-        uploaded_pack = st.file_uploader(tr(ui_language, "Install Content Pack ZIP", "安装内容包 ZIP"), type=["zip"], key="sidebar_content_pack_upload")
-        if uploaded_pack is not None and st.button(tr(ui_language, "Install Uploaded Pack", "安装上传内容包"), use_container_width=True):
-            install_uploaded_content_pack(uploaded_pack)
-        uploaded_update_pack = st.file_uploader(tr(ui_language, "Install Incremental Update ZIP", "安装增量更新 ZIP"), type=["zip"], key="sidebar_update_pack_upload")
-        if uploaded_update_pack is not None and st.button(tr(ui_language, "Install Update Pack", "安装增量更新包"), use_container_width=True):
-            install_uploaded_update_pack(uploaded_update_pack)
-        st.caption(tr(ui_language, "Update ZIPs merge new sources/cache files into the existing library instead of replacing the full 30k+ database.", "增量更新 ZIP 会合并新的 sources/cache 文件，不会替换已有 3 万+ 全库。"))
-        if os.path.exists(BUNDLED_DEMO_CSV) and st.button(tr(ui_language, "Install Bundled TMTT 2026 Demo", "安装内置 TMTT 2026 演示库"), use_container_width=True):
+        else:
+            st.success(f"Created `{build_result['zip_path']}`.")
+    except (ContentPackInstallError, ContentReleaseError, OSError, ValueError) as exc:
+        _record_update_event_safely(
+            "content_pack",
+            label,
+            "failed",
+            {"pack_kind": pack_kind, "error": str(exc)},
+        )
+        st.error(str(exc))
+
+
+def render_content_pack_publisher():
+    st.markdown("### Online Content Packages")
+    update_status = describe_content_update_status(DATA_DIR, DB_FILE)
+    app_config = load_app_config([CONFIG_FILE, LEGACY_CONFIG_FILE])
+    release_config = load_content_release_config(app_config)
+    publish_enabled = content_release_configured(release_config)
+
+    if update_status["baseline_ready"]:
+        st.caption(
+            f"Last package baseline: `{format_content_pack_time(update_status['baseline_created_at_utc'])}` | "
+            f"baseline papers: `{update_status['baseline_paper_count']}` | current papers: "
+            f"`{update_status['current_paper_count']}` | pending incremental papers: `{update_status['paper_delta_count']}`"
+        )
+    else:
+        st.info("Generate the full package once to establish the incremental baseline.")
+    if publish_enabled:
+        st.caption(f"Online target: `{release_config.repo}` / `{release_config.tag}`. Successful builds publish automatically.")
+    else:
+        st.caption("Online publishing is not configured on this machine; packages will be generated locally.")
+
+    update_col, full_col = st.columns(2)
+    with update_col:
+        update_label = "Generate & Publish Latest Update" if publish_enabled else "Generate Latest Update Package"
+        if st.button(update_label, type="primary", use_container_width=True, disabled=not update_status["baseline_ready"]):
+            _build_and_publish_content_pack("update", release_config)
+    with full_col:
+        full_label = "Generate & Publish Full Package" if publish_enabled else "Generate Full Database Package"
+        if st.button(full_label, use_container_width=True):
+            _build_and_publish_content_pack("full", release_config)
+
+
+def render_starter_library_installers(ui_language):
+    st.markdown(f"#### {tr(ui_language, 'Starter Library', '起步论文库')}")
+    demo_col, member_col = st.columns(2)
+    with demo_col:
+        st.markdown(f"**{tr(ui_language, 'TMTT 2026 Demo', 'TMTT 2026 演示库')}**")
+        st.caption(tr(ui_language, "Installs the bundled demo and starts its local MiniLM cache automatically.", "安装内置演示论文，并自动开始构建本地 MiniLM 缓存。"))
+        if os.path.exists(BUNDLED_DEMO_CSV) and st.button(
+            tr(ui_language, "Install TMTT Demo", "安装 TMTT 演示库"),
+            use_container_width=True,
+        ):
             install_bundled_demo_library()
+    with member_col:
+        st.markdown(f"**{tr(ui_language, 'Member Paper Package', '会员论文安装包')}**")
+        st.caption(tr(ui_language, "Select the ZIP supplied by ChipSeeker; it is validated and installed into local_data.", "选择 ChipSeeker 提供的 ZIP，验证后自动安装到 local_data。"))
+        uploaded_pack = st.file_uploader(
+            tr(ui_language, "Select ChipSeeker package", "选择 ChipSeeker 安装包"),
+            type=["zip"],
+            key="cache_builder_member_pack",
+            label_visibility="collapsed",
+        )
+        if uploaded_pack is not None and st.button(
+            tr(ui_language, "Install Selected Package", "安装所选安装包"),
+            use_container_width=True,
+            type="primary",
+        ):
+            install_uploaded_content_pack(uploaded_pack)
 
 
 def render_quick_start(app_config, content_status, ui_language):
@@ -805,27 +836,34 @@ def render_quick_start(app_config, content_status, ui_language):
     st.stop()
 
 
-def render_conflict_review(source_csv_files):
-    st.header("Dedup Conflict Review")
-    st.caption("Review edge cases before they silently collapse under the dedupe key.")
+def render_conflict_review(source_csv_files, source_state):
+    st.header("Conflict Review")
+    st.caption(
+        "A cached data-quality audit for genuinely different records that share a title or DOI. "
+        "This page never edits papers automatically; dismiss only marks a warning as reviewed."
+    )
 
     resolution_payload = load_conflict_resolutions(CONFLICT_RESOLUTIONS_FILE)
     dismissed_ids = set(resolution_payload.get("dismissed", []))
-    source_records = collect_source_records(source_csv_files)
-    conflicts = detect_conflicts(source_records)
+    source_record_count, conflicts = cached_conflict_scan(tuple(source_csv_files), source_state)
+    current_conflict_ids = {item["id"] for item in conflicts}
+    active_dismissed_ids = dismissed_ids & current_conflict_ids
     visible_conflicts = [item for item in conflicts if item["id"] not in dismissed_ids]
+    high_risk_count = sum(1 for item in visible_conflicts if item.get("severity") == "high")
 
     metric_col1, metric_col2, metric_col3 = st.columns(3)
     metric_col1.metric("Active Conflicts", len(visible_conflicts))
-    metric_col2.metric("Dismissed", len(dismissed_ids))
-    metric_col3.metric("Source Records Scanned", len(source_records))
+    metric_col2.metric("High Risk", high_risk_count)
+    metric_col3.metric("Source Records Scanned", source_record_count)
+    st.caption(f"Reviewed active conflicts: `{len(active_dismissed_ids)}`. Stale dismissed IDs are ignored automatically.")
 
     action_col1, action_col2 = st.columns(2)
     with action_col1:
         if st.button("Refresh Conflict Scan", use_container_width=True):
+            cached_conflict_scan.clear()
             st.rerun()
     with action_col2:
-        if st.button("Restore Dismissed Conflicts", use_container_width=True):
+        if st.button("Restore Dismissed Conflicts", use_container_width=True, disabled=not active_dismissed_ids):
             restore_conflicts(CONFLICT_RESOLUTIONS_FILE)
             st.rerun()
 
@@ -838,7 +876,8 @@ def render_conflict_review(source_csv_files):
         return
 
     for conflict in visible_conflicts:
-        with st.expander(f"{conflict['kind']}: {conflict['headline']}", expanded=False):
+        severity = str(conflict.get("severity", "medium")).upper()
+        with st.expander(f"[{severity}] {conflict['kind']}: {conflict['headline']}", expanded=False):
             st.markdown(conflict["summary"])
             if conflict.get("signals"):
                 st.json(conflict["signals"], expanded=False)
@@ -971,6 +1010,7 @@ def render_one_click_literature_update(nature_sources, science_sources):
             source_root=SOURCE_CSV_DIR,
             manifest_path=SOURCE_MANIFEST_FILE,
             local_state_path=LOCAL_DATA_STATE_FILE,
+            history_path=PAPER_UPDATE_HISTORY_FILE,
         )
         st.rerun()
 
@@ -1358,6 +1398,106 @@ def render_update_manager(source_csv_files, all_papers):
                 st.rerun()
 
 
+def _update_event_details(event):
+    details = event.get("details", {}) if isinstance(event.get("details"), dict) else {}
+    event_type = event.get("event_type", "")
+    if event_type == "automatic_literature_update":
+        sources = ", ".join(details.get("sources", [])[:4])
+        if len(details.get("sources", [])) > 4:
+            sources += f" +{len(details['sources']) - 4}"
+        return (
+            f"{sources or 'No completed source'} | source rows {details.get('source_rows', 0)} | "
+            f"added {details.get('papers_added', 0)} | updated {details.get('papers_updated', 0)}"
+        )
+    if event_type == "library_sync":
+        return (
+            f"added {details.get('added', 0)} | updated {details.get('updated', 0)} | "
+            f"removed {details.get('removed', 0)}"
+        )
+    if event_type == "content_pack":
+        asset = details.get("asset_name") or details.get("zip_file") or details.get("pack_kind", "package")
+        count = details.get("paper_delta_count") if details.get("pack_kind") == "update" else details.get("paper_count")
+        return f"{asset} | papers {int(count or 0)}"
+    return str(details)[:240]
+
+
+def render_paper_update(source_csv_files, source_state, all_papers):
+    st.header("Paper Update")
+    st.caption(
+        "Update the automatic Nature/arXiv/Science sources, verify when each local publication database was refreshed, "
+        "and publish ChipSeeker content packages from one workspace."
+    )
+
+    registry = load_source_registry(SOURCE_REGISTRY_FILE)
+    nature_sources = [source for source in list_sources(registry, "nature") if int(source.get("generation", 1) or 1) >= 2]
+    arxiv_sources = [source for source in list_sources(registry, "arxiv") if int(source.get("generation", 1) or 1) >= 2]
+    science_sources = [source for source in list_sources(registry, "science") if int(source.get("generation", 1) or 1) >= 2]
+    automatic_sources = [source for source in (nature_sources + arxiv_sources + science_sources) if source.get("enabled")]
+
+    summary_col1, summary_col2, summary_col3 = st.columns(3)
+    summary_col1.metric("Papers", len(all_papers))
+    summary_col2.metric("Imported CSVs", len(source_csv_files))
+    summary_col3.metric("Automatic Sources", len(automatic_sources))
+
+    render_one_click_literature_update(nature_sources, science_sources)
+
+    st.markdown("### Automatic Source Checkpoints")
+    checkpoint_rows = []
+    for source in automatic_sources:
+        last_run = source.get("last_run", {}) if isinstance(source.get("last_run"), dict) else {}
+        checkpoint_rows.append(
+            {
+                "Source": source.get("name", source.get("id", "")),
+                "Provider": str(source.get("provider", "")).title(),
+                "Coverage through": source.get("last_checked_date") or "Not run yet",
+                "Last completed": format_content_pack_time(last_run.get("completed_at_utc", "")),
+                "Rows in last run": int(last_run.get("rows", 0) or 0),
+            }
+        )
+    st.dataframe(checkpoint_rows, use_container_width=True, hide_index=True)
+
+    st.markdown("### Imported Publication Databases")
+    st.caption("Times below come from the actual source CSV files on this machine, grouped by journal or conference.")
+    database_rows = cached_database_update_rows(tuple(source_csv_files), source_state)
+    display_rows = [
+        {
+            "Publication": row["publication"],
+            "Last local update": format_content_pack_time(row["last_updated_at_utc"]),
+            "Source rows": row["source_rows"],
+            "CSV files": row["source_files"],
+            "Latest file": row["latest_file"],
+        }
+        for row in database_rows
+    ]
+    if display_rows:
+        st.dataframe(display_rows, use_container_width=True, hide_index=True, height=min(620, 38 + len(display_rows) * 35))
+    else:
+        st.info("No imported paper CSV has been detected yet.")
+
+    st.markdown("### Update Timeline")
+    history = load_update_history(PAPER_UPDATE_HISTORY_FILE)
+    events = list(reversed(history.get("events", [])))[:30]
+    if events:
+        st.dataframe(
+            [
+                {
+                    "Time": format_content_pack_time(event.get("happened_at_utc", "")),
+                    "Event": event.get("label", "Update"),
+                    "Status": event.get("status", ""),
+                    "Details": _update_event_details(event),
+                }
+                for event in events
+            ],
+            use_container_width=True,
+            hide_index=True,
+        )
+    else:
+        st.caption("New paper imports and package publications will be recorded here automatically.")
+
+    st.markdown("---")
+    render_content_pack_publisher()
+
+
 def run():
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
@@ -1414,6 +1554,17 @@ def run():
             save_json(LOCAL_DATA_STATE_FILE, schema_state)
             st.session_state["csv_state"] = current_csv_state
             if added_count or updated_count or removed_count:
+                _record_update_event_safely(
+                    "library_sync",
+                    "Paper database import",
+                    "completed",
+                    {
+                        "added": int(added_count or 0),
+                        "updated": int(updated_count or 0),
+                        "removed": int(removed_count or 0),
+                        "files": list(file_summaries)[:20],
+                    },
+                )
                 msg = list(file_summaries)
                 if removed_count:
                     msg.append(f"Removed: {removed_count}")
@@ -1456,7 +1607,6 @@ def run():
                 time.sleep(1.0)
                 st.rerun()
 
-    content_status = detect_content_pack_status(DATA_DIR, DB_FILE, CACHE_DIR, SOURCE_MANIFEST_FILE, schema_state=load_json(LOCAL_DATA_STATE_FILE, {}))
     ui_language = st.sidebar.selectbox(
         "Language / 语言",
         LANGUAGE_OPTIONS,
@@ -1465,20 +1615,29 @@ def run():
     if app_config.get("ui_language", "English") != ui_language:
         app_config["ui_language"] = ui_language
         save_json(CONFIG_FILE, app_config)
-    workspace_view = st.sidebar.radio(tr(ui_language, "Workspace", "工作区"), ["Search", "Update Manager", "Conflict Review"], horizontal=False)
+    workspace_options = ["Search", "Paper Update", "Conflict Review"]
+    workspace_view = st.sidebar.radio(
+        tr(ui_language, "Workspace", "工作区"),
+        workspace_options,
+        format_func=lambda value: {
+            "Search": tr(ui_language, "Search", "搜索"),
+            "Paper Update": tr(ui_language, "Paper Update", "论文更新"),
+            "Conflict Review": tr(ui_language, "Conflict Review", "冲突审查"),
+        }[value],
+        horizontal=False,
+    )
     st.sidebar.caption(f"local_data schema v{schema_state.get('schema_version', '?')}")
-    render_content_pack_sidebar(content_status, ui_language)
 
     all_papers_in_db = load_json(DB_FILE, [])
     library_years = available_years(all_papers_in_db)
     total_papers, db_stats, active_years = generate_db_stats(all_papers_in_db, analyze_venue)
 
-    if workspace_view == "Update Manager":
-        render_update_manager(source_csv_files, all_papers_in_db)
+    if workspace_view == "Paper Update":
+        render_paper_update(source_csv_files, current_csv_state, all_papers_in_db)
         return
 
     if workspace_view == "Conflict Review":
-        render_conflict_review(source_csv_files)
+        render_conflict_review(source_csv_files, current_csv_state)
         return
 
     _, help_col_right = st.columns([8, 1])
@@ -1574,6 +1733,20 @@ def run():
         all_papers_in_db,
     )
 
+    if st.session_state.pop("auto_build_tmtt_demo_cache", False):
+        demo_scope = scope_status_map.get("latest_year", {})
+        demo_cache = demo_scope.get("cache_status", {})
+        if demo_scope.get("total_papers", 0) and not demo_cache.get("up_to_date", False):
+            st.session_state["foreground_embedding_task_id"] = submit_embedding_build(
+                DB_FILE,
+                "all-MiniLM-L6-v2",
+                "",
+                years=demo_scope.get("years", []),
+                scope_key=demo_scope.get("scope_key", "all"),
+            )
+            st.session_state["foreground_embedding_scope_id"] = "latest_year"
+            st.session_state["foreground_embedding_model"] = "all-MiniLM-L6-v2"
+
     foreground_task_id = st.session_state.get("foreground_embedding_task_id")
     foreground_task_scope_id = st.session_state.get("foreground_embedding_scope_id")
     foreground_task_model = st.session_state.get("foreground_embedding_model")
@@ -1603,6 +1776,8 @@ def run():
             "建议先构建一个较小范围快速上手。ChipSeeker Lite Search 会自动使用当前已就绪的最大缓存范围。",
         )
     )
+    render_starter_library_installers(ui_language)
+    st.markdown("---")
     if active_scope_id:
         active_scope_label = next(preset["label"] for preset in scope_presets if preset["id"] == active_scope_id)
         st.info(

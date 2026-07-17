@@ -443,6 +443,7 @@ def submit_literature_incremental(
     local_state_path=None,
     run_dir=None,
     staging_root=None,
+    history_path=None,
 ):
     return submit_task(
         "literature-v2",
@@ -456,6 +457,7 @@ def submit_literature_incremental(
             "local_state_path": local_state_path,
             "run_dir": run_dir,
             "staging_root": staging_root,
+            "history_path": history_path,
         },
         _run_resumable_literature_update,
     )

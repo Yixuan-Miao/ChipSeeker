@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 import chipseeker.content_pack as content_pack
-from chipseeker.content_pack import build_content_pack, build_content_update_pack, detect_content_pack_status, install_bundled_demo_csv, install_content_pack, install_content_update_pack
+from chipseeker.content_pack import build_content_pack, build_content_update_pack, detect_content_pack_status, install_bundled_demo_csv, install_content_pack, install_content_package, install_content_update_pack
 
 
 class UploadedPack:
@@ -82,6 +82,28 @@ def test_build_and_install_content_pack(tmp_path):
     )
     assert status["pack_ready"] is True
     assert status["paper_count"] == 1
+
+
+def test_install_content_package_detects_full_pack(tmp_path):
+    data_dir = tmp_path / "source_local_data"
+    cache_dir = data_dir / "cache"
+    cache_dir.mkdir(parents=True)
+    db_file = data_dir / "isscc_papers.json"
+    manifest_path = data_dir / "source_manifest.json"
+    db_file.write_text(json.dumps([{"title": "Paper A", "abstract": "A" * 120, "year": "2026"}]), encoding="utf-8")
+    manifest_path.write_text(json.dumps({"entries": []}), encoding="utf-8")
+    result = build_content_pack(
+        str(data_dir),
+        str(db_file),
+        str(cache_dir),
+        str(manifest_path),
+        output_dir=str(tmp_path / "exports"),
+    )
+
+    installed = install_content_package(UploadedPack(Path(result["zip_path"])), str(tmp_path / "target"))
+
+    assert installed["pack_kind"] == "full"
+    assert (tmp_path / "target" / "isscc_papers.json").exists()
 
 
 def test_install_content_pack_restores_existing_data_after_failure(tmp_path, monkeypatch):
