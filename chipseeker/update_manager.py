@@ -87,7 +87,7 @@ def _merge_template_sources(payload):
 
 
 def merge_literature_v2_sources(payload):
-    """Install the compact, high-recall update set and retire overlapping V1 auto sources."""
+    """Install the current automatic literature set and retire superseded built-ins."""
     template_payload = load_json(LITERATURE_SOURCE_TEMPLATE_FILE, {"sources": []})
     templates = [source for source in template_payload.get("sources", []) if isinstance(source, dict) and source.get("id")]
     if not templates:
@@ -106,12 +106,16 @@ def merge_literature_v2_sources(payload):
     )
     nature_checkpoint = legacy_nature_dates[0] if legacy_nature_dates else ""
 
-    v2_ids = {source["id"] for source in templates}
+    active_ids = {source["id"] for source in templates}
     for source in payload["sources"]:
         if (
             source.get("provider") in {"nature", "arxiv", "science"}
-            and source.get("id") not in v2_ids
-            and int(source.get("generation", 1) or 1) < 2
+            and source.get("id") not in active_ids
+            and (
+                int(source.get("generation", 1) or 1) < 2
+                or source.get("superseded_by_v2")
+                or str(source.get("id", "")).startswith(("nature_v2_", "arxiv_v2_", "science_v2_"))
+            )
         ):
             if source.get("enabled") or not source.get("superseded_by_v2"):
                 source["enabled"] = False
@@ -123,7 +127,7 @@ def merge_literature_v2_sources(payload):
         for index, source in enumerate(payload["sources"])
         if isinstance(source, dict) and source.get("id")
     }
-    preserve_keys = {"enabled", "last_checked_date", "last_run", "last_error"}
+    preserve_keys = {"last_checked_date", "last_run", "last_error"}
     for template in templates:
         source_id = template["id"]
         existing_index = existing_by_id.get(source_id)
@@ -137,17 +141,20 @@ def merge_literature_v2_sources(payload):
             continue
 
         existing = payload["sources"][existing_index]
-        if _safe_revision(template) <= _safe_revision(existing):
+        if _safe_revision(template) < _safe_revision(existing):
             continue
         refreshed = dict(template)
         for key in preserve_keys:
             if key in existing:
                 refreshed[key] = existing[key]
-        payload["sources"][existing_index] = refreshed
-        changed = True
+        if "enabled" in existing and not existing.get("superseded_by_v2"):
+            refreshed["enabled"] = existing["enabled"]
+        if refreshed != existing:
+            payload["sources"][existing_index] = refreshed
+            changed = True
 
-    if payload.get("literature_update_generation") != 2:
-        payload["literature_update_generation"] = 2
+    if payload.get("literature_update_generation") != 3:
+        payload["literature_update_generation"] = 3
         changed = True
     return changed
 
@@ -326,6 +333,12 @@ def default_incremental_start_date(source):
     initial_start = parse_iso_date(source.get("initial_start_date", ""))
     if initial_start:
         return initial_start.isoformat()
+    try:
+        lookback_days = int(source.get("initial_lookback_days", 0) or 0)
+    except Exception:
+        lookback_days = 0
+    if lookback_days > 0:
+        return (date.today() - timedelta(days=lookback_days)).isoformat()
     try:
         lookback_years = int(source.get("initial_lookback_years", 0) or 0)
     except Exception:

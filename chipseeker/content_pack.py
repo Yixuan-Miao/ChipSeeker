@@ -58,7 +58,7 @@ def _paper_identity_key(paper):
     year = normalize_text((paper or {}).get("year", ""))
     venue = normalize_text((paper or {}).get("venue", "")).lower()
     doi = normalize_doi((paper or {}).get("doi", ""))
-    looks_like_textbook = "textbook" in venue or title.startswith("chapter ")
+    looks_like_textbook = "textbook" in venue
     if doi and not looks_like_textbook:
         return f"doi::{doi}"
     if title and year:
@@ -175,7 +175,7 @@ def detect_content_pack_status(data_dir, db_file, cache_dir, manifest_path, sche
     }
 
 
-def _pack_manifest(content_status, pack_kind="full", paper_delta_count=0):
+def _pack_manifest(content_status, pack_kind="full", paper_delta_count=0, paper_removed_count=0):
     return {
         "pack_version": 1,
         "pack_kind": pack_kind,
@@ -183,6 +183,7 @@ def _pack_manifest(content_status, pack_kind="full", paper_delta_count=0):
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
         "paper_count": content_status.get("paper_count", 0),
         "paper_delta_count": int(paper_delta_count or 0),
+        "paper_removed_count": int(paper_removed_count or 0),
         "source_count": content_status.get("source_count", 0),
         "cache_count": content_status.get("cache_count", 0),
         "has_minilm_cache": bool(content_status.get("has_minilm_cache")),
@@ -209,12 +210,16 @@ def describe_content_update_status(data_dir, db_file, state_path=None):
             "baseline_paper_count": 0,
             "current_paper_count": current_paper_count,
             "paper_delta_count": current_paper_count,
+            "paper_removed_count": 0,
         }
 
     baseline_papers = baseline.get("papers", {}) if isinstance(baseline.get("papers"), dict) else {}
     delta_count = 0
+    current_keys = set()
     for paper in papers:
         key = _paper_identity_key(paper)
+        if key:
+            current_keys.add(key)
         if key and baseline_papers.get(key) != _paper_fingerprint(paper):
             delta_count += 1
     return {
@@ -224,6 +229,7 @@ def describe_content_update_status(data_dir, db_file, state_path=None):
         "baseline_paper_count": int(baseline.get("paper_count", 0) or 0),
         "current_paper_count": current_paper_count,
         "paper_delta_count": delta_count,
+        "paper_removed_count": sum(key not in current_keys for key in baseline_papers),
     }
 
 
@@ -299,6 +305,8 @@ def build_content_update_pack(
         key = _paper_identity_key(paper)
         if key and baseline_papers.get(key) != _paper_fingerprint(paper):
             delta_papers.append(paper)
+    current_paper_keys = set(current_state.get("papers", {}))
+    removed_paper_keys = sorted(key for key in baseline_papers if key not in current_paper_keys)
 
     baseline_sources = baseline.get("sources", {}) if isinstance(baseline.get("sources"), dict) else {}
     current_sources = current_state.get("sources", {})
@@ -321,6 +329,11 @@ def build_content_update_pack(
                 json.dumps(delta_papers, indent=2, ensure_ascii=False),
             )
             included_files.append("isscc_papers.delta.json")
+            archive.writestr(
+                f"{PACK_ROOT_NAME}/isscc_papers.removed.json",
+                json.dumps(removed_paper_keys, indent=2, ensure_ascii=False),
+            )
+            included_files.append("isscc_papers.removed.json")
 
             for relative_path in changed_sources:
                 source_path = os.path.join(data_dir, relative_path.replace("/", os.sep))
@@ -391,7 +404,19 @@ def build_content_update_pack(
                         included_files.append(f"cache/{os.path.basename(source_meta)}")
                     cache_full_count += 1
 
-            archive.writestr("content_pack_manifest.json", json.dumps(_pack_manifest(content_status, pack_kind="update", paper_delta_count=len(delta_papers)), indent=2, ensure_ascii=False))
+            archive.writestr(
+                "content_pack_manifest.json",
+                json.dumps(
+                    _pack_manifest(
+                        content_status,
+                        pack_kind="update",
+                        paper_delta_count=len(delta_papers),
+                        paper_removed_count=len(removed_paper_keys),
+                    ),
+                    indent=2,
+                    ensure_ascii=False,
+                ),
+            )
 
     if save_state:
         _save_pack_state(current_state, state_path=state_path)
@@ -399,6 +424,7 @@ def build_content_update_pack(
         "zip_path": zip_path,
         "paper_count": content_status["paper_count"],
         "paper_delta_count": len(delta_papers),
+        "paper_removed_count": len(removed_paper_keys),
         "source_delta_count": len(changed_sources),
         "cache_delta_count": cache_delta_count,
         "cache_full_count": cache_full_count,
@@ -671,6 +697,24 @@ def _merge_delta_papers(pack_root, data_dir):
     return {"added": added, "updated": updated, "skipped": skipped}
 
 
+def _remove_delta_papers(pack_root, data_dir):
+    removed_file = os.path.join(pack_root, "isscc_papers.removed.json")
+    removed_keys = load_json(removed_file, []) if os.path.exists(removed_file) else []
+    if not isinstance(removed_keys, list) or not removed_keys:
+        return 0
+    targets = {str(key) for key in removed_keys if str(key)}
+    if not targets:
+        return 0
+
+    target_db = os.path.join(data_dir, "isscc_papers.json")
+    existing_papers = _read_papers(target_db)
+    kept_papers = [paper for paper in existing_papers if _paper_identity_key(paper) not in targets]
+    removed_count = len(existing_papers) - len(kept_papers)
+    if removed_count:
+        save_json(target_db, kept_papers)
+    return removed_count
+
+
 def _append_cache_deltas(pack_root, data_dir):
     cache_delta_dir = os.path.join(pack_root, "cache_delta")
     if not os.path.isdir(cache_delta_dir):
@@ -746,6 +790,7 @@ def install_content_update_pack(uploaded_file, data_dir):
 
             copied_files = 0
             paper_merge = _merge_delta_papers(pack_root, data_dir)
+            paper_removed = _remove_delta_papers(pack_root, data_dir)
             for relative_dir in PACK_DIRS:
                 source_dir = os.path.join(pack_root, relative_dir)
                 if os.path.isdir(source_dir):
@@ -767,6 +812,7 @@ def install_content_update_pack(uploaded_file, data_dir):
         "paper_added": paper_merge.get("added", 0),
         "paper_updated": paper_merge.get("updated", 0),
         "paper_skipped": paper_merge.get("skipped", 0),
+        "paper_removed": paper_removed,
         "cache_appended": cache_merge.get("appended", 0),
         "cache_skipped": cache_merge.get("skipped", 0),
     }

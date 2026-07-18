@@ -397,12 +397,6 @@ def render_literature_task_fragment(task_key, label):
     task = render_task_status(
         task_id,
         label,
-        success_message=lambda result: (
-            f"Update {result.get('status', 'completed')}: "
-            f"{result.get('completed_sources', 0)}/{result.get('source_count', 0)} sources committed; "
-            f"added {(result.get('import_result') or {}).get('added', 0)}, "
-            f"updated {(result.get('import_result') or {}).get('updated', 0)}."
-        ),
         cleanup_on_complete=False,
         auto_refresh=False,
         show_history=True,
@@ -410,6 +404,23 @@ def render_literature_task_fragment(task_key, label):
     if not task:
         return
     status = task.get("status")
+    if status == "completed":
+        result = task.get("result", {}) if isinstance(task.get("result"), dict) else {}
+        summary = (
+            f"{result.get('completed_sources', 0)}/{result.get('source_count', 0)} sources committed; "
+            f"added {(result.get('import_result') or {}).get('added', 0)}, "
+            f"updated {(result.get('import_result') or {}).get('updated', 0)}."
+        )
+        if result.get("status") == "partial":
+            st.warning(f"Update partial: {summary} Failed sources remain due and must be retried.")
+            failed_details = result.get("failed_source_details", [])
+            if failed_details:
+                st.code(
+                    "\n".join(f"{item.get('name', item.get('source_id', 'source'))}: {item.get('error', 'unknown error')}" for item in failed_details),
+                    language="text",
+                )
+        else:
+            st.success(f"Update completed: {summary}")
     if status in {"queued", "running"}:
         if st.button("Cancel update safely", key=f"cancel_{task_key}", use_container_width=True):
             cancel_task(task_id, "Canceled by user; completed staged sources were preserved for resume.")
@@ -612,6 +623,7 @@ def _content_pack_event_details(pack_kind, build_result, publish_result=None):
         "zip_file": os.path.basename(build_result.get("zip_path", "")),
         "paper_count": int(build_result.get("paper_count", 0) or 0),
         "paper_delta_count": int(build_result.get("paper_delta_count", 0) or 0),
+        "paper_removed_count": int(build_result.get("paper_removed_count", 0) or 0),
         "source_delta_count": int(build_result.get("source_delta_count", 0) or 0),
         "cache_delta_count": int(build_result.get("cache_delta_count", 0) or 0),
     }
@@ -640,10 +652,31 @@ def _record_update_event_safely(event_type, label, status, details):
         st.warning(f"The update timeline entry could not be saved: {exc}")
 
 
+def _content_pack_cache_status(app_config):
+    model_name = str(app_config.get("embedding_model") or "all-MiniLM-L6-v2")
+    status = describe_cache_status(DB_FILE, model_name, scope_key="all")
+    return model_name, status
+
+
+def _content_pack_cache_block_reason(app_config):
+    model_name, status = _content_pack_cache_status(app_config)
+    if status.get("up_to_date"):
+        return ""
+    total_papers = int(status.get("total_papers", 0) or 0)
+    cached_papers = int(status.get("cached_papers", 0) or 0)
+    return (
+        f"The full-library `{model_name}` embedding cache is stale "
+        f"({cached_papers}/{total_papers} papers). Rebuild this cache before generating or publishing a content package."
+    )
+
+
 def _build_and_publish_content_pack(pack_kind, release_config):
     publish_enabled = content_release_configured(release_config)
     label = "Latest incremental content pack" if pack_kind == "update" else "Full content pack"
     try:
+        cache_block_reason = _content_pack_cache_block_reason(load_app_config([CONFIG_FILE, LEGACY_CONFIG_FILE]))
+        if cache_block_reason:
+            raise ValueError(cache_block_reason)
         with st.spinner(f"Building {label.lower()}..."):
             if pack_kind == "update":
                 build_result = build_content_update_pack(
@@ -709,12 +742,14 @@ def render_content_pack_publisher():
     app_config = load_app_config([CONFIG_FILE, LEGACY_CONFIG_FILE])
     release_config = load_content_release_config(app_config)
     publish_enabled = content_release_configured(release_config)
+    cache_block_reason = _content_pack_cache_block_reason(app_config)
 
     if update_status["baseline_ready"]:
         st.caption(
             f"Last package baseline: `{format_content_pack_time(update_status['baseline_created_at_utc'])}` | "
             f"baseline papers: `{update_status['baseline_paper_count']}` | current papers: "
-            f"`{update_status['current_paper_count']}` | pending incremental papers: `{update_status['paper_delta_count']}`"
+            f"`{update_status['current_paper_count']}` | pending upserts: `{update_status['paper_delta_count']}` | "
+            f"pending removals: `{update_status['paper_removed_count']}`"
         )
     else:
         st.info("Generate the full package once to establish the incremental baseline.")
@@ -722,15 +757,22 @@ def render_content_pack_publisher():
         st.caption(f"Online target: `{release_config.repo}` / `{release_config.tag}`. Successful builds publish automatically.")
     else:
         st.caption("Online publishing is not configured on this machine; packages will be generated locally.")
+    if cache_block_reason:
+        st.warning(cache_block_reason)
 
     update_col, full_col = st.columns(2)
     with update_col:
         update_label = "Generate & Publish Latest Update" if publish_enabled else "Generate Latest Update Package"
-        if st.button(update_label, type="primary", use_container_width=True, disabled=not update_status["baseline_ready"]):
+        if st.button(
+            update_label,
+            type="primary",
+            use_container_width=True,
+            disabled=not update_status["baseline_ready"] or bool(cache_block_reason),
+        ):
             _build_and_publish_content_pack("update", release_config)
     with full_col:
         full_label = "Generate & Publish Full Package" if publish_enabled else "Generate Full Database Package"
-        if st.button(full_label, use_container_width=True):
+        if st.button(full_label, use_container_width=True, disabled=bool(cache_block_reason)):
             _build_and_publish_content_pack("full", release_config)
 
 
@@ -968,7 +1010,7 @@ def render_one_click_literature_update(nature_sources, science_sources):
     arxiv_sources = list_sources(registry, "arxiv")
     enabled_sources = [
         source
-        for source in (nature_sources + arxiv_sources + science_sources)
+        for source in (nature_sources + science_sources + arxiv_sources)
         if source.get("enabled") and source.get("query") and int(source.get("generation", 1) or 1) >= 2
     ]
     due_sources = [source for source in enabled_sources if source.get("last_checked_date") != today_iso]
@@ -978,8 +1020,8 @@ def render_one_click_literature_update(nature_sources, science_sources):
 
     st.markdown("### Resumable Literature Update")
     st.caption(
-        "One task covers Nature Portfolio, Nature Electronics, Nature Communications, arXiv, and Science for chips, "
-        "AI hardware, and quantum computing. It resumes interrupted sources and commits the paper library only once."
+        "Independent topic checkpoints cover IC/CMOS, semiconductor devices, AI hardware, photonic computing, "
+        "quantum computing, Nature Electronics, Nature Communications, arXiv, and Science."
     )
 
     col1, col2, col3, col4 = st.columns(4)
@@ -988,8 +1030,8 @@ def render_one_click_literature_update(nature_sources, science_sources):
     col3.metric("From", earliest_due)
     col4.metric("To", today_iso)
     st.caption(
-        f"Latest committed checkpoint: `{last_checked}`. New files remain outside the watched library until all "
-        "available sources finish; failed sources keep their old checkpoint."
+        f"Latest committed checkpoint: `{last_checked}`. Successful topics are committed once per run; failed topics "
+        "keep their old checkpoint and remain due for retry."
     )
 
     task_key = "one_click_literature_v2_task"
@@ -1417,7 +1459,8 @@ def _update_event_details(event):
     if event_type == "content_pack":
         asset = details.get("asset_name") or details.get("zip_file") or details.get("pack_kind", "package")
         count = details.get("paper_delta_count") if details.get("pack_kind") == "update" else details.get("paper_count")
-        return f"{asset} | papers {int(count or 0)}"
+        removed = int(details.get("paper_removed_count", 0) or 0)
+        return f"{asset} | papers {int(count or 0)} | removed {removed}"
     return str(details)[:240]
 
 

@@ -181,6 +181,7 @@ def _fetch_source(source, source_state, article_cache, progress_callback, cancel
         "return_report": True,
         "progress_callback": progress_callback,
         "cancel_callback": cancel_callback,
+        "relevance_scopes": source.get("relevance_scopes") or None,
     }
     if provider == "nature":
         return grab_nature(
@@ -429,6 +430,14 @@ def run_literature_update(
                 "source_count": len(source_ids),
                 "completed_sources": sum(1 for source in state["sources"].values() if source.get("status") == "fetched"),
                 "failed_sources": [source["source_id"] for source in failed],
+                "failed_source_details": [
+                    {
+                        "source_id": source.get("source_id", ""),
+                        "name": source.get("name", source.get("source_id", "")),
+                        "error": source.get("error", "unknown error"),
+                    }
+                    for source in failed
+                ],
                 "import_result": import_result,
             }
         except Exception:

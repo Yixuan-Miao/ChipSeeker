@@ -7,6 +7,7 @@ from datetime import date
 
 import requests
 
+from chipseeker.literature_relevance import is_relevant_literature
 from chipseeker.paths import MANUAL_SOURCE_DIR
 
 
@@ -87,109 +88,14 @@ def item_venue(item):
     return clean_text(venues[0] if venues else "")
 
 
-def is_relevant_record(item):
-    text = " ".join(
-        [
-            item_title(item),
-            clean_text(item.get("abstract", "")),
-            item_keywords(item),
-            item_venue(item),
-        ]
-    ).lower()
-    text = text.replace("cryo–", "cryo-").replace("low temperature", "low-temperature")
-
-    reject_terms = (
-        "cryo-em",
-        "cryo electron microscopy",
-        "cryo-electron microscopy",
-        "cryo–electron microscopy",
-        "neural circuit",
-        "brain circuit",
-        "stress response",
-        "immune circuit",
-        "biochemical network",
+def is_relevant_record(item, scopes=None):
+    return is_relevant_literature(
+        item_title(item),
+        abstract=clean_text(item.get("abstract", "")),
+        keywords=item_keywords(item),
+        venue=item_venue(item),
+        scopes=scopes,
     )
-    if any(term in text for term in reject_terms):
-        return False
-
-    strong_terms = (
-        "artificial intelligence",
-        "machine learning",
-        "deep learning",
-        "neural network",
-        "foundation model",
-        "large language model",
-        "generative ai",
-        "computer vision",
-        "reinforcement learning",
-        "robot learning",
-        "cryogenic cmos",
-        "cryo-cmos",
-        "cryo cmos",
-        "low-temperature cmos",
-        "readout integrated circuit",
-        "control integrated circuit",
-        "rf integrated circuit",
-        "radio-frequency integrated circuit",
-        "mixed-signal cmos",
-        "analog cmos",
-        "cmos circuit",
-        "cmos circuits",
-        "integrated electronics",
-        "integrated photonics",
-        "semiconductor chip",
-        "semiconductor device",
-        "artificial intelligence accelerator",
-        "ai accelerator",
-        "machine learning accelerator",
-        "compute-in-memory",
-        "in-memory computing",
-        "neuromorphic hardware",
-        "photonic computing",
-        "quantum processor",
-        "quantum computing hardware",
-        "quantum chip",
-        "superconducting qubit",
-        "spin qubit",
-        "silicon qubit",
-        "qubit readout",
-        "quantum control electronics",
-        "quantum algorithm",
-        "quantum simulation",
-        "quantum annealing",
-        "quantum error correction",
-        "quantum network",
-    )
-    if any(term in text for term in strong_terms):
-        return True
-
-    if "integrated circuit" in text or "integrated circuits" in text:
-        return any(term in text for term in ("cmos", "semiconductor", "transistor", "qubit", "quantum", "readout", "rf", "radio frequency", "chip"))
-
-    if "cmos" in text:
-        return any(term in text for term in ("cryogenic", "low-temperature", "qubit", "readout", "rf", "analog", "mixed-signal", "semiconductor", "chip"))
-
-    if "chip" in text:
-        return any(
-            term in text
-            for term in (
-                "quantum",
-                "qubit",
-                "semiconductor",
-                "photonic",
-                "accelerator",
-                "cmos",
-                "processor",
-                "memory",
-                "sensor",
-                "packaging",
-            )
-        )
-
-    if "qubit" in text or "quantum processor" in text:
-        return any(term in text for term in ("comput", "control", "readout", "hardware", "circuit", "electronics", "chip"))
-
-    return False
 
 
 def item_keywords(item):
@@ -234,6 +140,7 @@ def grab_science(
     return_report=False,
     progress_callback=None,
     cancel_callback=None,
+    relevance_scopes=None,
 ):
     output_path = resolve_output_path(output_file)
     terms = split_query_terms(query)
@@ -270,7 +177,7 @@ def grab_science(
                         continue
                     title = item_title(item)
                     venue = item_venue(item)
-                    if not title or not venue.lower().startswith("science") or not is_relevant_record(item):
+                    if not title or not venue.lower().startswith("science") or not is_relevant_record(item, scopes=relevance_scopes):
                         continue
                     seen_dois.add(doi.lower())
                     rows.append(

@@ -8,10 +8,14 @@ from datetime import date, datetime, timedelta
 
 import requests
 
+from chipseeker.literature_relevance import is_relevant_literature
 from chipseeker.paths import GENERATED_SOURCE_DIR
 
 
-ARXIV_API_URL = "http://export.arxiv.org/api/query"
+ARXIV_API_URL = "https://export.arxiv.org/api/query"
+ARXIV_HEADERS = {
+    "User-Agent": "ChipSeeker/2.3 (mailto:guangeofaisa@gmail.com)",
+}
 DEFAULT_OUTPUT_DIR = os.path.join(GENERATED_SOURCE_DIR, "arxiv_updates")
 OUTPUT_FIELDS = [
     "Document Title",
@@ -71,7 +75,7 @@ def fetch_feed(
     max_results=100,
     sort_by="lastUpdatedDate",
     session=None,
-    retries=3,
+    retries=5,
     start_date=None,
     end_date=None,
 ):
@@ -86,13 +90,18 @@ def fetch_feed(
     last_error = None
     for attempt in range(max(1, int(retries))):
         try:
-            response = client.get(ARXIV_API_URL, params=params, timeout=60)
+            response = client.get(ARXIV_API_URL, params=params, headers=ARXIV_HEADERS, timeout=60)
             response.raise_for_status()
             return response.text
         except requests.RequestException as exc:
             last_error = exc
             if attempt + 1 < retries:
-                time.sleep(min(12.0, 2.0 ** attempt))
+                retry_after = getattr(getattr(exc, "response", None), "headers", {}).get("Retry-After", "")
+                try:
+                    delay = max(3.0, float(retry_after))
+                except (TypeError, ValueError):
+                    delay = min(45.0, 5.0 * (2.0 ** attempt))
+                time.sleep(delay)
     raise RuntimeError(f"arXiv API request failed after {retries} attempts: {last_error}")
 
 
@@ -210,6 +219,7 @@ def grab_arxiv(
     progress_callback=None,
     cancel_callback=None,
     window_days=90,
+    relevance_scopes=None,
 ):
     output_path = resolve_output_path(output_file)
     parsed_start_date = datetime.fromisoformat(start_date).date() if start_date else None
@@ -258,7 +268,20 @@ def grab_arxiv(
             window_total = max(window_total, int(page["total_results"] or 0))
             for row in page["rows"]:
                 key = (row.get("DOI") or row.get("Source URL") or row.get("Document Title", "")).lower()
-                if key and key not in seen:
+                if (
+                    key
+                    and key not in seen
+                    and (
+                        not relevance_scopes
+                        or is_relevant_literature(
+                            row.get("Document Title", ""),
+                            abstract=row.get("Abstract", ""),
+                            keywords=row.get("Author Keywords", ""),
+                            venue=row.get("Publication Title", ""),
+                            scopes=relevance_scopes,
+                        )
+                    )
+                ):
                     seen.add(key)
                     rows.append(row)
             if progress_callback:

@@ -17,6 +17,18 @@ class UploadedPack:
         return self._payload
 
 
+def test_magazine_chapter_news_uses_doi_identity():
+    first = {
+        "title": "Chapter News: IEEE SSCS Kolkata Chapter [Chapters]",
+        "year": "2023",
+        "venue": "IEEE Solid-State Circuits Magazine",
+        "doi": "10.1109/MSSC.2023.3314203",
+    }
+    second = dict(first, doi="10.1109/MSSC.2023.3285157")
+
+    assert content_pack._paper_identity_key(first) != content_pack._paper_identity_key(second)
+
+
 def test_build_and_install_content_pack(tmp_path):
     data_dir = tmp_path / "source_local_data"
     cache_dir = data_dir / "cache"
@@ -215,6 +227,50 @@ def test_incremental_update_pack_merges_papers_and_cache_delta(tmp_path):
     assert install_result["cache_appended"] == 1
     assert len(merged_papers) == 2
     assert merged_cache.shape == (2, 2)
+
+
+def test_incremental_update_pack_removes_deleted_baseline_papers(tmp_path):
+    data_dir = tmp_path / "source_local_data"
+    cache_dir = data_dir / "cache"
+    cache_dir.mkdir(parents=True)
+    db_file = data_dir / "isscc_papers.json"
+    manifest_path = data_dir / "source_manifest.json"
+    state_path = data_dir / "content_pack_state.json"
+    manifest_path.write_text(json.dumps({"entries": []}), encoding="utf-8")
+    paper_a = {"title": "Paper A", "abstract": "A" * 120, "year": "2026", "venue": "JSSC", "doi": "10.1000/a"}
+    paper_b = {"title": "Paper B", "abstract": "B" * 120, "year": "2026", "venue": "JSSC", "doi": "10.1000/b"}
+    db_file.write_text(json.dumps([paper_a, paper_b]), encoding="utf-8")
+    build_content_pack(
+        str(data_dir),
+        str(db_file),
+        str(cache_dir),
+        str(manifest_path),
+        schema_state={"library_sync": {"db_record_count": 2}},
+        output_dir=str(tmp_path / "exports"),
+        pack_name="full_for_removal.zip",
+        state_path=str(state_path),
+    )
+
+    db_file.write_text(json.dumps([paper_a]), encoding="utf-8")
+    update = build_content_update_pack(
+        str(data_dir),
+        str(db_file),
+        str(cache_dir),
+        str(manifest_path),
+        schema_state={"library_sync": {"db_record_count": 1}},
+        output_dir=str(tmp_path / "exports"),
+        pack_name="removal.zip",
+        state_path=str(state_path),
+    )
+    assert update["paper_removed_count"] == 1
+
+    target_dir = tmp_path / "target_local_data"
+    target_dir.mkdir()
+    (target_dir / "isscc_papers.json").write_text(json.dumps([paper_a, paper_b]), encoding="utf-8")
+    installed = install_content_update_pack(UploadedPack(Path(update["zip_path"])), str(target_dir))
+    papers = json.loads((target_dir / "isscc_papers.json").read_text(encoding="utf-8"))
+    assert installed["paper_removed"] == 1
+    assert papers == [paper_a]
 
 
 def test_incremental_update_pack_replaces_non_append_cache(tmp_path):

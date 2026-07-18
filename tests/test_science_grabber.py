@@ -18,3 +18,9 @@ def test_science_relevance_covers_broad_ai_and_quantum_computing():
 
 def test_science_relevance_rejects_biological_circuit_false_positive():
     assert not sg.is_relevant_record(_item("Machine learning of a neural circuit", "Brain circuit activity"))
+
+
+def test_science_relevance_rejects_applied_ai_noise():
+    assert not sg.is_relevant_record(_item("Machine learning predicts which rivers and wetlands are protected"))
+    assert not sg.is_relevant_record(_item("A foundation model for antimicrobial peptide discovery"))
+    assert not sg.is_relevant_record(_item("The AI Economist: Taxation policy design with reinforcement learning"))

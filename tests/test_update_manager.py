@@ -1,5 +1,8 @@
+from datetime import date, timedelta
+
 from chipseeker.update_manager import (
     advance_ieee_sources,
+    default_incremental_start_date,
     default_nature_start_date,
     load_source_registry,
     merge_literature_v2_sources,
@@ -92,3 +95,38 @@ def test_v2_sources_retire_legacy_and_inherit_earliest_nature_checkpoint(tmp_pat
     assert by_id["old_arxiv"]["enabled"] is False
     assert by_id["nature_v2"]["last_checked_date"] == "2026-05-16"
     assert by_id["arxiv_v2"]["last_checked_date"] == ""
+
+
+def test_initial_lookback_days_limits_first_arxiv_backfill():
+    source = {"provider": "arxiv", "generation": 3, "initial_lookback_days": 180}
+
+    assert default_incremental_start_date(source) == (date.today() - timedelta(days=180)).isoformat()
+
+
+def test_current_template_reenables_a_previously_superseded_source(tmp_path, monkeypatch):
+    template_path = tmp_path / "literature_v3.json"
+    template_path.write_text(
+        '{"sources":[{"id":"nature_topic","provider":"nature","generation":3,"revision":10,'
+        '"enabled":true,"query":"CMOS","last_checked_date":""}]}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("chipseeker.update_manager.LITERATURE_SOURCE_TEMPLATE_FILE", str(template_path))
+    payload = {
+        "sources": [
+            {
+                "id": "nature_topic",
+                "provider": "nature",
+                "generation": 1,
+                "revision": 2,
+                "enabled": False,
+                "superseded_by_v2": True,
+                "last_checked_date": "2026-07-17",
+            }
+        ]
+    }
+
+    assert merge_literature_v2_sources(payload) is True
+    source = payload["sources"][0]
+    assert source["enabled"] is True
+    assert source["generation"] == 3
+    assert source["last_checked_date"] == "2026-07-17"

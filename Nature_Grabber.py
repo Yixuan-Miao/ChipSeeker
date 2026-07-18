@@ -7,6 +7,7 @@ import time
 from urllib.parse import urljoin
 
 import requests
+from chipseeker.literature_relevance import is_relevant_literature
 from chipseeker.paths import MANUAL_SOURCE_DIR
 
 logger = logging.getLogger(__name__)
@@ -167,6 +168,7 @@ def grab_nature(
     article_cache=None,
     progress_callback=None,
     cancel_callback=None,
+    relevance_scopes=None,
 ):
     ensure_bs4()
     output_path = resolve_output_path(output_file)
@@ -207,7 +209,20 @@ def grab_nature(
                     logger.warning("skip %s: %s", article_url, exc)
                     continue
                 time.sleep(max(0.0, float(sleep_seconds)))
-            if row.get("Document Title") and row.get("Abstract"):
+            if (
+                row.get("Document Title")
+                and row.get("Abstract")
+                and (
+                    not relevance_scopes
+                    or is_relevant_literature(
+                        row.get("Document Title", ""),
+                        abstract=row.get("Abstract", ""),
+                        keywords=row.get("Author Keywords", ""),
+                        venue=row.get("Publication Title", ""),
+                        scopes=relevance_scopes,
+                    )
+                )
+            ):
                 rows.append(row)
             else:
                 invalid_rows += 1
