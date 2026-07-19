@@ -6,6 +6,16 @@ NOTICE_FILE = Path(__file__).with_name("update_notices.json")
 
 FALLBACK_NOTICES = [
     {
+        "date": "2026-07-19",
+        "title": "IEEE IC library: RFIC 2026 papers are live.",
+        "title_zh": "IEEE 集成电路库：RFIC 2026 已更新。",
+    },
+    {
+        "date": "2026-07-19",
+        "title": "IEEE IC library: IMS 2026 papers are live.",
+        "title_zh": "IEEE 集成电路库：IMS 2026 已更新。",
+    },
+    {
         "date": "2026-05-16",
         "title": "Library update: JSSC May 2026 and CICC 2026 papers are now in the update pipeline.",
         "title_zh": "文献库更新：JSSC 2026 五月与 CICC 2026 论文已进入更新流程。",
