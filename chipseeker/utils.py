@@ -41,7 +41,8 @@ def normalize_text(value):
 
 
 def normalize_title(value):
-    return normalize_text(value).lower()
+    text = normalize_text(value).lower()
+    return re.sub(r"[\W_]+", " ", text, flags=re.UNICODE).strip()
 
 
 def normalize_doi(value):

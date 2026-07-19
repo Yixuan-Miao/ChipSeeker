@@ -1,5 +1,6 @@
 import argparse
 import csv
+import json
 import os
 import re
 import time
@@ -207,6 +208,20 @@ def incremental_date_windows(start_date, end_date=None, window_days=90):
     return windows
 
 
+def _read_rows(path):
+    if not os.path.exists(path):
+        return []
+    with open(path, "r", encoding="utf-8-sig", newline="") as handle:
+        return list(csv.DictReader(handle))
+
+
+def _write_progress(path, payload):
+    temporary_path = path + ".part"
+    with open(temporary_path, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2, ensure_ascii=False)
+    os.replace(temporary_path, path)
+
+
 def grab_arxiv(
     query,
     output_file,
@@ -222,11 +237,32 @@ def grab_arxiv(
     relevance_scopes=None,
 ):
     output_path = resolve_output_path(output_file)
+    partial_path = output_path + ".partial.csv"
+    progress_path = output_path + ".progress.json"
     parsed_start_date = datetime.fromisoformat(start_date).date() if start_date else None
     page_size = max(1, min(2000, int(page_size or 100)))
     result_limit = max(0, int(max_results or 0))
-    rows = []
-    seen = set()
+    checkpoint_context = {
+        "start_date": start_date or "",
+        "query": query,
+        "categories": list(categories or []),
+        "window_days": int(window_days),
+    }
+    progress_state = {}
+    if os.path.exists(progress_path):
+        try:
+            with open(progress_path, "r", encoding="utf-8") as handle:
+                progress_state = json.load(handle)
+        except (OSError, ValueError):
+            progress_state = {}
+    if progress_state.get("context") != checkpoint_context:
+        progress_state = {}
+    completed_window_keys = set(progress_state.get("completed_windows", []))
+    rows = _read_rows(partial_path) if completed_window_keys else []
+    seen = {
+        (row.get("DOI") or row.get("Source URL") or row.get("Document Title", "")).lower()
+        for row in rows
+    }
     pages = 0
     total_results = 0
     truncated = False
@@ -236,6 +272,10 @@ def grab_arxiv(
     completed_windows = 0
 
     for window_index, (window_start, window_end) in enumerate(windows, start=1):
+        window_key = f"{window_start.isoformat() if window_start else ''}:{window_end.isoformat() if window_end else ''}"
+        if window_key in completed_window_keys:
+            completed_windows += 1
+            continue
         start = 0
         window_total = 0
         while True:
@@ -296,6 +336,16 @@ def grab_arxiv(
                 )
             if page["entry_count"] < request_size or start + page["entry_count"] >= window_total:
                 completed_windows += 1
+                completed_window_keys.add(window_key)
+                _write_rows(partial_path, rows)
+                _write_progress(
+                    progress_path,
+                    {
+                        "context": checkpoint_context,
+                        "completed_windows": sorted(completed_window_keys),
+                        "row_count": len(rows),
+                    },
+                )
                 break
             start += page["entry_count"]
         total_results += window_total
@@ -314,6 +364,10 @@ def grab_arxiv(
         "truncated": truncated,
         "output_file": output_path,
     }
+    if report["completed"]:
+        for checkpoint_path in (partial_path, progress_path):
+            if os.path.exists(checkpoint_path):
+                os.remove(checkpoint_path)
     print(
         f"[Arxiv_Grabber] wrote {len(rows)} rows from {pages} page(s) to {output_path}; "
         f"completed={report['completed']}",

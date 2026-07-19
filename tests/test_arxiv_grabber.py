@@ -1,6 +1,7 @@
 import csv
 from datetime import date, timedelta
 import requests
+import pytest
 
 import Arxiv_Grabber as ag
 
@@ -126,3 +127,100 @@ def test_grab_arxiv_pages_until_checkpoint(monkeypatch, tmp_path):
     assert report["completed"] is True
     assert report["row_count"] == 3
     assert all("Old paper" != row["Document Title"] for row in report["rows"])
+
+
+def test_arxiv_resumes_after_completed_date_window(monkeypatch, tmp_path):
+    monkeypatch.setattr(ag, "DEFAULT_OUTPUT_DIR", str(tmp_path / "arxiv"))
+    today = date.today()
+    calls = []
+    fail_older_window = True
+
+    def feed(paper_id, published):
+        return f"""<?xml version='1.0' encoding='UTF-8'?>
+<feed xmlns='http://www.w3.org/2005/Atom' xmlns:opensearch='http://a9.com/-/spec/opensearch/1.1/'>
+  <opensearch:totalResults>1</opensearch:totalResults>
+  <entry><id>http://arxiv.org/abs/{paper_id}v1</id><published>{published}T00:00:00Z</published>
+  <title>Chip {paper_id}</title><summary>{'A' * 120}</summary><author><name>Alice</name></author>
+  <category term='cs.AR' /></entry>
+</feed>"""
+
+    def fake_fetch(*_args, **kwargs):
+        nonlocal fail_older_window
+        window_start = kwargs["start_date"]
+        calls.append(window_start)
+        if window_start == (today - timedelta(days=1)).isoformat() and fail_older_window:
+            raise RuntimeError("temporary failure")
+        return feed(window_start.replace("-", ""), window_start)
+
+    monkeypatch.setattr(ag, "fetch_feed", fake_fetch)
+    monkeypatch.setattr(ag.time, "sleep", lambda *_args, **_kwargs: None)
+    with pytest.raises(RuntimeError, match="temporary failure"):
+        ag.grab_arxiv(
+            "chip",
+            "resumable.csv",
+            start_date=(today - timedelta(days=1)).isoformat(),
+            window_days=1,
+            max_results=0,
+            return_report=True,
+        )
+
+    fail_older_window = False
+    calls.clear()
+    report = ag.grab_arxiv(
+        "chip",
+        "resumable.csv",
+        start_date=(today - timedelta(days=1)).isoformat(),
+        window_days=1,
+        max_results=0,
+        return_report=True,
+    )
+
+    assert calls == [(today - timedelta(days=1)).isoformat()]
+    assert report["completed"] is True
+    assert report["row_count"] == 2
+
+
+def test_arxiv_checkpoint_is_ignored_when_query_context_changes(monkeypatch, tmp_path):
+    monkeypatch.setattr(ag, "DEFAULT_OUTPUT_DIR", str(tmp_path / "arxiv"))
+    monkeypatch.setattr(ag.time, "sleep", lambda *_args, **_kwargs: None)
+    output_path = tmp_path / "arxiv" / "changed-query.csv"
+    output_path.parent.mkdir(parents=True)
+    today = date.today().isoformat()
+    ag._write_rows(
+        str(output_path) + ".partial.csv",
+        [{"Document Title": "Stale checkpoint paper", "Source URL": "https://arxiv.org/abs/stale"}],
+    )
+    ag._write_progress(
+        str(output_path) + ".progress.json",
+        {
+            "context": {
+                "start_date": today,
+                "query": "old query",
+                "categories": ["cs.AR"],
+                "window_days": 90,
+            },
+            "completed_windows": [f"{today}:{today}"],
+            "row_count": 1,
+        },
+    )
+    calls = []
+
+    def fake_fetch(*args, **_kwargs):
+        calls.append(args[0])
+        return """<?xml version='1.0' encoding='UTF-8'?>
+<feed xmlns='http://www.w3.org/2005/Atom' xmlns:opensearch='http://a9.com/-/spec/opensearch/1.1/'>
+  <opensearch:totalResults>0</opensearch:totalResults>
+</feed>"""
+
+    monkeypatch.setattr(ag, "fetch_feed", fake_fetch)
+    report = ag.grab_arxiv(
+        "new query",
+        "changed-query.csv",
+        categories=["cs.AR"],
+        start_date=today,
+        max_results=0,
+        return_report=True,
+    )
+
+    assert calls == ["new query"]
+    assert report["row_count"] == 0

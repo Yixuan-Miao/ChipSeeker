@@ -135,3 +135,88 @@ def test_create_or_resume_run_preserves_fetched_source(monkeypatch, tmp_path):
 
     assert resumed["run_id"] == first["run_id"]
     assert resumed["sources"]["resume_v2"]["status"] == "fetched"
+
+
+def test_create_run_can_override_incremental_start_date(monkeypatch, tmp_path):
+    source = {
+        "id": "backfill_v2",
+        "provider": "nature",
+        "generation": 2,
+        "enabled": True,
+        "name": "Backfill",
+        "query": "chip",
+        "last_checked_date": "2026-07-17",
+    }
+    monkeypatch.setattr(lu, "load_source_registry", lambda *_args, **_kwargs: {"sources": [source]})
+
+    state = lu.create_or_resume_run(
+        "unused.json",
+        ["backfill_v2"],
+        start_date_override="2021-07-18",
+        run_dir=str(tmp_path / "runs"),
+        staging_root=str(tmp_path / "stage"),
+    )
+
+    assert state["start_date_override"] == "2021-07-18"
+    assert state["sources"]["backfill_v2"]["start_date"] == "2021-07-18"
+
+
+def test_load_nature_article_cache_reuses_complete_rows(tmp_path):
+    source_dir = tmp_path / "nature"
+    source_dir.mkdir()
+    source_file = source_dir / "existing.csv"
+    lu._write_csv_rows(
+        str(source_file),
+        [
+            {
+                "Document Title": "Reusable paper",
+                "Abstract": "Complete metadata",
+                "Source URL": "https://www.nature.com/articles/example?utm_source=test",
+            },
+            {
+                "Document Title": "Missing abstract",
+                "Abstract": "",
+                "Source URL": "https://www.nature.com/articles/incomplete",
+            },
+        ],
+    )
+
+    cached = lu._load_nature_article_cache(str(source_dir))
+
+    assert list(cached) == ["https://www.nature.com/articles/example"]
+    assert cached["https://www.nature.com/articles/example"]["Document Title"] == "Reusable paper"
+
+
+def test_recover_incomplete_nature_source_retries_only_failed_urls(tmp_path):
+    output_file = tmp_path / "partial.csv"
+    _write_source(output_file, title="Existing paper")
+    source = {"provider": "nature", "relevance_scopes": None}
+    source_state = {
+        "output_file": str(output_file),
+        "report": {
+            "failed": [
+                {"url": "https://www.nature.com/articles/recovered", "error": "timeout"},
+                {"url": "https://www.nature.com/articles/still-failing", "error": "timeout"},
+            ],
+            "truncated": False,
+            "invalid_rows": 0,
+        },
+    }
+
+    def fetcher(url):
+        if url.endswith("still-failing"):
+            raise RuntimeError("still unavailable")
+        return {
+            "Document Title": "Recovered paper",
+            "Abstract": "Complete metadata",
+            "Publication Year": "2026",
+            "Publication Title": "Nature Electronics",
+            "DOI": "10.1000/recovered",
+            "Source URL": url,
+        }
+
+    report = lu._recover_incomplete_nature_source(source, source_state, {}, fetcher=fetcher)
+
+    assert report["row_count"] == 2
+    assert report["completed"] is False
+    assert [item["url"] for item in report["failed"]] == ["https://www.nature.com/articles/still-failing"]

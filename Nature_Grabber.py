@@ -4,6 +4,7 @@ import logging
 import os
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urljoin
 
 import requests
@@ -147,6 +148,11 @@ def parse_article(session, article_url):
     }
 
 
+def fetch_article(article_url):
+    with requests.Session() as session:
+        return parse_article(session, article_url)
+
+
 def _write_rows(output_path, rows):
     temporary_path = output_path + ".part"
     with open(temporary_path, "w", encoding="utf-8-sig", newline="") as handle:
@@ -169,6 +175,7 @@ def grab_nature(
     progress_callback=None,
     cancel_callback=None,
     relevance_scopes=None,
+    article_workers=1,
 ):
     ensure_bs4()
     output_path = resolve_output_path(output_file)
@@ -193,22 +200,46 @@ def grab_nature(
         if not article_urls or not new_urls:
             break
 
+        uncached_urls = []
+        page_rows = {}
         for article_url in new_urls:
             if cancel_callback and cancel_callback():
                 raise RuntimeError("Task was canceled.")
             seen_urls.add(article_url)
             cached = shared_cache.get(article_url)
             if cached is not None:
-                row = dict(cached)
+                page_rows[article_url] = dict(cached)
             else:
+                uncached_urls.append(article_url)
+
+        worker_count = max(1, min(int(article_workers or 1), len(uncached_urls) or 1))
+        if worker_count == 1:
+            for article_url in uncached_urls:
                 try:
                     row = parse_article(session, article_url)
                     shared_cache[article_url] = dict(row)
+                    page_rows[article_url] = row
                 except Exception as exc:
                     failures.append({"url": article_url, "error": str(exc)})
                     logger.warning("skip %s: %s", article_url, exc)
-                    continue
                 time.sleep(max(0.0, float(sleep_seconds)))
+        else:
+            with ThreadPoolExecutor(max_workers=worker_count) as executor:
+                future_urls = {executor.submit(fetch_article, url): url for url in uncached_urls}
+                for future in as_completed(future_urls):
+                    article_url = future_urls[future]
+                    try:
+                        row = future.result()
+                        shared_cache[article_url] = dict(row)
+                        page_rows[article_url] = row
+                    except Exception as exc:
+                        failures.append({"url": article_url, "error": str(exc)})
+                        logger.warning("skip %s: %s", article_url, exc)
+
+        for article_url in new_urls:
+            row = page_rows.get(article_url)
+            if row is None:
+                continue
             if (
                 row.get("Document Title")
                 and row.get("Abstract")
@@ -275,6 +306,7 @@ def main():
     parser.add_argument("--start-date", default="", help="Optional ISO start date for incremental updates")
     parser.add_argument("--max-pages", type=int, default=0, help="Optional page cap; 0 scans to the end")
     parser.add_argument("--sleep", type=float, default=0.4, help="Delay between article requests in seconds")
+    parser.add_argument("--article-workers", type=int, default=3, help="Concurrent article metadata requests")
     args = parser.parse_args()
     grab_nature(
         query=args.query,
@@ -284,6 +316,7 @@ def main():
         start_date=args.start_date or None,
         max_pages=int(args.max_pages),
         sleep_seconds=float(args.sleep),
+        article_workers=int(args.article_workers),
     )
 
 

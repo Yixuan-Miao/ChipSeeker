@@ -341,10 +341,21 @@ def bibliographic_metadata_enrich_required(state_payload, source_snapshot, db_fi
     )
 
 
+def _dedupe_list_values(values):
+    result = []
+    seen = set()
+    for value in values:
+        key = normalize_text(value).lower()
+        if key and key not in seen:
+            result.append(normalize_text(value))
+            seen.add(key)
+    return result
+
+
 def build_paper_from_row(row):
-    authors_list = split_multi_value(row.get("Authors", ""))
-    keywords = split_multi_value(row.get("Author Keywords", ""))
-    ieee_terms = split_multi_value(row.get("IEEE Terms", ""))
+    authors_list = _dedupe_list_values(split_multi_value(row.get("Authors", "")))
+    keywords = _dedupe_list_values(split_multi_value(row.get("Author Keywords", "")))
+    ieee_terms = _dedupe_list_values(split_multi_value(row.get("IEEE Terms", "")))
     start_page = normalize_text(row.get("Start Page", ""))
     end_page = normalize_text(row.get("End Page", ""))
     return {
@@ -583,11 +594,37 @@ def _title_has_any(title_lower, keywords):
 
 def is_junk_paper(title, abstract, row=None):
     title_lower = title.get("title", "").lower() if isinstance(title, dict) else str(title).lower()
+    normalized_title = normalize_title(title_lower)
     abstract_text = normalize_text(abstract)
     abstract_lower = abstract_text.lower()
     row = row or {}
     has_doi = bool(normalize_doi(row.get("DOI", "")))
     no_abstract_values = {"", "na", "n/a", "no abstract available.", "no abstract"}
+
+    exact_administrative_titles = {
+        "information for authors",
+        "ieee journal of solid state circuits",
+        "introducing ieee collabratec",
+        "techrxiv share your preprint research with the world",
+        "ieee transactions on microwave theory and techniques publication information",
+        "ieee transactions on microwave theory and techniques information for authors",
+        "ieee transactions on circuits and systems i regular papers information for authors",
+        "ieee transactions on circuits and systems i regular papers publication information",
+        "ieee circuits and systems society information",
+        "ieee journal of solid state circuits information for authors",
+        "ieee journal of solid state circuits publication information",
+        "ieee open access publishing",
+        "ceda currents ieee news",
+        "contributors",
+        "copyright notice",
+        "title page",
+        "staff list",
+        "society listing",
+        "patent abstracts",
+        "new associate editor",
+    }
+    if normalized_title in exact_administrative_titles:
+        return True
 
     hard_junk_keywords = [
         "table of contents",
@@ -606,6 +643,8 @@ def is_junk_paper(title, abstract, row=None):
         "masthead",
         "advertisement",
         "publisher's note",
+        "information for authors",
+        "publication information",
     ]
     if _title_has_any(title_lower, hard_junk_keywords):
         return True
@@ -705,6 +744,10 @@ def scan_and_import_csvs(db_file, cache_dir, source_root=SOURCE_CSV_DIR, manifes
             original_ordered_keys.append(key)
             register_lookup_keys(key, paper)
     original_keys = set(existing_papers.keys())
+    original_signatures = {key: paper_signature(paper) for key, paper in existing_papers.items()}
+    original_embedding_signatures = {
+        key: embedding_relevant_signature(paper) for key, paper in existing_papers.items()
+    }
 
     for file in csv_files:
         new_in_file = 0
@@ -781,9 +824,16 @@ def scan_and_import_csvs(db_file, cache_dir, source_root=SOURCE_CSV_DIR, manifes
         removed_count = 0
     else:
         removed_count = len(original_keys - current_keys)
-    added_count = sum(new_files_info.values())
-    updated_count = sum(updated_files_info.values())
     final_papers = [existing_papers[paper_key] for paper_key in ordered_keys]
+    added_count = len(current_keys - original_keys)
+    updated_count = sum(
+        paper_signature(existing_papers[paper_key]) != original_signatures[paper_key]
+        for paper_key in current_keys & original_keys
+    )
+    cache_invalidating_update_count = sum(
+        embedding_relevant_signature(existing_papers[paper_key]) != original_embedding_signatures[paper_key]
+        for paper_key in current_keys & original_keys
+    )
 
     if added_count > 0 or updated_count > 0 or removed_count > 0:
         save_json(db_file, final_papers)

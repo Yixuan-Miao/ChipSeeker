@@ -4,10 +4,12 @@ import os
 import shutil
 import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timezone
 from pathlib import Path
 
 from chipseeker.data_sync import build_source_snapshot, import_csv_files_incremental, list_source_csv_files
+from chipseeker.literature_relevance import is_relevant_literature
 from chipseeker.paths import (
     ARXIV_UPDATE_DIR,
     CACHE_DIR,
@@ -59,12 +61,13 @@ def _save_run_state(state, run_dir=LITERATURE_UPDATE_RUN_DIR):
     save_json(_run_state_path(state["run_id"], run_dir), state)
 
 
-def _source_signature(source_ids):
-    return hashlib.sha1("\n".join(sorted(source_ids)).encode("utf-8")).hexdigest()
+def _source_signature(source_ids, start_date_override=""):
+    values = sorted(source_ids) + [f"start:{start_date_override or ''}"]
+    return hashlib.sha1("\n".join(values).encode("utf-8")).hexdigest()
 
 
-def _find_resumable_state(source_ids, run_dir=LITERATURE_UPDATE_RUN_DIR):
-    signature = _source_signature(source_ids)
+def _find_resumable_state(source_ids, start_date_override="", run_dir=LITERATURE_UPDATE_RUN_DIR):
+    signature = _source_signature(source_ids, start_date_override=start_date_override)
     candidates = []
     for path in Path(run_dir).glob("*.json"):
         state = load_json(str(path), {})
@@ -81,13 +84,18 @@ def _find_resumable_state(source_ids, run_dir=LITERATURE_UPDATE_RUN_DIR):
 def create_or_resume_run(
     registry_path,
     source_ids,
+    start_date_override="",
     run_dir=LITERATURE_UPDATE_RUN_DIR,
     staging_root=LITERATURE_UPDATE_STAGING_DIR,
 ):
     os.makedirs(run_dir, exist_ok=True)
     os.makedirs(staging_root, exist_ok=True)
     source_ids = list(dict.fromkeys(source_ids))
-    existing = _find_resumable_state(source_ids, run_dir=run_dir)
+    existing = _find_resumable_state(
+        source_ids,
+        start_date_override=start_date_override,
+        run_dir=run_dir,
+    )
     if existing:
         for source_state in existing.get("sources", {}).values():
             if source_state.get("status") == "fetched" and not os.path.exists(source_state.get("output_file", "")):
@@ -108,7 +116,7 @@ def create_or_resume_run(
             "source_id": source_id,
             "provider": source.get("provider"),
             "name": source.get("name", source_id),
-            "start_date": default_incremental_start_date(source),
+            "start_date": start_date_override or default_incremental_start_date(source),
             "status": "pending",
             "rows": 0,
             "output_file": "",
@@ -118,7 +126,8 @@ def create_or_resume_run(
         "schema_version": 1,
         "run_id": run_id,
         "source_ids": list(sources),
-        "source_signature": _source_signature(list(sources)),
+        "source_signature": _source_signature(list(sources), start_date_override=start_date_override),
+        "start_date_override": start_date_override,
         "checked_date": date.today().isoformat(),
         "status": "queued",
         "created_at_utc": _utc_now(),
@@ -150,6 +159,26 @@ def _read_csv_rows(path):
         return list(csv.DictReader(handle))
 
 
+def _load_nature_article_cache(source_dir=NATURE_UPDATE_DIR):
+    cached = {}
+    if not os.path.isdir(source_dir):
+        return cached
+    for path in Path(source_dir).rglob("*.csv"):
+        try:
+            rows = _read_csv_rows(str(path))
+        except (OSError, csv.Error, UnicodeError):
+            continue
+        for row in rows:
+            source_url = str(row.get("Source URL", "")).strip().split("?", 1)[0]
+            if (
+                source_url.startswith("https://www.nature.com/articles/")
+                and row.get("Document Title")
+                and row.get("Abstract")
+            ):
+                cached[source_url] = row
+    return cached
+
+
 def _write_csv_rows(path, rows):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     temporary_path = path + ".part"
@@ -166,6 +195,85 @@ def _remove_staging_dir(staging_dir, staging_root):
     if target == root or os.path.commonpath([root, target]) != root:
         raise RuntimeError(f"Refusing to remove staging path outside its root: {target}")
     shutil.rmtree(target, ignore_errors=True)
+
+
+def _recover_incomplete_nature_source(source, source_state, article_cache, fetcher=None):
+    report = source_state.get("report", {}) if isinstance(source_state.get("report"), dict) else {}
+    failures = report.get("failed", []) if isinstance(report.get("failed"), list) else []
+    output_file = source_state.get("output_file", "")
+    if (
+        source.get("provider") != "nature"
+        or report.get("truncated")
+        or not failures
+        or not output_file
+        or not os.path.exists(output_file)
+    ):
+        return None
+
+    if fetcher is None:
+        from Nature_Grabber import fetch_article
+
+        fetcher = fetch_article
+
+    failed_urls = list(dict.fromkeys(str(item.get("url", "")).strip() for item in failures if item.get("url")))
+    if not failed_urls:
+        return None
+
+    recovered = {}
+    unresolved = []
+    worker_count = min(3, len(failed_urls))
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        future_urls = {executor.submit(fetcher, url): url for url in failed_urls}
+        for future in as_completed(future_urls):
+            article_url = future_urls[future]
+            try:
+                row = future.result()
+                recovered[article_url] = row
+                article_cache[article_url] = dict(row)
+            except Exception as exc:
+                unresolved.append({"url": article_url, "error": str(exc)})
+
+    deduped = {}
+    for row in _read_csv_rows(output_file):
+        deduped[_paper_key(row)] = row
+    invalid_rows = int(report.get("invalid_rows", 0) or 0)
+    relevance_scopes = source.get("relevance_scopes") or None
+    for article_url in failed_urls:
+        row = recovered.get(article_url)
+        if row is None:
+            continue
+        if (
+            row.get("Document Title")
+            and row.get("Abstract")
+            and (
+                not relevance_scopes
+                or is_relevant_literature(
+                    row.get("Document Title", ""),
+                    abstract=row.get("Abstract", ""),
+                    keywords=row.get("Author Keywords", ""),
+                    venue=row.get("Publication Title", ""),
+                    scopes=relevance_scopes,
+                )
+            )
+        ):
+            deduped[_paper_key(row)] = row
+        else:
+            invalid_rows += 1
+
+    rows = list(deduped.values())
+    _write_csv_rows(output_file, rows)
+    recovered_report = dict(report)
+    recovered_report.update(
+        {
+            "rows": rows,
+            "row_count": len(rows),
+            "failed": unresolved,
+            "invalid_rows": invalid_rows,
+            "completed": not unresolved,
+            "recovery_attempted": True,
+        }
+    )
+    return recovered_report
 
 
 def _fetch_source(source, source_state, article_cache, progress_callback, cancel_callback):
@@ -191,6 +299,7 @@ def _fetch_source(source, source_state, article_cache, progress_callback, cancel
             max_pages=int(source.get("max_pages", 0) or 0),
             sleep_seconds=float(source.get("sleep_seconds", 0.4)),
             article_cache=article_cache,
+            article_workers=int(source.get("article_workers", 3) or 3),
         )
     if provider == "arxiv":
         return grab_arxiv(
@@ -305,6 +414,7 @@ def run_literature_update(
         state = create_or_resume_run(
             payload.get("registry_path") or SOURCE_REGISTRY_FILE,
             payload["source_ids"],
+            start_date_override=payload.get("start_date_override") or "",
             run_dir=payload.get("run_dir") or LITERATURE_UPDATE_RUN_DIR,
             staging_root=payload.get("staging_root") or LITERATURE_UPDATE_STAGING_DIR,
         )
@@ -314,7 +424,12 @@ def run_literature_update(
         _save_run_state(state, run_dir=run_dir)
         registry = load_source_registry(payload.get("registry_path") or SOURCE_REGISTRY_FILE)
         source_ids = state["source_ids"]
-        article_cache = {}
+        nature_cache_root = (
+            payload.get("nature_cache_root")
+            or payload.get("source_root")
+            or SOURCE_CSV_DIR
+        )
+        article_cache = _load_nature_article_cache(nature_cache_root)
 
         try:
             for index, source_id in enumerate(source_ids):
@@ -352,13 +467,20 @@ def run_literature_update(
                     update_progress(overall, f"{source_state['name']}: pages={details.get('pages', 0)}, rows={details.get('rows', 0)}")
 
                 try:
-                    report = _fetch_source(
-                        source,
-                        source_state,
-                        article_cache,
-                        source_progress,
-                        cancel_requested,
-                    )
+                    report = _recover_incomplete_nature_source(source, source_state, article_cache)
+                    if report is None:
+                        report = _fetch_source(
+                            source,
+                            source_state,
+                            article_cache,
+                            source_progress,
+                            cancel_requested,
+                        )
+                    else:
+                        append_history(
+                            f"Retried failed article pages for {source_state['name']}: "
+                            f"{len(report.get('failed', []))} still unresolved"
+                        )
                     source_state["report"] = {key: value for key, value in report.items() if key != "rows"}
                     source_state["rows"] = int(report.get("row_count", len(report.get("rows", []))) or 0)
                     source_state["finished_at_utc"] = _utc_now()
@@ -419,10 +541,16 @@ def run_literature_update(
                     )
                 except OSError:
                     append_history("Literature update committed, but its timeline entry could not be saved.", level="warning")
-            _remove_staging_dir(
-                state["staging_dir"],
-                payload.get("staging_root") or LITERATURE_UPDATE_STAGING_DIR,
-            )
+            if not failed:
+                _remove_staging_dir(
+                    state["staging_dir"],
+                    payload.get("staging_root") or LITERATURE_UPDATE_STAGING_DIR,
+                )
+            else:
+                append_history(
+                    f"Partial run staging retained for audit: {state['staging_dir']}",
+                    level="warning",
+                )
             update_progress(1.0, "Literature update committed")
             return {
                 "run_id": state["run_id"],
@@ -438,6 +566,7 @@ def run_literature_update(
                     }
                     for source in failed
                 ],
+                "staging_dir": state["staging_dir"] if failed else "",
                 "import_result": import_result,
             }
         except Exception:

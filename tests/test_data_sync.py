@@ -548,6 +548,11 @@ def test_doi_session_introduction_is_kept_but_administrative_pages_are_skipped(t
     assert not is_junk_paper(useful_row["Document Title"], useful_row["Abstract"], useful_row)
     assert is_junk_paper(admin_row["Document Title"], admin_row["Abstract"], admin_row)
     assert is_junk_paper(soft_without_doi["Document Title"], soft_without_doi["Abstract"], soft_without_doi)
+    assert is_junk_paper(
+        "Information For Authors",
+        "Detailed submission instructions, publication policies, copyright rules, and contact information for authors.",
+        {"DOI": "10.1109/JSSC.2026.123"},
+    )
 
 
 def test_doi_session_introduction_imports_into_database(tmp_path):
@@ -594,6 +599,51 @@ def test_doi_session_introduction_imports_into_database(tmp_path):
     assert removed_count == 0
     assert len(papers) == 1
     assert papers[0]["doi"] == "10.1109/ISSCC.2026.1234567"
+
+
+def test_source_row_list_fields_are_deduplicated_on_first_import(tmp_path):
+    source_root = tmp_path / "sources"
+    source_root.mkdir()
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    db_file = tmp_path / "papers.json"
+    manifest_path = tmp_path / "source_manifest.json"
+    db_file.write_text("[]", encoding="utf-8")
+    write_csv(
+        source_root / "duplicate_terms.csv",
+        [
+            {
+                "Document Title": "A Stable Import Paper",
+                "Abstract": "This paper presents a complete integrated-circuit result with enough metadata for import.",
+                "Authors": "Alice; Alice; Bob",
+                "Author Keywords": "CMOS; cmos; RF; RF",
+                "IEEE Terms": "Circuits; Circuits; Hardware",
+                "Publication Year": "2026",
+                "Publication Title": "IEEE Test Journal",
+                "DOI": "10.1000/stable-import",
+            }
+        ],
+    )
+
+    scan_and_import_csvs(
+        str(db_file),
+        str(cache_dir),
+        source_root=str(source_root),
+        manifest_path=str(manifest_path),
+    )
+
+    paper = json.loads(db_file.read_text(encoding="utf-8"))[0]
+    assert paper["authors"] == ["Alice", "Bob"]
+    assert paper["keywords"] == ["CMOS", "RF"]
+    assert paper["ieee_terms"] == ["Circuits", "Hardware"]
+
+    added_count, updated_count, removed_count, _ = scan_and_import_csvs(
+        str(db_file),
+        str(cache_dir),
+        source_root=str(source_root),
+        manifest_path=str(manifest_path),
+    )
+    assert (added_count, updated_count, removed_count) == (0, 0, 0)
 
 
 def test_enrich_bibliographic_metadata_repairs_existing_db_without_removal(tmp_path):

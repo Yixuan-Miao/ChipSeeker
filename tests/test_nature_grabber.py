@@ -69,3 +69,35 @@ def test_nature_page_cap_marks_source_incomplete(monkeypatch, tmp_path):
     assert report["row_count"] == 1
     assert report["truncated"] is True
     assert report["completed"] is False
+
+
+def test_nature_can_fetch_article_metadata_concurrently(monkeypatch, tmp_path):
+    monkeypatch.setattr(ng, "DEFAULT_OUTPUT_DIR", str(tmp_path / "sources"))
+    monkeypatch.setattr(ng, "ensure_bs4", lambda: None)
+    monkeypatch.setattr(ng, "fetch_html", lambda *args, **kwargs: "<html></html>")
+    monkeypatch.setattr(
+        ng,
+        "parse_search_results",
+        lambda html: ["https://example.org/one", "https://example.org/two"],
+    )
+    monkeypatch.setattr(
+        ng,
+        "fetch_article",
+        lambda article_url: {
+            "Document Title": article_url.rsplit("/", 1)[-1],
+            "Abstract": "Complete metadata",
+            "Publication Year": "2026",
+            "Publication Title": "Nature Electronics",
+            "Source URL": article_url,
+        },
+    )
+
+    report = ng.grab_nature(
+        "chip",
+        "concurrent.csv",
+        max_pages=1,
+        article_workers=2,
+        return_report=True,
+    )
+
+    assert [row["Document Title"] for row in report["rows"]] == ["one", "two"]
