@@ -67,6 +67,11 @@ def content_release_configured(config: ContentReleaseConfig) -> bool:
     return bool(config.enabled and config.repo and config.tag and config.token)
 
 
+def content_pack_publish_enabled(config: ContentReleaseConfig, pack_kind: str) -> bool:
+    """Only incremental update packs are small enough for online publishing."""
+    return str(pack_kind or "").strip().lower() == "update" and content_release_configured(config)
+
+
 def _headers(token: str) -> Dict[str, str]:
     return {
         "Authorization": f"Bearer {token}",

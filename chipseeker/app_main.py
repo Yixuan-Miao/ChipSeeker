@@ -12,7 +12,7 @@ import streamlit as st
 from chipseeker.config_store import UserDataStore, load_app_config
 from chipseeker.cloud_access import build_cloud_token, cloud_access_configured
 from chipseeker.content_pack import ContentPackInstallError, build_content_pack, build_content_update_pack, describe_content_update_status, detect_content_pack_status, install_bundled_demo_csv, install_content_package, refresh_content_pack_baseline
-from chipseeker.content_release import ContentReleaseError, content_release_configured, load_content_release_config, publish_content_pack_to_release
+from chipseeker.content_release import ContentReleaseError, content_pack_publish_enabled, content_release_configured, load_content_release_config, publish_content_pack_to_release
 from chipseeker.conflict_review import collect_source_records, detect_conflicts, dismiss_conflict, load_conflict_resolutions, restore_conflicts
 from chipseeker.data_sync import (
     bibliographic_metadata_enrich_required,
@@ -671,7 +671,7 @@ def _content_pack_cache_block_reason(app_config):
 
 
 def _build_and_publish_content_pack(pack_kind, release_config):
-    publish_enabled = content_release_configured(release_config)
+    publish_enabled = content_pack_publish_enabled(release_config, pack_kind)
     label = "Latest incremental content pack" if pack_kind == "update" else "Full content pack"
     try:
         cache_block_reason = _content_pack_cache_block_reason(load_app_config([CONFIG_FILE, LEGACY_CONFIG_FILE]))
@@ -698,10 +698,10 @@ def _build_and_publish_content_pack(pack_kind, release_config):
                     SOURCE_MANIFEST_FILE,
                     schema_state=load_json(LOCAL_DATA_STATE_FILE, {}),
                     output_dir=CONTENT_PACK_EXPORT_DIR,
-                    pack_name=release_config.full_asset_name if publish_enabled else None,
-                    save_state=not publish_enabled,
+                    pack_name=None,
+                    save_state=True,
                 )
-                asset_name = release_config.full_asset_name
+                asset_name = ""
 
             publish_result = None
             if publish_enabled:
@@ -754,7 +754,10 @@ def render_content_pack_publisher():
     else:
         st.info("Generate the full package once to establish the incremental baseline.")
     if publish_enabled:
-        st.caption(f"Online target: `{release_config.repo}` / `{release_config.tag}`. Successful builds publish automatically.")
+        st.caption(
+            f"Latest updates publish to `{release_config.repo}` / `{release_config.tag}`. "
+            f"Full packages stay local in `{CONTENT_PACK_EXPORT_DIR}` and are never uploaded."
+        )
     else:
         st.caption("Online publishing is not configured on this machine; packages will be generated locally.")
     if cache_block_reason:
@@ -771,7 +774,7 @@ def render_content_pack_publisher():
         ):
             _build_and_publish_content_pack("update", release_config)
     with full_col:
-        full_label = "Generate & Publish Full Package" if publish_enabled else "Generate Full Database Package"
+        full_label = "Generate Full Package ZIP"
         if st.button(full_label, use_container_width=True, disabled=bool(cache_block_reason)):
             _build_and_publish_content_pack("full", release_config)
 
