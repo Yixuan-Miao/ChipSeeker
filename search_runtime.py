@@ -34,18 +34,46 @@ def _semantic_search(query_embedding, corpus_embeddings, top_k):
     query_norm = float(np.linalg.norm(query))
     if query_norm <= 0:
         return []
-    corpus_norms = np.linalg.norm(corpus, axis=1)
-    denom = corpus_norms * query_norm
-    scores = np.divide(corpus @ query, denom, out=np.zeros(corpus.shape[0], dtype=np.float32), where=denom > 0)
-    top_k = max(0, min(int(top_k), scores.shape[0]))
+    top_k = max(0, min(int(top_k), corpus.shape[0]))
     if top_k <= 0:
         return []
-    if top_k == scores.shape[0]:
-        indexes = np.argsort(-scores)
-    else:
-        indexes = np.argpartition(-scores, top_k - 1)[:top_k]
-        indexes = indexes[np.argsort(-scores[indexes])]
-    return [{"corpus_id": int(index), "score": float(scores[index])} for index in indexes]
+
+    # Keep the large embedding cache file-backed and scan it in bounded chunks.
+    # Loading or normalizing the full Voyage matrix can otherwise exceed small
+    # server memory limits on the first web search.
+    chunk_size = max(1, int(os.environ.get("CHIPSEEKER_SEARCH_CHUNK_SIZE", "4096")))
+    candidate_indexes = []
+    candidate_scores = []
+    for start in range(0, corpus.shape[0], chunk_size):
+        end = min(start + chunk_size, corpus.shape[0])
+        chunk = corpus[start:end]
+        chunk_norms = np.linalg.norm(chunk, axis=1)
+        denom = chunk_norms * query_norm
+        scores = np.divide(
+            chunk @ query,
+            denom,
+            out=np.zeros(end - start, dtype=np.float32),
+            where=denom > 0,
+        )
+        local_count = min(top_k, scores.shape[0])
+        if local_count == scores.shape[0]:
+            local_indexes = np.arange(scores.shape[0])
+        else:
+            local_indexes = np.argpartition(-scores, local_count - 1)[:local_count]
+        candidate_indexes.append(local_indexes + start)
+        candidate_scores.append(scores[local_indexes])
+
+    indexes = np.concatenate(candidate_indexes)
+    scores = np.concatenate(candidate_scores)
+    if indexes.shape[0] > top_k:
+        keep = np.argpartition(-scores, top_k - 1)[:top_k]
+        indexes = indexes[keep]
+        scores = scores[keep]
+    order = np.argsort(-scores, kind="stable")
+    return [
+        {"corpus_id": int(indexes[position]), "score": float(scores[position])}
+        for position in order
+    ]
 
 
 def _format_eta(seconds):
@@ -227,6 +255,17 @@ def _save_npy_atomic(cache_file, array):
                 os.remove(temp_file)
             except OSError:
                 pass
+
+
+def _load_embedding_cache(cache_file):
+    requested = os.environ.get("CHIPSEEKER_MMAP_EMBEDDINGS", "auto").strip().lower()
+    use_mmap = requested in {"1", "true", "yes", "on"} or (
+        requested == "auto" and os.name != "nt"
+    )
+    # Windows locks memory-mapped files and prevents the cache updater from
+    # atomically replacing them. Linux keeps the old inode alive, so the web
+    # service can safely mmap caches while content updates replace the path.
+    return np.load(cache_file, mmap_mode="r" if use_mmap else None)
 
 
 def _save_cache_meta(meta_file, db_file, model_name, scope_key, fingerprints):
@@ -521,7 +560,7 @@ class PaperSearcher:
         fast_state, fast_cached_count = _fast_exact_cache_match(self.cf, self.mf, self.jp, self.mn, self.scope_key)
         if fast_state == "exact":
             self._log(f"cache hit {self.cf}")
-            return np.load(self.cf)
+            return _load_embedding_cache(self.cf)
 
         current_fingerprints = self._dataset_fingerprints()
         resolved_cache, resolved_meta, cache_state, cached_count = resolve_portable_cache(
@@ -538,14 +577,14 @@ class PaperSearcher:
         if cache_state:
             try:
                 if cache_state == "exact":
-                    embeddings = np.load(source_cache)
+                    embeddings = _load_embedding_cache(source_cache)
                     self._log(f"cache hit {self.cf}")
                     if os.path.abspath(source_cache) != os.path.abspath(self.cf):
                         _save_npy_atomic(self.cf, embeddings)
                     self._save_meta(current_fingerprints)
-                    return np.load(self.cf)
+                    return _load_embedding_cache(self.cf)
 
-                embeddings = np.load(source_cache)
+                embeddings = _load_embedding_cache(source_cache)
                 texts = [self._paper_text(paper) for paper in self.dt]
 
                 if cache_state == "append_only":
@@ -554,7 +593,7 @@ class PaperSearcher:
                     embeddings = np.vstack((embeddings, new_embeddings))
                     _save_npy_atomic(self.cf, embeddings)
                     self._save_meta(current_fingerprints)
-                    return embeddings
+                    return _load_embedding_cache(self.cf)
 
                 if cache_state == "partial":
                     self._log(f"partial cache reuse {cached_count}/{len(current_fingerprints)} from {source_cache}")
@@ -577,7 +616,7 @@ class PaperSearcher:
                             reused_embeddings[row_index] = embedding
                     _save_npy_atomic(self.cf, reused_embeddings)
                     self._save_meta(current_fingerprints)
-                    return reused_embeddings
+                    return _load_embedding_cache(self.cf)
             except Exception as exc:
                 self._log(f"failed to load cache {self.cf}: {exc}")
                 if cache_state in ("append_only", "partial"):
@@ -593,7 +632,7 @@ class PaperSearcher:
         embeddings = self._embed(texts)
         _save_npy_atomic(self.cf, embeddings)
         self._save_meta(current_fingerprints)
-        return embeddings
+        return _load_embedding_cache(self.cf)
 
     def _ensure_embeddings(self):
         if not self._embeddings_loaded:

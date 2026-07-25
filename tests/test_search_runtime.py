@@ -4,7 +4,7 @@ import time
 
 import numpy as np
 
-from search_runtime import PaperSearcher, _dataset_fingerprints, describe_cache_status, get_cache_paths
+from search_runtime import PaperSearcher, _dataset_fingerprints, _semantic_search, describe_cache_status, get_cache_paths
 
 
 class DummySearcher(PaperSearcher):
@@ -28,6 +28,50 @@ class SlowRemoteQuerySearcher(DummySearcher):
 
 def write_db(path, papers):
     path.write_text(json.dumps(papers, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def test_semantic_search_chunking_matches_full_matrix_ranking(monkeypatch):
+    corpus = np.array(
+        [
+            [1.0, 0.0, 0.0],
+            [0.8, 0.2, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.2, 0.8, 0.0],
+            [0.0, 0.0, 1.0],
+        ],
+        dtype=np.float32,
+    )
+    query = np.array([1.0, 0.25, 0.0], dtype=np.float32)
+    expected_scores = (corpus @ query) / (np.linalg.norm(corpus, axis=1) * np.linalg.norm(query))
+    expected_indexes = np.argsort(-expected_scores)[:4]
+
+    monkeypatch.setenv("CHIPSEEKER_SEARCH_CHUNK_SIZE", "2")
+    results = _semantic_search(query, corpus, top_k=4)
+
+    assert [item["corpus_id"] for item in results] == expected_indexes.tolist()
+    assert np.allclose(
+        [item["score"] for item in results],
+        expected_scores[expected_indexes],
+    )
+
+
+def test_exact_cache_is_loaded_as_read_only_memmap(tmp_path, monkeypatch):
+    monkeypatch.setenv("CHIPSEEKER_MMAP_EMBEDDINGS", "1")
+    db_file = tmp_path / "papers.json"
+    papers = [
+        {"title": "Paper A", "abstract": "Alpha"},
+        {"title": "Paper B", "abstract": "Beta"},
+    ]
+    write_db(db_file, papers)
+
+    DummySearcher.embed_history = []
+    first_searcher = DummySearcher(str(db_file), model_name="all-MiniLM-L6-v2")
+    first_searcher._ensure_embeddings()
+    second_searcher = DummySearcher(str(db_file), model_name="all-MiniLM-L6-v2")
+    second_searcher._ensure_embeddings()
+
+    assert isinstance(second_searcher.eb, np.memmap)
+    assert second_searcher.eb.mode == "r"
 
 
 def test_search_runtime_reorders_cache_when_order_changes(tmp_path):
