@@ -3,6 +3,7 @@ import json
 import time
 
 import numpy as np
+import pytest
 
 from search_runtime import PaperSearcher, _dataset_fingerprints, _semantic_search, describe_cache_status, get_cache_paths
 
@@ -24,6 +25,20 @@ class SlowRemoteQuerySearcher(DummySearcher):
         if stage_message.startswith("Embedding quer"):
             time.sleep(0.06)
         return np.array([[float(len(text))] for text in texts], dtype=np.float32)
+
+
+class StreamingRemoteSearcher(PaperSearcher):
+    def _remote_embed_batch(
+        self,
+        batch,
+        batch_index,
+        total_batches,
+        stage_message,
+        start_idx,
+        total,
+        max_attempts=3,
+    ):
+        return [[float(len(text)), float(start_idx + offset)] for offset, text in enumerate(batch)]
 
 
 def write_db(path, papers):
@@ -72,6 +87,66 @@ def test_exact_cache_is_loaded_as_read_only_memmap(tmp_path, monkeypatch):
 
     assert isinstance(second_searcher.eb, np.memmap)
     assert second_searcher.eb.mode == "r"
+
+
+def test_remote_embeddings_are_written_into_one_float32_matrix(tmp_path):
+    db_file = tmp_path / "papers.json"
+    write_db(db_file, [{"title": "unused"}])
+    searcher = StreamingRemoteSearcher(
+        str(db_file),
+        model_name="voyage-4-large",
+        api_key="unused",
+    )
+
+    embeddings = searcher._embed(
+        ["a", "bb", "ccc", "dddd", "eeeee"],
+        batch_size_override=2,
+    )
+
+    assert embeddings.dtype == np.float32
+    assert embeddings.shape == (5, 2)
+    assert np.array_equal(
+        embeddings,
+        np.array(
+            [
+                [1.0, 0.0],
+                [2.0, 1.0],
+                [3.0, 2.0],
+                [4.0, 3.0],
+                [5.0, 4.0],
+            ],
+            dtype=np.float32,
+        ),
+    )
+
+
+def test_request_safe_searcher_rejects_large_partial_cache_repair(tmp_path):
+    db_file = tmp_path / "papers.json"
+    initial_papers = [
+        {"title": "Paper A", "abstract": "Alpha"},
+        {"title": "Paper B", "abstract": "Beta"},
+    ]
+    write_db(db_file, initial_papers)
+    DummySearcher.embed_history = []
+    builder = DummySearcher(str(db_file), model_name="all-MiniLM-L6-v2")
+    builder._ensure_embeddings()
+    del builder
+
+    changed_papers = [
+        {"title": "Paper A", "abstract": "Changed"},
+        {"title": "Paper B", "abstract": "Beta"},
+    ]
+    write_db(db_file, changed_papers)
+    searcher = DummySearcher(
+        str(db_file),
+        model_name="all-MiniLM-L6-v2",
+        cache_repair_limit=0,
+    )
+
+    with pytest.raises(RuntimeError, match="requires offline maintenance"):
+        searcher._ensure_embeddings()
+
+    assert len(DummySearcher.embed_history) == 1
 
 
 def test_search_runtime_reorders_cache_when_order_changes(tmp_path):

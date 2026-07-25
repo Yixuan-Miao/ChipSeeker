@@ -204,7 +204,7 @@ def _count_reusable_fingerprints(old_fingerprints, fingerprints):
 
 
 def _partial_reuse_embeddings(cache_file, meta_file, fingerprints):
-    old_embeddings = np.load(cache_file)
+    old_embeddings = _load_embedding_cache(cache_file)
     meta = _load_meta_file(meta_file)
     old_fingerprints = meta.get("fingerprints", [])
     if old_embeddings.shape[0] != len(old_fingerprints):
@@ -412,13 +412,26 @@ def describe_cache_status(db_file, model_name, scope_key="all", papers_override=
 
 
 class PaperSearcher:
-    def __init__(self, db_file, model_name='BAAI/bge-large-en-v1.5', api_key="", papers_override=None, scope_key="all", progress_callback=None, log_callback=None):
+    def __init__(
+        self,
+        db_file,
+        model_name='BAAI/bge-large-en-v1.5',
+        api_key="",
+        papers_override=None,
+        scope_key="all",
+        progress_callback=None,
+        log_callback=None,
+        cache_repair_limit=None,
+    ):
         self.jp = db_file
         self.mn = model_name
         self.ak = api_key
         self.scope_key = scope_key or "all"
         self.progress_callback = progress_callback
         self.log_callback = log_callback
+        self.cache_repair_limit = (
+            None if cache_repair_limit is None else max(0, int(cache_repair_limit))
+        )
         self.mt = 'c' if is_cloud_token(self.ak) else ('v' if 'voyage' in self.mn else ('o' if 'text-embedding' in self.mn else 'l'))
         self.dt = papers_override if papers_override is not None else self._load_db()
         self.cf, self.mf = get_cache_paths(self.jp, self.mn, self.scope_key)
@@ -508,6 +521,8 @@ class PaperSearcher:
         raise RuntimeError(f"Unreachable retry state for {batch_label}")
 
     def _embed(self, texts, stage_message="Embedding papers", max_attempts=None, batch_size_override=None):
+        if not texts:
+            return np.empty((0, 0), dtype=np.float32)
         total = max(1, len(texts))
         overall_start = time.perf_counter()
         self._log(f"{stage_message}: total_items={len(texts)} scope={self.scope_key} model={self.mn}")
@@ -518,15 +533,26 @@ class PaperSearcher:
             max_attempts = 1 if stage_message in {"Embedding query", "Embedding queries"} else 3
         if self.mt == 'l':
             self._ensure_model()
-            rows = []
+            embeddings = None
             batch_size = 64
             total_batches = max(1, (len(texts) + batch_size - 1) // batch_size)
             for batch_index, i in enumerate(range(0, len(texts), batch_size), start=1):
                 batch = texts[i:i + batch_size]
                 batch_start = time.perf_counter()
                 self._log(f"{stage_message}: starting batch {batch_index}/{total_batches} items {i + 1}-{i + len(batch)}/{total}")
-                result = self.md.encode(batch, convert_to_numpy=True, show_progress_bar=False)
-                rows.extend(result)
+                result = np.asarray(
+                    self.md.encode(batch, convert_to_numpy=True, show_progress_bar=False),
+                    dtype=np.float32,
+                )
+                if result.ndim != 2 or result.shape[0] != len(batch):
+                    raise RuntimeError(
+                        f"Embedding backend returned invalid shape {result.shape} for {len(batch)} texts"
+                    )
+                if embeddings is None:
+                    embeddings = np.empty((len(texts), result.shape[1]), dtype=np.float32)
+                elif embeddings.shape[1] != result.shape[1]:
+                    raise RuntimeError("Embedding backend changed vector dimensions between batches")
+                embeddings[i:i + len(batch)] = result
                 done = min(i + len(batch), total)
                 elapsed = time.perf_counter() - batch_start
                 total_elapsed = time.perf_counter() - overall_start
@@ -535,16 +561,35 @@ class PaperSearcher:
                 self._log(f"{stage_message}: finished batch {batch_index}/{total_batches} in {elapsed:.1f}s cumulative={done}/{total} elapsed={total_elapsed:.1f}s eta={eta_text}")
                 self._emit_progress(done, total, f"{stage_message}: batch {batch_index}/{total_batches} ({done}/{total}) elapsed {total_elapsed:.1f}s | ETA {eta_text}")
             self._log(f"{stage_message}: completed {total}/{total} in {time.perf_counter() - overall_start:.1f}s")
-            return np.array(rows, dtype=np.float32)
+            return embeddings
 
-        rows = []
+        embeddings = None
         batch_size = int(batch_size_override or (100 if self.mt == 'v' else 400))
         batch_size = max(1, batch_size)
         total_batches = max(1, (len(texts) + batch_size - 1) // batch_size)
         for batch_index, i in enumerate(range(0, len(texts), batch_size), start=1):
             batch = texts[i:i + batch_size]
-            result = self._remote_embed_batch(batch, batch_index, total_batches, stage_message, i, total, max_attempts=max_attempts)
-            rows.extend(result)
+            result = np.asarray(
+                self._remote_embed_batch(
+                    batch,
+                    batch_index,
+                    total_batches,
+                    stage_message,
+                    i,
+                    total,
+                    max_attempts=max_attempts,
+                ),
+                dtype=np.float32,
+            )
+            if result.ndim != 2 or result.shape[0] != len(batch):
+                raise RuntimeError(
+                    f"Embedding backend returned invalid shape {result.shape} for {len(batch)} texts"
+                )
+            if embeddings is None:
+                embeddings = np.empty((len(texts), result.shape[1]), dtype=np.float32)
+            elif embeddings.shape[1] != result.shape[1]:
+                raise RuntimeError("Embedding backend changed vector dimensions between batches")
+            embeddings[i:i + len(batch)] = result
             done = min(i + len(batch), total)
             total_elapsed = time.perf_counter() - overall_start
             eta_seconds = (total_elapsed / done) * max(0, total - done) if done else 0.0
@@ -554,7 +599,24 @@ class PaperSearcher:
             # Rate-limit sleep for remote API calls (local models return early at line 497).
             time.sleep(0.6)
         self._log(f"{stage_message}: completed {total}/{total} in {time.perf_counter() - overall_start:.1f}s")
-        return np.array(rows, dtype=np.float32)
+        return embeddings
+
+    def _ensure_request_safe_cache_work(self, cache_state, cached_count, total_count):
+        if self.cache_repair_limit is None:
+            return
+        if cache_state in {"append_only", "partial"}:
+            repair_count = max(0, total_count - int(cached_count or 0))
+            action = "repair"
+        elif cache_state == "exact":
+            return
+        else:
+            repair_count = total_count
+            action = "build"
+        if repair_count > self.cache_repair_limit:
+            raise RuntimeError(
+                "ChipSeeker Lite embedding cache requires offline maintenance "
+                f"({action} {repair_count} papers); request-time cache work is disabled."
+            )
 
     def _load_cache(self):
         fast_state, fast_cached_count = _fast_exact_cache_match(self.cf, self.mf, self.jp, self.mn, self.scope_key)
@@ -573,6 +635,11 @@ class PaperSearcher:
             resolved_cache, resolved_meta = get_cache_paths(self.jp, self.mn, self.scope_key)
             self._log(f"using broader cache for scope {self.scope_key}: reused={cached_count}/{len(current_fingerprints)} source={source_cache}")
         self.cf, self.mf = resolved_cache, resolved_meta
+        self._ensure_request_safe_cache_work(
+            cache_state,
+            cached_count,
+            len(current_fingerprints),
+        )
 
         if cache_state:
             try:
@@ -584,10 +651,10 @@ class PaperSearcher:
                     self._save_meta(current_fingerprints)
                     return _load_embedding_cache(self.cf)
 
-                embeddings = _load_embedding_cache(source_cache)
                 texts = [self._paper_text(paper) for paper in self.dt]
 
                 if cache_state == "append_only":
+                    embeddings = _load_embedding_cache(source_cache)
                     self._log(f"append-only update {cached_count} -> {len(current_fingerprints)}")
                     new_embeddings = self._embed(texts[cached_count:], stage_message="Appending embeddings")
                     embeddings = np.vstack((embeddings, new_embeddings))
