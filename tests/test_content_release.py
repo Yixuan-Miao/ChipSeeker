@@ -96,8 +96,10 @@ def test_latest_update_still_publishes_and_refreshes_baseline(monkeypatch):
         lambda *_args, **kwargs: calls.setdefault("refresh", kwargs),
     )
 
-    app_main._build_and_publish_content_pack("update", _configured_release())
+    notice = {"date": "2026-09-14", "title_zh": "RFIC 已更新。", "title": "RFIC updated."}
+    app_main._build_and_publish_content_pack("update", _configured_release(), site_notice=notice)
 
     assert calls["build"]["save_state"] is False
+    assert calls["build"]["site_notice"] == notice
     assert calls["publish"][1] == "ChipSeeker_ContentUpdate_latest.zip"
     assert calls["refresh"]["baseline_kind"] == "update"

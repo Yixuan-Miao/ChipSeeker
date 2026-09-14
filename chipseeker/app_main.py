@@ -670,7 +670,7 @@ def _content_pack_cache_block_reason(app_config):
     )
 
 
-def _build_and_publish_content_pack(pack_kind, release_config):
+def _build_and_publish_content_pack(pack_kind, release_config, site_notice=None):
     publish_enabled = content_pack_publish_enabled(release_config, pack_kind)
     label = "Latest incremental content pack" if pack_kind == "update" else "Full content pack"
     try:
@@ -688,6 +688,7 @@ def _build_and_publish_content_pack(pack_kind, release_config):
                     output_dir=CONTENT_PACK_EXPORT_DIR,
                     pack_name=release_config.update_asset_name if publish_enabled else None,
                     save_state=not publish_enabled,
+                    site_notice=site_notice,
                 )
                 asset_name = release_config.update_asset_name
             else:
@@ -763,6 +764,27 @@ def render_content_pack_publisher():
     if cache_block_reason:
         st.warning(cache_block_reason)
 
+    st.markdown("#### Online Update Notice")
+    st.caption("Stored inside the Latest Update ZIP and published on the online Library Updates panel after server installation.")
+    notice_date = st.date_input("Notice date", value=date.today(), key="content_pack_notice_date")
+    notice_title_zh = st.text_input(
+        "Chinese notice",
+        placeholder="IEEE 集成电路库：RFIC 2026 已更新。",
+        key="content_pack_notice_zh",
+    )
+    notice_title = st.text_input(
+        "English notice (optional)",
+        placeholder="IEEE IC library: RFIC 2026 papers are live.",
+        key="content_pack_notice_en",
+    )
+    site_notice = None
+    if notice_title_zh.strip() or notice_title.strip():
+        site_notice = {
+            "date": notice_date.isoformat(),
+            "title_zh": notice_title_zh.strip(),
+            "title": notice_title.strip(),
+        }
+
     update_col, full_col = st.columns(2)
     with update_col:
         update_label = "Generate & Publish Latest Update" if publish_enabled else "Generate Latest Update Package"
@@ -772,7 +794,7 @@ def render_content_pack_publisher():
             use_container_width=True,
             disabled=not update_status["baseline_ready"] or bool(cache_block_reason),
         ):
-            _build_and_publish_content_pack("update", release_config)
+            _build_and_publish_content_pack("update", release_config, site_notice=site_notice)
     with full_col:
         full_label = "Generate Full Package ZIP"
         if st.button(full_label, use_container_width=True, disabled=bool(cache_block_reason)):

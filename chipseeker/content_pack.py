@@ -175,8 +175,27 @@ def detect_content_pack_status(data_dir, db_file, cache_dir, manifest_path, sche
     }
 
 
-def _pack_manifest(content_status, pack_kind="full", paper_delta_count=0, paper_removed_count=0):
+def normalize_site_notice(value):
+    if not isinstance(value, dict):
+        return {}
+    notice_date = normalize_text(value.get("date", "")) or datetime.now(timezone.utc).date().isoformat()
+    try:
+        datetime.strptime(notice_date, "%Y-%m-%d")
+    except ValueError as exc:
+        raise ContentPackInstallError("Update notice date must use YYYY-MM-DD format.") from exc
+    title = normalize_text(value.get("title", ""))
+    title_zh = normalize_text(value.get("title_zh", ""))
+    if not title and not title_zh:
+        return {}
     return {
+        "date": notice_date,
+        "title": title or title_zh,
+        "title_zh": title_zh or title,
+    }
+
+
+def _pack_manifest(content_status, pack_kind="full", paper_delta_count=0, paper_removed_count=0, site_notice=None):
+    manifest = {
         "pack_version": 1,
         "pack_kind": pack_kind,
         "app_version": APP_VERSION,
@@ -188,6 +207,10 @@ def _pack_manifest(content_status, pack_kind="full", paper_delta_count=0, paper_
         "cache_count": content_status.get("cache_count", 0),
         "has_minilm_cache": bool(content_status.get("has_minilm_cache")),
     }
+    clean_notice = normalize_site_notice(site_notice)
+    if clean_notice:
+        manifest["site_notice"] = clean_notice
+    return manifest
 
 
 def refresh_content_pack_baseline(data_dir, db_file, cache_dir, state_path=None, baseline_kind="full"):
@@ -233,7 +256,7 @@ def describe_content_update_status(data_dir, db_file, state_path=None):
     }
 
 
-def build_content_pack(data_dir, db_file, cache_dir, manifest_path, schema_state=None, output_dir=CONTENT_PACK_EXPORT_DIR, pack_name=None, state_path=None, save_state=True):
+def build_content_pack(data_dir, db_file, cache_dir, manifest_path, schema_state=None, output_dir=CONTENT_PACK_EXPORT_DIR, pack_name=None, state_path=None, save_state=True, site_notice=None):
     os.makedirs(output_dir, exist_ok=True)
     content_status = detect_content_pack_status(data_dir, db_file, cache_dir, manifest_path, schema_state=schema_state)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -260,7 +283,7 @@ def build_content_pack(data_dir, db_file, cache_dir, manifest_path, schema_state
                     arcname = os.path.join(PACK_ROOT_NAME, os.path.relpath(source_path, data_dir)).replace("\\", "/")
                     archive.write(source_path, arcname=arcname)
                     included_files.append(arcname)
-        archive.writestr("content_pack_manifest.json", json.dumps(_pack_manifest(content_status, pack_kind="full"), indent=2, ensure_ascii=False))
+        archive.writestr("content_pack_manifest.json", json.dumps(_pack_manifest(content_status, pack_kind="full", site_notice=site_notice), indent=2, ensure_ascii=False))
 
     if save_state:
         refresh_content_pack_baseline(data_dir, db_file, cache_dir, state_path=state_path, baseline_kind="full")
@@ -284,6 +307,7 @@ def build_content_update_pack(
     pack_name=None,
     state_path=None,
     save_state=True,
+    site_notice=None,
 ):
     state_path = _default_state_path(data_dir, state_path)
     baseline = load_json(state_path, {})
@@ -412,6 +436,7 @@ def build_content_update_pack(
                         pack_kind="update",
                         paper_delta_count=len(delta_papers),
                         paper_removed_count=len(removed_paper_keys),
+                        site_notice=site_notice,
                     ),
                     indent=2,
                     ensure_ascii=False,
@@ -542,8 +567,7 @@ def _uploaded_bytes(uploaded_file):
     raise TypeError("Unsupported uploaded content pack object.")
 
 
-def content_pack_kind(uploaded_file):
-    payload = _uploaded_bytes(uploaded_file)
+def _content_pack_manifest(payload):
     try:
         with zipfile.ZipFile(io.BytesIO(payload), "r") as archive:
             _validate_zip_members(archive.namelist())
@@ -553,6 +577,12 @@ def content_pack_kind(uploaded_file):
                 manifest = {}
     except zipfile.BadZipFile as exc:
         raise ContentPackInstallError("The selected file is not a valid ChipSeeker ZIP package.") from exc
+    return manifest if isinstance(manifest, dict) else {}
+
+
+def content_pack_kind(uploaded_file):
+    payload = _uploaded_bytes(uploaded_file)
+    manifest = _content_pack_manifest(payload)
     kind = str(manifest.get("pack_kind", "full") or "full").strip().lower()
     if kind not in {"full", "update"}:
         raise ContentPackInstallError(f"Unsupported ChipSeeker content pack kind: {kind}")
@@ -570,6 +600,7 @@ def install_content_package(uploaded_file, data_dir):
 
 def install_content_pack(uploaded_file, data_dir):
     payload = _uploaded_bytes(uploaded_file)
+    manifest = _content_pack_manifest(payload)
     data_dir = os.path.abspath(data_dir)
     staging_parent = os.path.dirname(data_dir)
     os.makedirs(staging_parent, exist_ok=True)
@@ -625,7 +656,11 @@ def install_content_pack(uploaded_file, data_dir):
             ) from exc
         raise
 
-    return {"copied_entries": copied_files, "data_dir": data_dir}
+    return {
+        "copied_entries": copied_files,
+        "data_dir": data_dir,
+        "site_notice": normalize_site_notice(manifest.get("site_notice")),
+    }
 
 
 def _merge_tree(source_dir, target_dir):
@@ -763,6 +798,7 @@ def _append_cache_deltas(pack_root, data_dir):
 
 def install_content_update_pack(uploaded_file, data_dir):
     payload = _uploaded_bytes(uploaded_file)
+    manifest = _content_pack_manifest(payload)
     data_dir = os.path.abspath(data_dir)
     staging_parent = os.path.dirname(data_dir)
     os.makedirs(staging_parent, exist_ok=True)
@@ -815,6 +851,7 @@ def install_content_update_pack(uploaded_file, data_dir):
         "paper_removed": paper_removed,
         "cache_appended": cache_merge.get("appended", 0),
         "cache_skipped": cache_merge.get("skipped", 0),
+        "site_notice": normalize_site_notice(manifest.get("site_notice")),
     }
 
 

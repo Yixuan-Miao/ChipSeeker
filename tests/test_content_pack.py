@@ -229,6 +229,48 @@ def test_incremental_update_pack_merges_papers_and_cache_delta(tmp_path):
     assert merged_cache.shape == (2, 2)
 
 
+def test_update_pack_carries_site_notice_to_installer(tmp_path):
+    data_dir = tmp_path / "source_local_data"
+    cache_dir = data_dir / "cache"
+    cache_dir.mkdir(parents=True)
+    db_file = data_dir / "isscc_papers.json"
+    manifest_path = data_dir / "source_manifest.json"
+    state_path = data_dir / "content_pack_state.json"
+    paper = {"title": "Paper A", "abstract": "A" * 120, "year": "2026", "venue": "RFIC", "doi": "10.1000/a"}
+    db_file.write_text(json.dumps([paper]), encoding="utf-8")
+    manifest_path.write_text(json.dumps({"entries": []}), encoding="utf-8")
+    build_content_pack(
+        str(data_dir),
+        str(db_file),
+        str(cache_dir),
+        str(manifest_path),
+        output_dir=str(tmp_path / "exports"),
+        pack_name="full.zip",
+        state_path=str(state_path),
+    )
+    paper["abstract"] = "B" * 120
+    db_file.write_text(json.dumps([paper]), encoding="utf-8")
+    notice = {
+        "date": "2026-09-14",
+        "title": "IEEE IC library: RFIC 2026 papers are live.",
+        "title_zh": "IEEE 集成电路库：RFIC 2026 已更新。",
+    }
+
+    update = build_content_update_pack(
+        str(data_dir),
+        str(db_file),
+        str(cache_dir),
+        str(manifest_path),
+        output_dir=str(tmp_path / "exports"),
+        pack_name="update.zip",
+        state_path=str(state_path),
+        site_notice=notice,
+    )
+    installed = install_content_update_pack(UploadedPack(Path(update["zip_path"])), str(tmp_path / "target"))
+
+    assert installed["site_notice"] == notice
+
+
 def test_incremental_update_pack_removes_deleted_baseline_papers(tmp_path):
     data_dir = tmp_path / "source_local_data"
     cache_dir = data_dir / "cache"
