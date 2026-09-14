@@ -750,6 +750,28 @@ def _remove_delta_papers(pack_root, data_dir):
     return removed_count
 
 
+def _projected_update_paper_count(pack_root, data_dir):
+    target_db = os.path.join(data_dir, "isscc_papers.json")
+    existing_papers = _read_papers(target_db)
+    identities = {_paper_identity_key(paper) for paper in existing_papers}
+    identities.discard("")
+    unidentified_count = sum(1 for paper in existing_papers if not _paper_identity_key(paper))
+
+    delta_file = os.path.join(pack_root, "isscc_papers.delta.json")
+    delta_papers = load_json(delta_file, []) if os.path.exists(delta_file) else []
+    if isinstance(delta_papers, list):
+        for paper in delta_papers:
+            key = _paper_identity_key(paper)
+            if key:
+                identities.add(key)
+
+    removed_file = os.path.join(pack_root, "isscc_papers.removed.json")
+    removed_keys = load_json(removed_file, []) if os.path.exists(removed_file) else []
+    if isinstance(removed_keys, list):
+        identities.difference_update(str(key) for key in removed_keys if str(key))
+    return len(identities) + unidentified_count
+
+
 def _append_cache_deltas(pack_root, data_dir):
     cache_delta_dir = os.path.join(pack_root, "cache_delta")
     if not os.path.isdir(cache_delta_dir):
@@ -823,6 +845,16 @@ def install_content_update_pack(uploaded_file, data_dir):
                     )
             pack_root = _locate_pack_root(temp_dir)
             os.makedirs(data_dir, exist_ok=True)
+
+            declared_paper_count = int(manifest.get("paper_count", 0) or 0)
+            projected_paper_count = _projected_update_paper_count(pack_root, data_dir)
+            if declared_paper_count and projected_paper_count != declared_paper_count:
+                raise ContentPackInstallError(
+                    "This incremental update does not match the installed library baseline. "
+                    f"The package targets {declared_paper_count} papers, but applying it here would produce "
+                    f"{projected_paper_count}. No files were changed. Install a Full Content Pack to realign "
+                    "the server before using later incremental updates."
+                )
 
             copied_files = 0
             paper_merge = _merge_delta_papers(pack_root, data_dir)

@@ -271,6 +271,48 @@ def test_update_pack_carries_site_notice_to_installer(tmp_path):
     assert installed["site_notice"] == notice
 
 
+def test_update_pack_rejects_divergent_target_before_writing(tmp_path):
+    data_dir = tmp_path / "source_local_data"
+    cache_dir = data_dir / "cache"
+    cache_dir.mkdir(parents=True)
+    db_file = data_dir / "isscc_papers.json"
+    manifest_path = data_dir / "source_manifest.json"
+    state_path = data_dir / "content_pack_state.json"
+    paper_a = {"title": "Paper A", "abstract": "A" * 120, "year": "2026", "venue": "JSSC", "doi": "10.1000/a"}
+    paper_b = {"title": "Paper B", "abstract": "B" * 120, "year": "2026", "venue": "JSSC", "doi": "10.1000/b"}
+    db_file.write_text(json.dumps([paper_a]), encoding="utf-8")
+    manifest_path.write_text(json.dumps({"entries": []}), encoding="utf-8")
+    build_content_pack(
+        str(data_dir),
+        str(db_file),
+        str(cache_dir),
+        str(manifest_path),
+        output_dir=str(tmp_path / "exports"),
+        pack_name="full.zip",
+        state_path=str(state_path),
+    )
+    db_file.write_text(json.dumps([paper_a, paper_b]), encoding="utf-8")
+    update = build_content_update_pack(
+        str(data_dir),
+        str(db_file),
+        str(cache_dir),
+        str(manifest_path),
+        output_dir=str(tmp_path / "exports"),
+        pack_name="update.zip",
+        state_path=str(state_path),
+    )
+
+    target_dir = tmp_path / "target"
+    target_dir.mkdir()
+    extra = {"title": "Server-only Paper", "abstract": "X" * 120, "year": "2025", "venue": "Other", "doi": "10.1000/x"}
+    (target_dir / "isscc_papers.json").write_text(json.dumps([paper_a, extra]), encoding="utf-8")
+
+    with pytest.raises(content_pack.ContentPackInstallError, match="does not match the installed library baseline"):
+        install_content_update_pack(UploadedPack(Path(update["zip_path"])), str(target_dir))
+
+    assert json.loads((target_dir / "isscc_papers.json").read_text(encoding="utf-8")) == [paper_a, extra]
+
+
 def test_incremental_update_pack_removes_deleted_baseline_papers(tmp_path):
     data_dir = tmp_path / "source_local_data"
     cache_dir = data_dir / "cache"
