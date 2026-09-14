@@ -108,8 +108,6 @@ def crossref_items(session, term, issn, start_date, rows, cursor="*", retries=3)
         "query.bibliographic": term,
         "filter": f"from-pub-date:{start_date},until-pub-date:{date.today().isoformat()},type:journal-article,issn:{issn}",
         "rows": rows,
-        "sort": "published",
-        "order": "desc",
         "cursor": cursor,
     }
     last_error = None

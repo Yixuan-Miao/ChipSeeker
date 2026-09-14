@@ -551,7 +551,13 @@ def run_literature_update(
                     f"Partial run staging retained for audit: {state['staging_dir']}",
                     level="warning",
                 )
-            update_progress(1.0, "Literature update committed")
+            if failed:
+                update_progress(
+                    1.0,
+                    f"Literature update partially committed; {len(failed)} source(s) retained for retry",
+                )
+            else:
+                update_progress(1.0, "Literature update committed")
             return {
                 "run_id": state["run_id"],
                 "status": state["status"],

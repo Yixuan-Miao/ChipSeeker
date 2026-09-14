@@ -112,6 +112,66 @@ def test_literature_update_stages_then_commits_once(monkeypatch, tmp_path):
     assert history["events"][0]["details"]["papers_added"] == 1
 
 
+def test_literature_update_labels_partial_commit(monkeypatch, tmp_path):
+    source_root = tmp_path / "sources"
+    source_root.mkdir()
+    db_file = tmp_path / "papers.json"
+    db_file.write_text("[]", encoding="utf-8")
+    registry_path = tmp_path / "registry.json"
+    registry_path.write_text(
+        json.dumps(
+            {
+                "sources": [
+                        {
+                            "id": "failed_source",
+                            "provider": "nature",
+                            "generation": 2,
+                            "revision": 1,
+                            "enabled": True,
+                        "name": "Failed source",
+                        "query": "chip",
+                        "last_checked_date": "2026-07-01",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        lu,
+        "_fetch_source",
+        lambda *_args, **_kwargs: {
+            "rows": [],
+            "row_count": 0,
+            "failed": [{"error": "blocked"}],
+            "completed": False,
+            "truncated": False,
+        },
+    )
+    messages = []
+
+    result = lu.run_literature_update(
+        "task-partial",
+        {
+            "registry_path": str(registry_path),
+            "source_ids": ["failed_source"],
+            "db_file": str(db_file),
+            "cache_dir": str(tmp_path / "cache"),
+            "source_root": str(source_root),
+            "manifest_path": str(tmp_path / "manifest.json"),
+            "local_state_path": str(tmp_path / "state.json"),
+            "run_dir": str(tmp_path / "runs"),
+            "staging_root": str(tmp_path / "staging"),
+        },
+        update_progress=lambda _progress, message: messages.append(message),
+        append_history=lambda *_args, **_kwargs: None,
+        cancel_requested=lambda: False,
+    )
+
+    assert result["status"] == "partial"
+    assert "partially committed" in messages[-1]
+
+
 def test_create_or_resume_run_preserves_fetched_source(monkeypatch, tmp_path):
     source = {
         "id": "resume_v2",

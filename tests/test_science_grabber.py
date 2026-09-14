@@ -24,3 +24,26 @@ def test_science_relevance_rejects_applied_ai_noise():
     assert not sg.is_relevant_record(_item("Machine learning predicts which rivers and wetlands are protected"))
     assert not sg.is_relevant_record(_item("A foundation model for antimicrobial peptide discovery"))
     assert not sg.is_relevant_record(_item("The AI Economist: Taxation policy design with reinforcement learning"))
+
+
+def test_crossref_cursor_request_does_not_use_incompatible_sort(monkeypatch):
+    captured = {}
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"message": {"items": [], "next-cursor": "", "total-results": 0}}
+
+    class Session:
+        def get(self, _url, **kwargs):
+            captured.update(kwargs["params"])
+            return Response()
+
+    result = sg.crossref_items(Session(), "qubit", "0036-8075", "2026-07-18", 200)
+
+    assert result["items"] == []
+    assert captured["cursor"] == "*"
+    assert "sort" not in captured
+    assert "order" not in captured
